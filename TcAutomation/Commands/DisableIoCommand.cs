@@ -112,7 +112,10 @@ namespace TcAutomation.Commands
                 }
 
                 result.Success = true;
-                result.Message = $"{result.ModifiedCount} device(s) {action}";
+                if (result.ModifiedCount > 0)
+                    result.Message = $"{result.ModifiedCount} device(s) {action}";
+                else
+                    result.Message = $"All {result.TotalDevices} device(s) already {action} - no changes needed";
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
                 return 0;
             }

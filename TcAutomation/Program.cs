@@ -387,8 +387,29 @@ namespace TcAutomation
                 ConfigureRtCommand.Execute(solution, maxCpus, loadLimit, tcVersion);
             }, cfgRtSolutionOpt, cfgRtMaxCpusOpt, cfgRtLoadLimitOpt, cfgRtTcVersionOpt);
 
+            // === SET-STATE COMMAND (ADS) ===
+            var setStateCommand = new Command("set-state", "Set TwinCAT runtime state (Run, Stop, Config) via ADS (no VS required)");
+            var setStateAmsOpt = CreateAmsNetIdOption(required: true);
+            var setStatePortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "AMS port (default: 851 for PLC runtime)",
+                getDefaultValue: () => 851);
+            var setStateTargetOpt = new Option<string>(
+                aliases: new[] { "--state", "-t" },
+                description: "Target state: Run, Stop, Config, or Reset");
+            setStateTargetOpt.IsRequired = true;
+            setStateCommand.AddOption(setStateAmsOpt);
+            setStateCommand.AddOption(setStatePortOpt);
+            setStateCommand.AddOption(setStateTargetOpt);
+            
+            setStateCommand.SetHandler((string amsNetId, int port, string state) =>
+            {
+                SetStateCommand.Execute(amsNetId, port, state);
+            }, setStateAmsOpt, setStatePortOpt, setStateTargetOpt);
+
             // === ADD NEW COMMANDS TO ROOT ===
             rootCommand.AddCommand(getStateCommand);
+            rootCommand.AddCommand(setStateCommand);
             rootCommand.AddCommand(readVarCommand);
             rootCommand.AddCommand(writeVarCommand);
             rootCommand.AddCommand(listTasksCommand);

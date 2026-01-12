@@ -110,6 +110,7 @@
     <Compile Include="Commands\DisableIoCommand.cs" />
     <Compile Include="Commands\SetVariantCommand.cs" />
     <Compile Include="Commands\GetStateCommand.cs" />
+    <Compile Include="Commands\SetStateCommand.cs" />
     <Compile Include="Commands\ReadVariableCommand.cs" />
     <Compile Include="Commands\WriteVariableCommand.cs" />
     <Compile Include="Commands\ListTasksCommand.cs" />

@@ -17,6 +17,7 @@ Tools:
 - twincat_disable_io: Disable/enable I/O devices
 - twincat_set_variant: Get or set TwinCAT project variant
 - twincat_get_state: Get TwinCAT runtime state via ADS
+- twincat_set_state: Set TwinCAT runtime state (Run/Stop/Config) via ADS
 - twincat_read_var: Read a PLC variable via ADS
 - twincat_write_var: Write a PLC variable via ADS
 - twincat_list_tasks: List real-time tasks
@@ -380,6 +381,29 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["amsNetId"]
+            }
+        ),
+        Tool(
+            name="twincat_set_state",
+            description="Set the TwinCAT runtime state (Run, Stop, Config) via direct ADS connection. Note: Some targets may not support remote state changes via ADS - in that case use twincat_restart which uses the Automation Interface.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1')"
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "Target state: Run, Stop, Config, or Reset"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851, auto-switches to 10000 for system state changes)",
+                        "default": 851
+                    }
+                },
+                "required": ["amsNetId", "state"]
             }
         ),
         Tool(
@@ -774,9 +798,15 @@ PLC Count: {result.get('PlcCount', 0)}
         
         if result.get("Success"):
             action = "enabled" if enable else "disabled"
-            output = f"✅ {result.get('Message', f'I/O devices {action}')}\n\n"
-            output += f"Total devices: {result.get('TotalDevices', 0)}\n"
-            output += f"Modified: {result.get('ModifiedCount', 0)}\n\n"
+            modified = result.get('ModifiedCount', 0)
+            total = result.get('TotalDevices', 0)
+            
+            if modified > 0:
+                output = f"✅ {modified} device(s) {action}\n\n"
+            else:
+                output = f"✅ All {total} device(s) already {action} (no changes needed)\n\n"
+            
+            output += f"📊 Total devices: {total}\n"
             
             devices = result.get("Devices", [])
             if devices:
@@ -836,6 +866,31 @@ PLC Count: {result.get('PlcCount', 0)}
             output += f"📝 Description: {result.get('StateDescription', '')}"
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_set_state":
+        ams_net_id = arguments.get("amsNetId", "")
+        state = arguments.get("state", "")
+        port = arguments.get("port", 851)
+        
+        args = ["--amsnetid", ams_net_id, "--state", state, "--port", str(port)]
+        
+        result = run_tc_automation("set-state", args)
+        
+        if result.get("Success"):
+            prev_state = result.get("PreviousState", "Unknown")
+            curr_state = result.get("CurrentState", "Unknown")
+            emoji = "🟢" if curr_state == "Run" else "🟡" if curr_state == "Config" else "🔴" if curr_state in ["Stop", "Error"] else "⚪"
+            output = f"{emoji} TwinCAT State Changed\n\n"
+            output += f"📡 AMS Net ID: {result.get('AmsNetId', ams_net_id)}\n"
+            output += f"🔄 Previous: {prev_state}\n"
+            output += f"✅ Current: **{curr_state}**\n"
+            output += f"📝 {result.get('StateDescription', '')}"
+            if result.get("Warning"):
+                output += f"\n⚠️ {result.get('Warning')}"
+        else:
+            output = f"❌ Failed to set state: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     

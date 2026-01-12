@@ -1,38 +1,82 @@
-# TwinCAT MCP Server
+<p align="center">
+  <img src="img/banner.png" alt="TwinCAT MCP Server" width="800"/>
+</p>
 
-An MCP (Model Context Protocol) server that enables AI assistants like GitHub Copilot to build and validate TwinCAT projects directly from VS Code.
+<h1 align="center">TwinCAT MCP Server</h1>
+
+<p align="center">
+  <strong>Connect AI assistants to TwinCAT automation</strong><br>
+  Build, deploy, and monitor TwinCAT PLCs directly from VS Code with GitHub Copilot
+</p>
+
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#available-tools">Tools</a> •
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
+
+---
+
+## What is this?
+
+An **MCP (Model Context Protocol) server** that enables AI assistants like GitHub Copilot to interact with TwinCAT XAE and PLCs. Ask Copilot to build your project, deploy to a PLC, read variables, or check system state - all through natural language.
+
+> ⚠️ **Unofficial**: This is a community project and is not affiliated with or endorsed by Beckhoff Automation.
+
+---
 
 ## Features
 
-- **Build TwinCAT Solutions** - Compile projects and get detailed error/warning reports
-- **Project Info** - Get TwinCAT version, PLC list, and configuration details
-- **Works Globally** - Once installed, works in any VS Code workspace
-- **Coming Soon**: Deploy to PLCs, activate configurations, manage boot projects
+### 🔨 Build & Validate
+- **Build Solutions** - Compile projects and get detailed error/warning reports with file paths and line numbers
+- **Project Info** - Get TwinCAT version, Visual Studio version, PLC list, and configuration details
+- **Clean** - Remove build artifacts
+
+### 🚀 Deployment
+- **Set Target** - Configure target AMS Net ID for deployment
+- **Activate** - Download configuration to target PLC
+- **Restart** - Start/restart TwinCAT runtime
+- **Deploy** - Full deployment workflow (build → set target → activate → restart)
+
+### 📡 ADS Communication (No Visual Studio Required)
+- **Get State** - Read TwinCAT runtime state (Run/Config/Stop)
+- **Set State** - Switch between Run/Config/Stop modes
+- **Read Variable** - Read PLC variables by symbol path
+- **Write Variable** - Write values to PLC variables
+
+### ⚙️ Configuration Management
+- **List PLCs** - List all PLC projects with AMS ports
+- **Boot Project** - Configure boot project autostart settings
+- **Disable I/O** - Enable/disable I/O devices (for testing without hardware)
+- **Variants** - Get/set project variants (TwinCAT 4024+)
+- **List Tasks** - Show real-time tasks with cycle times and priorities
+- **Configure Task** - Enable/disable tasks, set autostart
+- **Configure RT** - Set real-time CPU cores and load limits
+
+---
 
 ## Prerequisites
 
-| Software | Version | Download |
-|----------|---------|----------|
-| Windows | 10/11 | Required for COM interop |
-| Visual Studio 2022 | Community+ | [Download](https://visualstudio.microsoft.com/) - Install with **".NET desktop development"** workload |
-| .NET Framework 4.7.2 | Developer Pack | [Download](https://dotnet.microsoft.com/download/dotnet-framework/net472) |
-| TwinCAT XAE | 3.1.4024+ | [Beckhoff](https://www.beckhoff.com/en-en/products/automation/twincat/) |
-| Python | 3.10+ | [Download](https://www.python.org/downloads/) - Check "Add to PATH" during install |
-| VS Code | Latest | [Download](https://code.visualstudio.com/) - With GitHub Copilot extension |
-
-> **Important**: This project uses **MSBuild.exe** (from Visual Studio), not `dotnet build`.  
-> TwinCAT COM references require the full Visual Studio MSBuild.
+| Software | Version | Notes |
+|----------|---------|-------|
+| **Windows** | 10/11 | Required for COM interop |
+| **Visual Studio** | 2019/2022 | With ".NET desktop development" workload |
+| **.NET Framework** | 4.7.2 | [Developer Pack](https://dotnet.microsoft.com/download/dotnet-framework/net472) |
+| **TwinCAT XAE** | 3.1.4024+ | [Beckhoff Downloads](https://www.beckhoff.com/) |
+| **Python** | 3.10+ | Check "Add to PATH" during install |
+| **VS Code** | Latest | With GitHub Copilot extension |
 
 ---
 
 ## Installation
 
-### Option 1: Quick Setup (Recommended)
-
-Double-click `setup.bat` or run from PowerShell:
+### Quick Setup (Recommended)
 
 ```powershell
-cd C:\path\to\twincat-mcp
+git clone https://github.com/YOUR_USERNAME/twincat-mcp.git
+cd twincat-mcp
 .\setup.bat
 ```
 
@@ -42,168 +86,132 @@ This will:
 3. ✅ Install Python dependencies
 4. ✅ Register MCP server in VS Code globally
 
-### Option 2: Step-by-Step Manual Setup
-
-#### Step 1: Build the CLI Tool
-
-```powershell
-cd C:\path\to\twincat-mcp
-.\scripts\setup.ps1
-```
-
-#### Step 2: Install MCP Server to VS Code
-
-```powershell
-# Install globally (works in all workspaces)
-.\scripts\install-mcp.ps1
-
-# Or install to current workspace only
-.\scripts\install-mcp.ps1 -Workspace
-
-# For VS Code Insiders specifically
-.\scripts\install-mcp.ps1 -Insiders
-```
-
-#### Step 3: Start the MCP Server
+### Start the Server
 
 1. **Restart VS Code** (or `Ctrl+Shift+P` → "Developer: Reload Window")
 2. Press `Ctrl+Shift+P` → **"MCP: List Servers"**
-3. Click **"twincat-automation"** to start the server
-4. If prompted, click **"Trust"** to allow the server to run
-
-### Option 3: Manual MSBuild (Advanced)
-
-If the scripts don't work, build manually:
-
-```powershell
-# Find MSBuild
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-$msbuild = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-
-# Build
-& $msbuild "TcAutomation\TcAutomation.csproj" /p:Configuration=Release /p:Platform=x64 /restore
-```
-
-Then manually add to VS Code's MCP config (`Ctrl+Shift+P` → "MCP: Open User Configuration"):
-
-```json
-{
-  "servers": {
-    "twincat-automation": {
-      "type": "stdio",
-      "command": "python",
-      "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"]
-    }
-  }
-}
-```
+3. Click **"twincat-automation"** to start
+4. Click **"Start"** and **"Trust"** if prompted
 
 ---
 
 ## Usage
 
-Once installed and started, you can use the TwinCAT tools in **any VS Code workspace**.
+Once installed, the TwinCAT tools work in **any VS Code workspace**.
 
-### In Copilot Chat
+### Example Commands in Copilot Chat
 
-Ask natural language questions:
+```
+"Build my TwinCAT project at C:\Projects\MyMachine\Solution.sln"
 
-- *"Build my TwinCAT project at C:\Projects\MyMachine\Solution.sln"*
-- *"Check for syntax errors in my TwinCAT solution"*
-- *"What TwinCAT version is my project using?"*
-- *"List the PLCs in my TwinCAT project"*
+"Deploy to PLC at 192.168.1.10.1.1"
 
-### Example Output
+"Read MAIN.bRunning from the PLC"
+
+"What's the TwinCAT state on 172.18.236.100.1.1?"
+
+"Disable I/O devices and activate to the test PLC"
+
+"List all tasks in my project"
+```
+
+### Example Outputs
 
 **Build with errors:**
 ```
-❌ Build failed
+❌ Build failed (2 errors, 1 warning)
 
 🔴 Errors:
-  - C:\Projects\MyProject\PLC\POUs\MAIN.TcPOU (Decl):4: C0077: Unknown type: 'DINT2'
-  - C:\Projects\MyProject\PLC\POUs\FB_Motor.TcPOU (Impl):15: C0035: Program name expected
+  • POUs/MAIN.TcPOU:4 - C0077: Unknown type: 'DINT2'
+  • POUs/FB_Motor.TcPOU:15 - C0035: Program name expected
+
+🟡 Warnings:
+  • GVLs/GVL_Main.TcGVL:8 - C0371: Unused variable 'nTemp'
 ```
 
-**Project info:**
+**PLC State:**
 ```
-📋 TwinCAT Project Info
-Solution: C:\Projects\MyProject.sln
-TwinCAT Version: 3.1.4026.17
-Visual Studio Version: 17.0
-Target Platform: TwinCAT RT (x64)
+🟢 TwinCAT State: Run
+📡 AMS Net ID: 172.18.236.100.1.1
+📊 Device State: 1
+📝 Description: Run - Running normally
+```
 
-PLC Projects:
-  - PLC_Main (AMS Port: 851)
-  - PLC_Safety (AMS Port: 852)
+**Read Variable:**
+```
+✅ Variable Read: MAIN.bRunning
+📊 Value: True
+📋 Data Type: BOOL
+📐 Size: 1 bytes
 ```
 
 ---
 
-## Available MCP Tools
+## Available Tools
 
+### Build & Project Management
 | Tool | Description |
 |------|-------------|
-| `twincat_build` | Build a TwinCAT solution and return compile errors/warnings with file paths and line numbers |
-| `twincat_get_info` | Get project info: TwinCAT version, Visual Studio version, target platform, PLC list |
+| `twincat_build` | Build solution, return errors/warnings with line numbers |
+| `twincat_get_info` | Get TwinCAT version, VS version, PLC list |
+| `twincat_clean` | Clean solution (remove build artifacts) |
 
----
+### Deployment
+| Tool | Description |
+|------|-------------|
+| `twincat_set_target` | Set target AMS Net ID |
+| `twincat_activate` | Activate configuration on target (→ Config mode) |
+| `twincat_restart` | Restart TwinCAT runtime (→ Run mode) |
+| `twincat_deploy` | Full deployment: build → activate → restart |
+
+### ADS Communication
+| Tool | Description |
+|------|-------------|
+| `twincat_get_state` | Get runtime state via ADS (Run/Config/Stop) |
+| `twincat_set_state` | Set runtime state via ADS |
+| `twincat_read_var` | Read PLC variable by symbol path |
+| `twincat_write_var` | Write value to PLC variable |
+
+### Configuration
+| Tool | Description |
+|------|-------------|
+| `twincat_list_plcs` | List PLC projects with AMS ports |
+| `twincat_set_boot_project` | Configure boot project autostart |
+| `twincat_disable_io` | Enable/disable I/O devices |
+| `twincat_set_variant` | Get/set project variant |
+| `twincat_list_tasks` | List real-time tasks |
+| `twincat_configure_task` | Enable/disable task, set autostart |
+| `twincat_configure_rt` | Configure RT CPU cores and load limit |
 
 ---
 
 ## Troubleshooting
 
-### MCP Server Not Appearing in VS Code
+### MCP Server Not Starting
 
-1. Run `Ctrl+Shift+P` → **"MCP: List Servers"**
-2. If "twincat-automation" appears but shows "Stopped", click it to start
-3. If prompted, click **"Trust"** to allow execution
-4. If not listed, run `.\scripts\install-mcp.ps1` again
-
-### MCP Server Won't Start
-
-Check the server works manually:
-```powershell
-python mcp-server/server.py
-```
-- If it hangs waiting for input, that's correct (stdio mode)
-- Press `Ctrl+C` to exit
-- If you see errors, check Python dependencies: `pip install mcp`
+1. Press `Ctrl+Shift+P` → **"MCP: List Servers"**
+2. Click "twincat-automation" → **"Start"**
+3. If prompted, click **"Trust"**
 
 ### Build Error: "MSB4803: ResolveComReference not supported"
-You're using `dotnet build` instead of MSBuild.exe. Use the build script:
-```powershell
-.\scripts\build.ps1
-```
 
-### Build Error: "MSB3644: Reference assemblies not found"
-Install the .NET Framework 4.7.2 Developer Pack:
-https://dotnet.microsoft.com/download/dotnet-framework/net472
+You're using `dotnet build` instead of MSBuild. Use the setup script:
+```powershell
+.\setup.bat
+```
 
 ### "TwinCAT/Visual Studio not found"
-Make sure TwinCAT XAE is installed and try specifying the version:
+
+Specify the TwinCAT version explicitly:
 ```
---tcVersion "3.1.4026.17"
+Build my project with TwinCAT version 3.1.4026.17
 ```
 
-### "COM object error"
-Run VS Code as Administrator, or ensure TwinCAT is properly registered.
+### ADS Connection Failed
 
----
-
-## Moving to Another PC
-
-When you clone or copy this folder to another computer:
-
-1. Install all prerequisites (see table above)
-2. Run `setup.bat` or:
-   ```powershell
-   .\scripts\setup.ps1      # Build the CLI tool
-   .\scripts\install-mcp.ps1 # Register with VS Code
-   ```
-3. Restart VS Code and start the MCP server
-
-The `install-mcp.ps1` script automatically detects the folder location and updates VS Code's config.
+- Verify AMS Net ID is correct
+- Ensure ADS route exists to target
+- Check firewall allows ADS traffic (port 48898)
 
 ---
 
@@ -211,73 +219,56 @@ The `install-mcp.ps1` script automatically detects the folder location and updat
 
 ```
 twincat-mcp/
-├── setup.bat               # One-click setup (double-click to run)
-├── README.md               # This file
-├── PLAN.md                 # Architecture documentation
-├── PROGRESS.md             # Development progress
+├── setup.bat               # One-click setup
 ├── TcAutomation/           # .NET CLI tool (COM automation)
-│   ├── TcAutomation.csproj # Classic format, .NET Framework 4.7.2
-│   ├── Program.cs          # CLI entry point
-│   ├── Core/               # COM wrappers, VS instance management
-│   ├── Commands/           # Build, Info command implementations
+│   ├── Commands/           # Build, Deploy, ADS commands
+│   ├── Core/               # VS instance, COM wrappers
 │   └── Models/             # JSON output models
 ├── mcp-server/             # Python MCP server
-│   ├── server.py           # MCP protocol implementation
-│   └── requirements.txt    # Python dependencies
-├── scripts/                # Helper scripts
-│   ├── setup.ps1           # Check prerequisites + build
-│   ├── build.ps1           # Build with MSBuild
-│   ├── install-mcp.ps1     # Register MCP server in VS Code
-│   ├── test-cli.ps1        # Test CLI directly
-│   ├── test-mcp.ps1        # Test with MCP Inspector
-│   └── test-mcp-automated.ps1  # Automated test suite
-└── .vscode/                # VS Code integration
-    └── mcp.json            # Workspace MCP config (optional)
-```
-
-## Testing
-
-### Automated Tests
-
-Run the full test suite to verify everything works:
-
-```powershell
-# Full test including build (~60 seconds)
-.\scripts\test-mcp-automated.ps1
-
-# Quick test, skip build (~5 seconds)
-.\scripts\test-mcp-automated.ps1 -SkipBuild
-
-# Use a specific TwinCAT solution
-.\scripts\test-mcp-automated.ps1 -Solution "C:\path\to\your\solution.sln"
-```
-
-### Manual Testing
-
-```powershell
-# Test CLI directly
-.\TcAutomation\bin\Release\TcAutomation.exe info --solution "C:\path\to\solution.sln"
-.\TcAutomation\bin\Release\TcAutomation.exe build --solution "C:\path\to\solution.sln"
-
-# Test with MCP Inspector (opens browser UI)
-npx @modelcontextprotocol/inspector python mcp-server/server.py
+│   └── server.py           # MCP protocol implementation
+└── scripts/                # PowerShell helpers
+    ├── setup.ps1           # Prerequisites + build
+    ├── install-mcp.ps1     # Register with VS Code
+    └── test-*.ps1          # Test scripts
 ```
 
 ---
 
 ## Development
 
-See [PLAN.md](PLAN.md) for architecture details and [PROGRESS.md](PROGRESS.md) for development history.
-
 ### Adding New Tools
 
-1. Add command to `TcAutomation/Commands/`
+1. Add command class in `TcAutomation/Commands/`
 2. Register in `Program.cs`
-3. Add tool in `mcp-server/server.py`
-4. Update tests in `scripts/test-mcp-automated.ps1`
+3. Add tool definition and handler in `mcp-server/server.py`
+4. Test with `.\scripts\test-mcp-automated.ps1`
+
+### Building
+
+```powershell
+.\scripts\build.ps1
+```
+
+### Testing
+
+```powershell
+# Full test suite
+.\scripts\test-mcp-automated.ps1
+
+# Quick test (skip build)
+.\scripts\test-mcp-automated.ps1 -SkipBuild
+```
 
 ---
 
 ## License
 
-MIT
+MIT License - See [LICENSE](LICENSE) for details.
+
+---
+
+## Acknowledgments
+
+- [Beckhoff Automation](https://www.beckhoff.com/) for TwinCAT
+- [Model Context Protocol](https://modelcontextprotocol.io/) specification
+- Inspired by [TcUnit-Runner](https://github.com/tcunit/TcUnit-Runner)

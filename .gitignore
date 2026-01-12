@@ -30,3 +30,7 @@ tests/TestTwinCATProject/
 
 # npm (for MCP Inspector)
 node_modules/
+
+# Development notes (not for public repo)
+PLAN.md
+PROGRESS.md
