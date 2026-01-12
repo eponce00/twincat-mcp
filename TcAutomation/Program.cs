@@ -270,6 +270,131 @@ namespace TcAutomation
             rootCommand.AddCommand(disableIoCommand);
             rootCommand.AddCommand(setVariantCommand);
 
+            // === GET-STATE COMMAND (ADS) ===
+            var getStateCommand = new Command("get-state", "Get TwinCAT runtime state from a PLC via ADS (no VS required)");
+            var getStateAmsOpt = CreateAmsNetIdOption(required: true);
+            var getStatePortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "AMS port (default: 851 for PLC runtime)",
+                getDefaultValue: () => 851);
+            getStateCommand.AddOption(getStateAmsOpt);
+            getStateCommand.AddOption(getStatePortOpt);
+            
+            getStateCommand.SetHandler((string amsNetId, int port) =>
+            {
+                GetStateCommand.Execute(amsNetId, port);
+            }, getStateAmsOpt, getStatePortOpt);
+
+            // === READ-VAR COMMAND (ADS) ===
+            var readVarCommand = new Command("read-var", "Read a PLC variable via ADS (no VS required)");
+            var readVarAmsOpt = CreateAmsNetIdOption(required: true);
+            var readVarPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "AMS port (default: 851)",
+                getDefaultValue: () => 851);
+            var readVarSymbolOpt = new Option<string>(
+                aliases: new[] { "--symbol", "--var" },
+                description: "Symbol/variable name (e.g., 'MAIN.bMyBool', 'GVL.nCounter')");
+            readVarSymbolOpt.IsRequired = true;
+            readVarCommand.AddOption(readVarAmsOpt);
+            readVarCommand.AddOption(readVarPortOpt);
+            readVarCommand.AddOption(readVarSymbolOpt);
+            
+            readVarCommand.SetHandler((string amsNetId, int port, string symbol) =>
+            {
+                ReadVariableCommand.Execute(amsNetId, port, symbol);
+            }, readVarAmsOpt, readVarPortOpt, readVarSymbolOpt);
+
+            // === WRITE-VAR COMMAND (ADS) ===
+            var writeVarCommand = new Command("write-var", "Write a value to a PLC variable via ADS (no VS required)");
+            var writeVarAmsOpt = CreateAmsNetIdOption(required: true);
+            var writeVarPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "AMS port (default: 851)",
+                getDefaultValue: () => 851);
+            var writeVarSymbolOpt = new Option<string>(
+                aliases: new[] { "--symbol", "--var" },
+                description: "Symbol/variable name (e.g., 'MAIN.bMyBool')");
+            writeVarSymbolOpt.IsRequired = true;
+            var writeVarValueOpt = new Option<string>(
+                aliases: new[] { "--value" },
+                description: "Value to write (e.g., 'TRUE', '42', '3.14')");
+            writeVarValueOpt.IsRequired = true;
+            writeVarCommand.AddOption(writeVarAmsOpt);
+            writeVarCommand.AddOption(writeVarPortOpt);
+            writeVarCommand.AddOption(writeVarSymbolOpt);
+            writeVarCommand.AddOption(writeVarValueOpt);
+            
+            writeVarCommand.SetHandler((string amsNetId, int port, string symbol, string value) =>
+            {
+                WriteVariableCommand.Execute(amsNetId, port, symbol, value);
+            }, writeVarAmsOpt, writeVarPortOpt, writeVarSymbolOpt, writeVarValueOpt);
+
+            // === LIST-TASKS COMMAND ===
+            var listTasksCommand = new Command("list-tasks", "List all real-time tasks in a TwinCAT solution");
+            var listTasksSolutionOpt = CreateSolutionOption();
+            var listTasksTcVersionOpt = CreateTcVersionOption();
+            listTasksCommand.AddOption(listTasksSolutionOpt);
+            listTasksCommand.AddOption(listTasksTcVersionOpt);
+            
+            listTasksCommand.SetHandler((string solution, string? tcVersion) =>
+            {
+                ListTasksCommand.Execute(solution, tcVersion);
+            }, listTasksSolutionOpt, listTasksTcVersionOpt);
+
+            // === CONFIGURE-TASK COMMAND ===
+            var configureTaskCommand = new Command("configure-task", "Configure a real-time task (enable/disable, autostart)");
+            var cfgTaskSolutionOpt = CreateSolutionOption();
+            var cfgTaskTcVersionOpt = CreateTcVersionOption();
+            var cfgTaskNameOpt = new Option<string>(
+                aliases: new[] { "--task", "-t" },
+                description: "Task name to configure");
+            cfgTaskNameOpt.IsRequired = true;
+            var cfgTaskEnableOpt = new Option<bool?>(
+                aliases: new[] { "--enable" },
+                description: "Enable the task (false to disable)");
+            var cfgTaskAutostartOpt = new Option<bool?>(
+                aliases: new[] { "--autostart" },
+                description: "Set autostart for the task");
+            configureTaskCommand.AddOption(cfgTaskSolutionOpt);
+            configureTaskCommand.AddOption(cfgTaskTcVersionOpt);
+            configureTaskCommand.AddOption(cfgTaskNameOpt);
+            configureTaskCommand.AddOption(cfgTaskEnableOpt);
+            configureTaskCommand.AddOption(cfgTaskAutostartOpt);
+            
+            configureTaskCommand.SetHandler((string solution, string taskName, bool? enable, bool? autostart, string? tcVersion) =>
+            {
+                ConfigureTaskCommand.Execute(solution, taskName, enable, autostart, tcVersion);
+            }, cfgTaskSolutionOpt, cfgTaskNameOpt, cfgTaskEnableOpt, cfgTaskAutostartOpt, cfgTaskTcVersionOpt);
+
+            // === CONFIGURE-RT COMMAND ===
+            var configureRtCommand = new Command("configure-rt", "Configure real-time CPU settings (cores, load limit)");
+            var cfgRtSolutionOpt = CreateSolutionOption();
+            var cfgRtTcVersionOpt = CreateTcVersionOption();
+            var cfgRtMaxCpusOpt = new Option<int?>(
+                aliases: new[] { "--max-cpus" },
+                description: "Maximum number of CPUs for real-time (e.g., 1 for single core)");
+            var cfgRtLoadLimitOpt = new Option<int?>(
+                aliases: new[] { "--load-limit" },
+                description: "CPU load limit percentage for real-time (e.g., 80 for 80%)");
+            configureRtCommand.AddOption(cfgRtSolutionOpt);
+            configureRtCommand.AddOption(cfgRtTcVersionOpt);
+            configureRtCommand.AddOption(cfgRtMaxCpusOpt);
+            configureRtCommand.AddOption(cfgRtLoadLimitOpt);
+            
+            configureRtCommand.SetHandler((string solution, int? maxCpus, int? loadLimit, string? tcVersion) =>
+            {
+                ConfigureRtCommand.Execute(solution, maxCpus, loadLimit, tcVersion);
+            }, cfgRtSolutionOpt, cfgRtMaxCpusOpt, cfgRtLoadLimitOpt, cfgRtTcVersionOpt);
+
+            // === ADD NEW COMMANDS TO ROOT ===
+            rootCommand.AddCommand(getStateCommand);
+            rootCommand.AddCommand(readVarCommand);
+            rootCommand.AddCommand(writeVarCommand);
+            rootCommand.AddCommand(listTasksCommand);
+            rootCommand.AddCommand(configureTaskCommand);
+            rootCommand.AddCommand(configureRtCommand);
+
             return await rootCommand.InvokeAsync(args);
         }
 

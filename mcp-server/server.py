@@ -16,6 +16,12 @@ Tools:
 - twincat_set_boot_project: Configure boot project settings
 - twincat_disable_io: Disable/enable I/O devices
 - twincat_set_variant: Get or set TwinCAT project variant
+- twincat_get_state: Get TwinCAT runtime state via ADS
+- twincat_read_var: Read a PLC variable via ADS
+- twincat_write_var: Write a PLC variable via ADS
+- twincat_list_tasks: List real-time tasks
+- twincat_configure_task: Configure task (enable/autostart)
+- twincat_configure_rt: Configure real-time CPU settings
 """
 
 import json
@@ -355,6 +361,151 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["solutionPath"]
             }
+        ),
+        # Phase 4: ADS Communication Tools
+        Tool(
+            name="twincat_get_state",
+            description="Get the TwinCAT runtime state via direct ADS connection. Does NOT require Visual Studio - connects directly to the PLC. Returns: Run, Stop, Config, Error, etc.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1' or '127.0.0.1.1.1' for local)"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851 for PLC runtime 1)",
+                        "default": 851
+                    }
+                },
+                "required": ["amsNetId"]
+            }
+        ),
+        Tool(
+            name="twincat_read_var",
+            description="Read a PLC variable value via direct ADS connection. Does NOT require Visual Studio - connects directly to the PLC. Use symbol paths like 'MAIN.bMyBool' or 'GVL.nCounter'.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1')"
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Full symbol path of the variable (e.g., 'MAIN.bMyBool', 'GVL.nCounter')"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851 for PLC runtime 1)",
+                        "default": 851
+                    }
+                },
+                "required": ["amsNetId", "symbol"]
+            }
+        ),
+        Tool(
+            name="twincat_write_var",
+            description="Write a value to a PLC variable via direct ADS connection. Does NOT require Visual Studio - connects directly to the PLC. Supports BOOL, INT, DINT, REAL, LREAL, STRING types.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1')"
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Full symbol path of the variable (e.g., 'MAIN.bMyBool', 'GVL.nCounter')"
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Value to write (will be converted to appropriate type). Examples: 'true', '42', '3.14', 'Hello'"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "ADS port number (default: 851 for PLC runtime 1)",
+                        "default": 851
+                    }
+                },
+                "required": ["amsNetId", "symbol", "value"]
+            }
+        ),
+        # Phase 4: Task Management Tools
+        Tool(
+            name="twincat_list_tasks",
+            description="List all real-time tasks in the TwinCAT project with their configuration (priority, cycle time, enabled state).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_configure_task",
+            description="Configure a real-time task: enable/disable it or set autostart. Useful for enabling test tasks before running unit tests.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "taskName": {
+                        "type": "string",
+                        "description": "Name of the task to configure (e.g., 'PlcTask', 'TestTask')"
+                    },
+                    "enable": {
+                        "type": "boolean",
+                        "description": "If true, enable the task. If false, disable the task. Optional."
+                    },
+                    "autostart": {
+                        "type": "boolean",
+                        "description": "If true, task starts automatically on activation. If false, requires manual start. Optional."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath", "taskName"]
+            }
+        ),
+        Tool(
+            name="twincat_configure_rt",
+            description="Configure TwinCAT real-time settings: max CPU cores for isolated cores and CPU load limit percentage.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "maxCpus": {
+                        "type": "integer",
+                        "description": "Maximum number of CPU cores for isolated real-time cores (1-based). Default: 1"
+                    },
+                    "loadLimit": {
+                        "type": "integer",
+                        "description": "CPU load limit percentage (1-100). Default: 50"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
         )
     ]
 
@@ -659,6 +810,149 @@ PLC Count: {result.get('plcCount', 0)}
             output = f"✅ {result.get('message', 'Variant operation successful')}\n\n"
             output += f"Previous variant: {result.get('previousVariant') or '(default)'}\n"
             output += f"Current variant: {result.get('currentVariant') or '(default)'}"
+        else:
+            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    # Phase 4: ADS Communication Tools
+    elif name == "twincat_get_state":
+        ams_net_id = arguments.get("amsNetId", "")
+        port = arguments.get("port", 851)
+        
+        args = ["--amsnetid", ams_net_id, "--port", str(port)]
+        
+        result = run_tc_automation("get-state", args)
+        
+        if result.get("success"):
+            state = result.get("state", "Unknown")
+            state_code = result.get("stateCode", 0)
+            device_state = result.get("deviceState", 0)
+            emoji = "🟢" if state == "Run" else "🟡" if state == "Config" else "🔴" if state in ["Stop", "Error"] else "⚪"
+            output = f"{emoji} TwinCAT State: **{state}** (code: {state_code})\n"
+            output += f"📡 AMS Net ID: {result.get('amsNetId', ams_net_id)}\n"
+            output += f"🔌 Port: {result.get('port', port)}\n"
+            output += f"📊 Device State: {device_state}"
+        else:
+            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_read_var":
+        ams_net_id = arguments.get("amsNetId", "")
+        symbol = arguments.get("symbol", "")
+        port = arguments.get("port", 851)
+        
+        args = ["--amsnetid", ams_net_id, "--symbol", symbol, "--port", str(port)]
+        
+        result = run_tc_automation("read-var", args)
+        
+        if result.get("success"):
+            output = f"✅ Variable Read: **{symbol}**\n\n"
+            output += f"📊 Value: `{result.get('value', 'null')}`\n"
+            output += f"📋 Data Type: {result.get('dataType', 'Unknown')}\n"
+            output += f"📐 Size: {result.get('size', 0)} bytes"
+        else:
+            output = f"❌ Failed to read '{symbol}': {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_write_var":
+        ams_net_id = arguments.get("amsNetId", "")
+        symbol = arguments.get("symbol", "")
+        value = arguments.get("value", "")
+        port = arguments.get("port", 851)
+        
+        args = ["--amsnetid", ams_net_id, "--symbol", symbol, "--value", value, "--port", str(port)]
+        
+        result = run_tc_automation("write-var", args)
+        
+        if result.get("success"):
+            output = f"✅ Variable Written: **{symbol}**\n\n"
+            output += f"📝 Previous: `{result.get('previousValue', 'unknown')}`\n"
+            output += f"📝 New Value: `{result.get('newValue', value)}`\n"
+            output += f"📋 Data Type: {result.get('dataType', 'Unknown')}"
+        else:
+            output = f"❌ Failed to write '{symbol}': {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    # Phase 4: Task Management Tools
+    elif name == "twincat_list_tasks":
+        solution_path = arguments.get("solutionPath", "")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("list-tasks", args)
+        
+        if result.get("success"):
+            tasks = result.get("tasks", [])
+            output = f"📋 Real-Time Tasks ({len(tasks)} found)\n\n"
+            for task in tasks:
+                enabled = "✅" if task.get("enabled") else "❌"
+                autostart = "🚀" if task.get("autostart") else "⏸️"
+                output += f"{enabled} **{task.get('name', 'Unknown')}**\n"
+                output += f"   Priority: {task.get('priority', '-')}\n"
+                output += f"   Cycle Time: {task.get('cycleTime', '-')}\n"
+                output += f"   Autostart: {autostart} {'Yes' if task.get('autostart') else 'No'}\n\n"
+        else:
+            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_configure_task":
+        solution_path = arguments.get("solutionPath", "")
+        task_name = arguments.get("taskName", "")
+        enable = arguments.get("enable")
+        autostart = arguments.get("autostart")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path, "--task", task_name]
+        if enable is True:
+            args.append("--enable")
+        elif enable is False:
+            args.append("--disable")
+        if autostart is True:
+            args.append("--autostart")
+        elif autostart is False:
+            args.append("--no-autostart")
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("configure-task", args)
+        
+        if result.get("success"):
+            output = f"✅ Task '{task_name}' configured\n\n"
+            output += f"Enabled: {'Yes' if result.get('enabled') else 'No'}\n"
+            output += f"Autostart: {'Yes' if result.get('autostart') else 'No'}"
+        else:
+            output = f"❌ Failed to configure '{task_name}': {result.get('errorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_configure_rt":
+        solution_path = arguments.get("solutionPath", "")
+        max_cpus = arguments.get("maxCpus")
+        load_limit = arguments.get("loadLimit")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if max_cpus is not None:
+            args.extend(["--max-cpus", str(max_cpus)])
+        if load_limit is not None:
+            args.extend(["--load-limit", str(load_limit)])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("configure-rt", args)
+        
+        if result.get("success"):
+            output = f"✅ Real-Time Settings Configured\n\n"
+            output += f"🖥️ Max Isolated CPU Cores: {result.get('maxCpus', '-')}\n"
+            output += f"📊 CPU Load Limit: {result.get('loadLimit', '-')}%"
         else:
             output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
         

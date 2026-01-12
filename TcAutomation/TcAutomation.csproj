@@ -87,6 +87,9 @@
     <PackageReference Include="System.CommandLine">
       <Version>2.0.0-beta4.22272.1</Version>
     </PackageReference>
+    <PackageReference Include="Beckhoff.TwinCAT.Ads">
+      <Version>6.1.203</Version>
+    </PackageReference>
   </ItemGroup>
   
   <ItemGroup>
@@ -106,6 +109,12 @@
     <Compile Include="Commands\SetBootProjectCommand.cs" />
     <Compile Include="Commands\DisableIoCommand.cs" />
     <Compile Include="Commands\SetVariantCommand.cs" />
+    <Compile Include="Commands\GetStateCommand.cs" />
+    <Compile Include="Commands\ReadVariableCommand.cs" />
+    <Compile Include="Commands\WriteVariableCommand.cs" />
+    <Compile Include="Commands\ListTasksCommand.cs" />
+    <Compile Include="Commands\ConfigureTaskCommand.cs" />
+    <Compile Include="Commands\ConfigureRtCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>
