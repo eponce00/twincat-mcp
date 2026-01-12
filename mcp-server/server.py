@@ -816,6 +816,7 @@ PLC Count: {result.get('plcCount', 0)}
         return [TextContent(type="text", text=output)]
     
     # Phase 4: ADS Communication Tools
+    # Note: C# outputs PascalCase JSON keys (Success, AdsState, etc.)
     elif name == "twincat_get_state":
         ams_net_id = arguments.get("amsNetId", "")
         port = arguments.get("port", 851)
@@ -824,17 +825,17 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("get-state", args)
         
-        if result.get("success"):
-            state = result.get("state", "Unknown")
-            state_code = result.get("stateCode", 0)
-            device_state = result.get("deviceState", 0)
+        if result.get("Success"):
+            state = result.get("AdsState", "Unknown")
+            device_state = result.get("DeviceState", 0)
             emoji = "🟢" if state == "Run" else "🟡" if state == "Config" else "🔴" if state in ["Stop", "Error"] else "⚪"
-            output = f"{emoji} TwinCAT State: **{state}** (code: {state_code})\n"
-            output += f"📡 AMS Net ID: {result.get('amsNetId', ams_net_id)}\n"
-            output += f"🔌 Port: {result.get('port', port)}\n"
-            output += f"📊 Device State: {device_state}"
+            output = f"{emoji} TwinCAT State: **{state}**\n"
+            output += f"📡 AMS Net ID: {result.get('AmsNetId', ams_net_id)}\n"
+            output += f"🔌 Port: {result.get('Port', port)}\n"
+            output += f"📊 Device State: {device_state}\n"
+            output += f"📝 Description: {result.get('StateDescription', '')}"
         else:
-            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -847,13 +848,13 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("read-var", args)
         
-        if result.get("success"):
+        if result.get("Success"):
             output = f"✅ Variable Read: **{symbol}**\n\n"
-            output += f"📊 Value: `{result.get('value', 'null')}`\n"
-            output += f"📋 Data Type: {result.get('dataType', 'Unknown')}\n"
-            output += f"📐 Size: {result.get('size', 0)} bytes"
+            output += f"📊 Value: `{result.get('Value', 'null')}`\n"
+            output += f"📋 Data Type: {result.get('DataType', 'Unknown')}\n"
+            output += f"📐 Size: {result.get('Size', 0)} bytes"
         else:
-            output = f"❌ Failed to read '{symbol}': {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed to read '{symbol}': {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -867,13 +868,13 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("write-var", args)
         
-        if result.get("success"):
+        if result.get("Success"):
             output = f"✅ Variable Written: **{symbol}**\n\n"
-            output += f"📝 Previous: `{result.get('previousValue', 'unknown')}`\n"
-            output += f"📝 New Value: `{result.get('newValue', value)}`\n"
-            output += f"📋 Data Type: {result.get('dataType', 'Unknown')}"
+            output += f"📝 Previous: `{result.get('PreviousValue', 'unknown')}`\n"
+            output += f"📝 New Value: `{result.get('NewValue', value)}`\n"
+            output += f"📋 Data Type: {result.get('DataType', 'Unknown')}"
         else:
-            output = f"❌ Failed to write '{symbol}': {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed to write '{symbol}': {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -888,18 +889,21 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("list-tasks", args)
         
-        if result.get("success"):
-            tasks = result.get("tasks", [])
+        if result.get("Success"):
+            tasks = result.get("Tasks", [])
             output = f"📋 Real-Time Tasks ({len(tasks)} found)\n\n"
             for task in tasks:
-                enabled = "✅" if task.get("enabled") else "❌"
-                autostart = "🚀" if task.get("autostart") else "⏸️"
-                output += f"{enabled} **{task.get('name', 'Unknown')}**\n"
-                output += f"   Priority: {task.get('priority', '-')}\n"
-                output += f"   Cycle Time: {task.get('cycleTime', '-')}\n"
-                output += f"   Autostart: {autostart} {'Yes' if task.get('autostart') else 'No'}\n\n"
+                # C# outputs Disabled (inverted), so enabled = not Disabled
+                enabled = "✅" if not task.get("Disabled", True) else "❌"
+                autostart = "🚀" if task.get("AutoStart", False) else "⏸️"
+                cycle_us = task.get("CycleTimeUs", 0)
+                cycle_ms = cycle_us / 1000 if cycle_us else 0
+                output += f"{enabled} **{task.get('Name', 'Unknown')}**\n"
+                output += f"   Priority: {task.get('Priority', '-')}\n"
+                output += f"   Cycle Time: {cycle_ms}ms ({cycle_us}µs)\n"
+                output += f"   Autostart: {autostart} {'Yes' if task.get('AutoStart') else 'No'}\n\n"
         else:
-            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -924,12 +928,12 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("configure-task", args)
         
-        if result.get("success"):
+        if result.get("Success"):
             output = f"✅ Task '{task_name}' configured\n\n"
-            output += f"Enabled: {'Yes' if result.get('enabled') else 'No'}\n"
-            output += f"Autostart: {'Yes' if result.get('autostart') else 'No'}"
+            output += f"Enabled: {'Yes' if result.get('Enabled') else 'No'}\n"
+            output += f"Autostart: {'Yes' if result.get('AutoStart') else 'No'}"
         else:
-            output = f"❌ Failed to configure '{task_name}': {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed to configure '{task_name}': {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
@@ -949,12 +953,12 @@ PLC Count: {result.get('plcCount', 0)}
         
         result = run_tc_automation("configure-rt", args)
         
-        if result.get("success"):
+        if result.get("Success"):
             output = f"✅ Real-Time Settings Configured\n\n"
-            output += f"🖥️ Max Isolated CPU Cores: {result.get('maxCpus', '-')}\n"
-            output += f"📊 CPU Load Limit: {result.get('loadLimit', '-')}%"
+            output += f"🖥️ Max Isolated CPU Cores: {result.get('MaxCpus', '-')}\n"
+            output += f"📊 CPU Load Limit: {result.get('LoadLimit', '-')}%"
         else:
-            output = f"❌ Failed: {result.get('errorMessage', 'Unknown error')}"
+            output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
