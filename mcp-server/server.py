@@ -7,6 +7,11 @@ It wraps the TcAutomation.exe CLI tool which provides access to the TwinCAT Auto
 Tools:
 - twincat_build: Build a TwinCAT solution and return errors/warnings
 - twincat_get_info: Get information about a TwinCAT solution
+- twincat_clean: Clean a TwinCAT solution
+- twincat_set_target: Set target AMS Net ID
+- twincat_activate: Activate configuration on target PLC
+- twincat_restart: Restart TwinCAT runtime on target
+- twincat_deploy: Full deployment workflow
 """
 
 import json
@@ -131,6 +136,126 @@ async def list_tools() -> list[Tool]:
                 },
                 "required": ["solutionPath"]
             }
+        ),
+        Tool(
+            name="twincat_clean",
+            description="Clean a TwinCAT solution (remove build artifacts).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_set_target",
+            description="Set the target AMS Net ID for deployment without activating.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "Target AMS Net ID (e.g., '5.22.157.86.1.1')"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath", "amsNetId"]
+            }
+        ),
+        Tool(
+            name="twincat_activate",
+            description="Activate TwinCAT configuration on the target PLC. This downloads the configuration to the target.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "Target AMS Net ID. Optional - uses project default if not specified."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_restart",
+            description="Restart TwinCAT runtime on the target PLC.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "Target AMS Net ID. Optional - uses project default if not specified."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            }
+        ),
+        Tool(
+            name="twincat_deploy",
+            description="Full deployment workflow: build solution, activate boot project, activate configuration, and restart TwinCAT on target PLC.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "Target AMS Net ID (e.g., '5.22.157.86.1.1')"
+                    },
+                    "plcName": {
+                        "type": "string",
+                        "description": "Deploy only this PLC project. Optional - deploys all PLCs if not specified."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    },
+                    "skipBuild": {
+                        "type": "boolean",
+                        "description": "Skip building the solution (default: false)",
+                        "default": False
+                    },
+                    "dryRun": {
+                        "type": "boolean",
+                        "description": "Show what would be done without making changes (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["solutionPath", "amsNetId"]
+            }
         )
     ]
 
@@ -196,6 +321,124 @@ PLC Projects:
                     output += f"  - {plc.get('name', 'Unknown')} (AMS Port: {plc.get('amsPort', 'Unknown')})\n"
             else:
                 output += "  (none found)\n"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_clean":
+        solution_path = arguments.get("solutionPath", "")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("clean", args)
+        
+        if result.get("success"):
+            output = f"✅ {result.get('message', 'Solution cleaned successfully')}"
+        else:
+            output = f"❌ Clean failed: {result.get('error', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_set_target":
+        solution_path = arguments.get("solutionPath", "")
+        ams_net_id = arguments.get("amsNetId", "")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path, "--amsnetid", ams_net_id]
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("set-target", args)
+        
+        if result.get("success"):
+            output = f"✅ {result.get('message', 'Target set successfully')}\n"
+            output += f"Previous target: {result.get('previousTarget', 'Unknown')}\n"
+            output += f"New target: {result.get('newTarget', ams_net_id)}"
+        else:
+            output = f"❌ Set target failed: {result.get('error', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_activate":
+        solution_path = arguments.get("solutionPath", "")
+        ams_net_id = arguments.get("amsNetId")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if ams_net_id:
+            args.extend(["--amsnetid", ams_net_id])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("activate", args)
+        
+        if result.get("success"):
+            output = f"✅ {result.get('message', 'Configuration activated')}\n"
+            output += f"Target: {result.get('targetNetId', 'Unknown')}"
+        else:
+            output = f"❌ Activation failed: {result.get('error', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_restart":
+        solution_path = arguments.get("solutionPath", "")
+        ams_net_id = arguments.get("amsNetId")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if ams_net_id:
+            args.extend(["--amsnetid", ams_net_id])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("restart", args)
+        
+        if result.get("success"):
+            output = f"✅ {result.get('message', 'TwinCAT restarted')}\n"
+            output += f"Target: {result.get('targetNetId', 'Unknown')}"
+        else:
+            output = f"❌ Restart failed: {result.get('error', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_deploy":
+        solution_path = arguments.get("solutionPath", "")
+        ams_net_id = arguments.get("amsNetId", "")
+        plc_name = arguments.get("plcName")
+        tc_version = arguments.get("tcVersion")
+        skip_build = arguments.get("skipBuild", False)
+        dry_run = arguments.get("dryRun", False)
+        
+        args = ["--solution", solution_path, "--amsnetid", ams_net_id]
+        if plc_name:
+            args.extend(["--plc", plc_name])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        if skip_build:
+            args.append("--skip-build")
+        if dry_run:
+            args.append("--dry-run")
+        
+        result = run_tc_automation("deploy", args)
+        
+        if result.get("success"):
+            output = f"{'🔍 DRY RUN: ' if dry_run else ''}✅ {result.get('message', 'Deployment successful')}\n\n"
+            output += f"Target: {result.get('targetNetId', ams_net_id)}\n"
+            output += f"Deployed PLCs: {', '.join(result.get('deployedPlcs', []))}\n\n"
+            
+            if result.get("steps"):
+                output += "📋 Deployment Steps:\n"
+                for step in result["steps"]:
+                    dry_note = " (dry run)" if step.get("dryRun") else ""
+                    output += f"  {step.get('step', '?')}. {step.get('action', 'Unknown')}{dry_note}\n"
+        else:
+            output = f"❌ Deployment failed: {result.get('error', 'Unknown error')}\n"
+            if result.get("errors"):
+                output += "\n🔴 Build Errors:\n"
+                for e in result["errors"]:
+                    output += f"  - {e.get('file', '')}:{e.get('line', '')}: {e.get('description', '')}\n"
         
         return [TextContent(type="text", text=output)]
     

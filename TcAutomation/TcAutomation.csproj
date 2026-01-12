@@ -97,6 +97,11 @@
     <Compile Include="Core\VisualStudioInstance.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
+    <Compile Include="Commands\CleanCommand.cs" />
+    <Compile Include="Commands\SetTargetCommand.cs" />
+    <Compile Include="Commands\ActivateCommand.cs" />
+    <Compile Include="Commands\RestartCommand.cs" />
+    <Compile Include="Commands\DeployCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>
