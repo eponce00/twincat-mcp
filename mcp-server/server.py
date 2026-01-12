@@ -25,6 +25,7 @@ Tools:
 - twincat_configure_rt: Configure real-time CPU settings
 - twincat_check_all_objects: Check all PLC objects including unused ones
 - twincat_static_analysis: Run static code analysis (requires TE1200)
+- twincat_list_routes: List available ADS routes (PLCs)
 """
 
 import json
@@ -838,6 +839,20 @@ async def list_tools() -> list[Tool]:
                 "destructiveHint": False,
                 "idempotentHint": True
             }
+        ),
+        Tool(
+            name="twincat_list_routes",
+            description="List all configured ADS routes (PLCs) from TwinCAT. Shows available targets with their names, IP addresses, and AMS Net IDs. Useful for discovering PLCs before connecting.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
         )
     ]
 
@@ -1470,6 +1485,64 @@ PLC Count: {result.get('PlcCount', 0)}
                 output += f"Error: {result['errorMessage']}\n"
                 if "TE1200" in result.get("errorMessage", "") or "license" in result.get("errorMessage", "").lower():
                     output += "\n💡 Tip: Static Analysis requires the TE1200 license from Beckhoff."
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_list_routes":
+        # List ADS routes from TwinCAT StaticRoutes.xml
+        import xml.etree.ElementTree as ET
+        
+        # Find StaticRoutes.xml
+        routes_file = None
+        
+        # Try TWINCAT3DIR environment variable first
+        tc_dir = os.environ.get("TWINCAT3DIR", "")
+        if tc_dir:
+            candidate = Path(tc_dir).parent / "3.1" / "Target" / "StaticRoutes.xml"
+            if candidate.exists():
+                routes_file = candidate
+        
+        # Try common install locations
+        if not routes_file:
+            for base in ["C:\\TwinCAT", "C:\\Program Files\\Beckhoff\\TwinCAT"]:
+                candidate = Path(base) / "3.1" / "Target" / "StaticRoutes.xml"
+                if candidate.exists():
+                    routes_file = candidate
+                    break
+        
+        if not routes_file or not routes_file.exists():
+            return [TextContent(type="text", text="❌ Could not find TwinCAT StaticRoutes.xml\n\nTip: Ensure TwinCAT 3.1 is installed.")]
+        
+        try:
+            tree = ET.parse(routes_file)
+            root = tree.getroot()
+            
+            # Find all Route elements
+            routes = []
+            for route in root.findall(".//Route"):
+                name = route.find("Name")
+                address = route.find("Address")
+                netid = route.find("NetId")
+                
+                if name is not None and netid is not None:
+                    routes.append({
+                        "name": name.text or "",
+                        "address": address.text if address is not None else "",
+                        "amsNetId": netid.text or ""
+                    })
+            
+            if not routes:
+                output = "📡 No ADS routes configured\n\nTip: Add routes via TwinCAT Router or XAE."
+            else:
+                output = f"📡 Available ADS Routes ({len(routes)})\n\n"
+                output += "| Name | Address | AMS Net ID |\n"
+                output += "|------|---------|------------|\n"
+                for r in routes:
+                    output += f"| {r['name']} | {r['address']} | {r['amsNetId']} |\n"
+                output += f"\n📁 Source: {routes_file}"
+        
+        except Exception as e:
+            output = f"❌ Failed to parse routes file: {str(e)}"
         
         return [TextContent(type="text", text=output)]
     

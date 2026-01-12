@@ -243,6 +243,7 @@ Once installed, the TwinCAT tools work in **any VS Code workspace**.
 ### ADS Communication
 | Tool | Description |
 |------|-------------|
+| `twincat_list_routes` | List available ADS routes (PLCs) from TwinCAT router |
 | `twincat_get_state` | Get runtime state via ADS (Run/Config/Stop) |
 | `twincat_set_state` | Set runtime state via ADS (⚠️ requires armed mode) |
 | `twincat_read_var` | Read PLC variable by symbol path |
