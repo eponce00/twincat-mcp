@@ -23,6 +23,8 @@ Tools:
 - twincat_list_tasks: List real-time tasks
 - twincat_configure_task: Configure task (enable/autostart)
 - twincat_configure_rt: Configure real-time CPU settings
+- twincat_check_all_objects: Check all PLC objects including unused ones
+- twincat_static_analysis: Run static code analysis (requires TE1200)
 """
 
 import json
@@ -776,6 +778,66 @@ async def list_tools() -> list[Tool]:
                 "destructiveHint": False,
                 "idempotentHint": True
             }
+        ),
+        # Code Analysis Tools
+        Tool(
+            name="twincat_check_all_objects",
+            description="Check all PLC objects including unused ones. This catches compile errors in function blocks that aren't referenced anywhere - errors that a normal build would miss.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "plcName": {
+                        "type": "string",
+                        "description": "Target only this PLC project. Optional - checks all PLCs if not specified."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_static_analysis",
+            description="Run static code analysis on PLC projects. Checks coding rules, naming conventions, and best practices. Requires TE1200 license.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "checkAll": {
+                        "type": "boolean",
+                        "description": "Check all objects including unused ones (default: true)",
+                        "default": True
+                    },
+                    "plcName": {
+                        "type": "string",
+                        "description": "Target only this PLC project. Optional - analyzes all PLCs if not specified."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    }
+                },
+                "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
         )
     ]
 
@@ -1295,6 +1357,119 @@ PLC Count: {result.get('PlcCount', 0)}
             output += f"📊 CPU Load Limit: {result.get('LoadLimit', '-')}%"
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    # Code Analysis Tools
+    elif name == "twincat_check_all_objects":
+        solution_path = arguments.get("solutionPath", "")
+        plc_name = arguments.get("plcName")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if plc_name:
+            args.extend(["--plc", plc_name])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("check-all-objects", args)
+        
+        if result.get("success"):
+            output = f"✅ {result.get('message', 'Check completed')}\n\n"
+            
+            # Show PLC results
+            for plc in result.get("plcResults", []):
+                status = "✅" if plc.get("success") else "❌"
+                output += f"{status} {plc.get('name', 'Unknown')}\n"
+                if plc.get("error"):
+                    output += f"   ⚠️ {plc['error']}\n"
+            
+            # Show warnings if any
+            warnings = result.get("warnings", [])
+            if warnings:
+                output += f"\n⚠️ Warnings ({len(warnings)}):\n"
+                for w in warnings[:10]:  # Limit to first 10
+                    output += f"  • {w.get('fileName', '')}:{w.get('line', '')}: {w.get('description', '')}\n"
+                if len(warnings) > 10:
+                    output += f"  ... and {len(warnings) - 10} more\n"
+        else:
+            output = f"❌ Check all objects failed\n\n"
+            if result.get("errorMessage"):
+                output += f"Error: {result['errorMessage']}\n"
+            
+            # Show errors
+            errors = result.get("errors", [])
+            if errors:
+                output += f"\n🔴 Errors ({len(errors)}):\n"
+                for e in errors[:15]:  # Limit to first 15
+                    output += f"  • {e.get('fileName', '')}:{e.get('line', '')}: {e.get('description', '')}\n"
+                if len(errors) > 15:
+                    output += f"  ... and {len(errors) - 15} more\n"
+            
+            # Show warnings
+            warnings = result.get("warnings", [])
+            if warnings:
+                output += f"\n⚠️ Warnings ({len(warnings)}):\n"
+                for w in warnings[:10]:
+                    output += f"  • {w.get('fileName', '')}:{w.get('line', '')}: {w.get('description', '')}\n"
+                if len(warnings) > 10:
+                    output += f"  ... and {len(warnings) - 10} more\n"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_static_analysis":
+        solution_path = arguments.get("solutionPath", "")
+        check_all = arguments.get("checkAll", True)
+        plc_name = arguments.get("plcName")
+        tc_version = arguments.get("tcVersion")
+        
+        args = ["--solution", solution_path]
+        if check_all:
+            args.append("--check-all")
+        if plc_name:
+            args.extend(["--plc", plc_name])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        
+        result = run_tc_automation("static-analysis", args)
+        
+        if result.get("success"):
+            scope = "all objects" if result.get("checkedAllObjects") else "used objects"
+            output = f"✅ Static Analysis Complete ({scope})\n\n"
+            output += f"📊 {result.get('errorCount', 0)} error(s), {result.get('warningCount', 0)} warning(s)\n\n"
+            
+            # Show PLC results
+            for plc in result.get("plcResults", []):
+                status = "✅" if plc.get("success") else "❌"
+                output += f"{status} {plc.get('name', 'Unknown')}\n"
+                if plc.get("error"):
+                    output += f"   ⚠️ {plc['error']}\n"
+            
+            # Show errors
+            errors = result.get("errors", [])
+            if errors:
+                output += f"\n🔴 Errors:\n"
+                for e in errors[:10]:
+                    rule = f"[{e.get('ruleId')}] " if e.get('ruleId') else ""
+                    output += f"  • {rule}{e.get('fileName', '')}:{e.get('line', '')}: {e.get('description', '')}\n"
+                if len(errors) > 10:
+                    output += f"  ... and {len(errors) - 10} more\n"
+            
+            # Show warnings
+            warnings = result.get("warnings", [])
+            if warnings:
+                output += f"\n⚠️ Warnings:\n"
+                for w in warnings[:10]:
+                    rule = f"[{w.get('ruleId')}] " if w.get('ruleId') else ""
+                    output += f"  • {rule}{w.get('fileName', '')}:{w.get('line', '')}: {w.get('description', '')}\n"
+                if len(warnings) > 10:
+                    output += f"  ... and {len(warnings) - 10} more\n"
+        else:
+            output = f"❌ Static Analysis Failed\n\n"
+            if result.get("errorMessage"):
+                output += f"Error: {result['errorMessage']}\n"
+                if "TE1200" in result.get("errorMessage", "") or "license" in result.get("errorMessage", "").lower():
+                    output += "\n💡 Tip: Static Analysis requires the TE1200 license from Beckhoff."
         
         return [TextContent(type="text", text=output)]
     

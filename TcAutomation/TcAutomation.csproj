@@ -116,6 +116,8 @@
     <Compile Include="Commands\ListTasksCommand.cs" />
     <Compile Include="Commands\ConfigureTaskCommand.cs" />
     <Compile Include="Commands\ConfigureRtCommand.cs" />
+    <Compile Include="Commands\CheckAllObjectsCommand.cs" />
+    <Compile Include="Commands\StaticAnalysisCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>

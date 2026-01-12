@@ -416,6 +416,49 @@ namespace TcAutomation
             rootCommand.AddCommand(configureTaskCommand);
             rootCommand.AddCommand(configureRtCommand);
 
+            // === CHECK-ALL-OBJECTS COMMAND ===
+            var checkAllObjectsCommand = new Command("check-all-objects", "Check all PLC objects including unused ones (catches errors in unreferenced FBs)");
+            var checkAllSolutionOpt = CreateSolutionOption();
+            var checkAllTcVersionOpt = CreateTcVersionOption();
+            var checkAllPlcOpt = new Option<string?>(
+                aliases: new[] { "--plc", "-p" },
+                description: "Target only this PLC project");
+            checkAllObjectsCommand.AddOption(checkAllSolutionOpt);
+            checkAllObjectsCommand.AddOption(checkAllTcVersionOpt);
+            checkAllObjectsCommand.AddOption(checkAllPlcOpt);
+            
+            checkAllObjectsCommand.SetHandler((string solution, string? tcVersion, string? plc) =>
+            {
+                var result = CheckAllObjectsCommand.Execute(solution, plc, tcVersion);
+                Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            }, checkAllSolutionOpt, checkAllTcVersionOpt, checkAllPlcOpt);
+            
+            rootCommand.AddCommand(checkAllObjectsCommand);
+
+            // === STATIC-ANALYSIS COMMAND ===
+            var staticAnalysisCommand = new Command("static-analysis", "Run static code analysis on PLC projects (requires TE1200 license)");
+            var sanSolutionOpt = CreateSolutionOption();
+            var sanTcVersionOpt = CreateTcVersionOption();
+            var sanPlcOpt = new Option<string?>(
+                aliases: new[] { "--plc", "-p" },
+                description: "Target only this PLC project");
+            var sanCheckAllOpt = new Option<bool>(
+                aliases: new[] { "--check-all" },
+                description: "Check all objects including unused ones (default: true)",
+                getDefaultValue: () => true);
+            staticAnalysisCommand.AddOption(sanSolutionOpt);
+            staticAnalysisCommand.AddOption(sanTcVersionOpt);
+            staticAnalysisCommand.AddOption(sanPlcOpt);
+            staticAnalysisCommand.AddOption(sanCheckAllOpt);
+            
+            staticAnalysisCommand.SetHandler((string solution, string? tcVersion, string? plc, bool checkAll) =>
+            {
+                var result = StaticAnalysisCommand.Execute(solution, checkAll, plc, tcVersion);
+                Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            }, sanSolutionOpt, sanTcVersionOpt, sanPlcOpt, sanCheckAllOpt);
+            
+            rootCommand.AddCommand(staticAnalysisCommand);
+
             return await rootCommand.InvokeAsync(args);
         }
 
