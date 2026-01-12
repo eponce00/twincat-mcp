@@ -459,6 +459,41 @@ namespace TcAutomation
             
             rootCommand.AddCommand(staticAnalysisCommand);
 
+            // === GET-ERROR-LIST COMMAND ===
+            var getErrorListCommand = new Command("get-error-list", "Get contents of Visual Studio Error List (errors, warnings, messages/ADS logs)");
+            var gelSolutionOpt = CreateSolutionOption();
+            var gelTcVersionOpt = CreateTcVersionOption();
+            var gelMessagesOpt = new Option<bool>(
+                aliases: new[] { "--messages", "-m" },
+                description: "Include messages (ADS logs, etc.)",
+                getDefaultValue: () => true);
+            var gelWarningsOpt = new Option<bool>(
+                aliases: new[] { "--warnings", "-w" },
+                description: "Include warnings",
+                getDefaultValue: () => true);
+            var gelErrorsOpt = new Option<bool>(
+                aliases: new[] { "--errors", "-e" },
+                description: "Include errors",
+                getDefaultValue: () => true);
+            var gelWaitOpt = new Option<int>(
+                aliases: new[] { "--wait" },
+                description: "Wait N seconds before reading (for async messages)",
+                getDefaultValue: () => 0);
+            getErrorListCommand.AddOption(gelSolutionOpt);
+            getErrorListCommand.AddOption(gelTcVersionOpt);
+            getErrorListCommand.AddOption(gelMessagesOpt);
+            getErrorListCommand.AddOption(gelWarningsOpt);
+            getErrorListCommand.AddOption(gelErrorsOpt);
+            getErrorListCommand.AddOption(gelWaitOpt);
+            
+            getErrorListCommand.SetHandler(async (string solution, string? tcVersion, bool messages, bool warnings, bool errors, int wait) =>
+            {
+                var result = await GetErrorListCommand.ExecuteAsync(solution, tcVersion, messages, warnings, errors, wait);
+                Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            }, gelSolutionOpt, gelTcVersionOpt, gelMessagesOpt, gelWarningsOpt, gelErrorsOpt, gelWaitOpt);
+            
+            rootCommand.AddCommand(getErrorListCommand);
+
             return await rootCommand.InvokeAsync(args);
         }
 

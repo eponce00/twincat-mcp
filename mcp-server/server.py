@@ -26,6 +26,7 @@ Tools:
 - twincat_check_all_objects: Check all PLC objects including unused ones
 - twincat_static_analysis: Run static code analysis (requires TE1200)
 - twincat_list_routes: List available ADS routes (PLCs)
+- twincat_get_error_list: Get VS Error List contents (errors, warnings, messages)
 """
 
 import json
@@ -853,6 +854,49 @@ async def list_tools() -> list[Tool]:
                 "destructiveHint": False,
                 "idempotentHint": True
             }
+        ),
+        Tool(
+            name="twincat_get_error_list",
+            description="Get contents of Visual Studio Error List window. Returns errors, warnings, and messages (including ADS logs from running PLC). Useful for viewing runtime messages, diagnostics, or any output that appears in the VS Error List.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    },
+                    "includeMessages": {
+                        "type": "boolean",
+                        "description": "Include messages (ADS logs, etc.). Default: true",
+                        "default": True
+                    },
+                    "includeWarnings": {
+                        "type": "boolean",
+                        "description": "Include warnings. Default: true",
+                        "default": True
+                    },
+                    "includeErrors": {
+                        "type": "boolean",
+                        "description": "Include errors. Default: true",
+                        "default": True
+                    },
+                    "waitSeconds": {
+                        "type": "integer",
+                        "description": "Wait N seconds before reading (for async messages). Default: 0",
+                        "default": 0
+                    }
+                },
+                "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
         )
     ]
 
@@ -1543,6 +1587,69 @@ PLC Count: {result.get('PlcCount', 0)}
         
         except Exception as e:
             output = f"❌ Failed to parse routes file: {str(e)}"
+        
+        return [TextContent(type="text", text=output)]
+    
+    elif name == "twincat_get_error_list":
+        solution_path = arguments.get("solutionPath", "")
+        tc_version = arguments.get("tcVersion")
+        include_messages = arguments.get("includeMessages", True)
+        include_warnings = arguments.get("includeWarnings", True)
+        include_errors = arguments.get("includeErrors", True)
+        wait_seconds = arguments.get("waitSeconds", 0)
+        
+        args = ["--solution", solution_path]
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        if not include_messages:
+            args.append("--messages=false")
+        else:
+            args.append("--messages")
+        if not include_warnings:
+            args.append("--warnings=false")
+        else:
+            args.append("--warnings")
+        if not include_errors:
+            args.append("--errors=false")
+        else:
+            args.append("--errors")
+        if wait_seconds > 0:
+            args.extend(["--wait", str(wait_seconds)])
+        
+        result = run_tc_automation("get-error-list", args)
+        
+        if result.get("success"):
+            error_count = result.get("errorCount", 0)
+            warning_count = result.get("warningCount", 0)
+            message_count = result.get("messageCount", 0)
+            total = result.get("totalCount", 0)
+            
+            output = f"📋 Error List ({total} items)\n\n"
+            output += f"🔴 Errors: {error_count} | 🟡 Warnings: {warning_count} | 💬 Messages: {message_count}\n\n"
+            
+            items = result.get("items", [])
+            if items:
+                for item in items:
+                    level = item.get("level", "")
+                    desc = item.get("description", "")
+                    filename = item.get("fileName", "")
+                    line = item.get("line", 0)
+                    
+                    if level == "Error":
+                        icon = "🔴"
+                    elif level == "Warning":
+                        icon = "🟡"
+                    else:
+                        icon = "💬"
+                    
+                    if filename and line > 0:
+                        output += f"{icon} {filename}:{line} - {desc}\n"
+                    else:
+                        output += f"{icon} {desc}\n"
+            else:
+                output += "No items in error list."
+        else:
+            output = f"❌ Failed to read error list: {result.get('errorMessage', 'Unknown error')}"
         
         return [TextContent(type="text", text=output)]
     
