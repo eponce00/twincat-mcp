@@ -119,6 +119,7 @@
     <Compile Include="Commands\CheckAllObjectsCommand.cs" />
     <Compile Include="Commands\StaticAnalysisCommand.cs" />
     <Compile Include="Commands\GetErrorListCommand.cs" />
+    <Compile Include="Commands\RunTcUnitCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>

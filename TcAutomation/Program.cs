@@ -494,6 +494,49 @@ namespace TcAutomation
             
             rootCommand.AddCommand(getErrorListCommand);
 
+            // === RUN-TCUNIT COMMAND ===
+            var runTcUnitCommand = new Command("run-tcunit", "Run TcUnit tests and return results");
+            var tcuSolutionOpt = CreateSolutionOption();
+            var tcuTcVersionOpt = CreateTcVersionOption();
+            var tcuAmsNetIdOpt = new Option<string?>(
+                aliases: new[] { "--amsnetid", "-a" },
+                description: "Target AMS Net ID (default: 127.0.0.1.1.1 for local)");
+            var tcuTaskOpt = new Option<string?>(
+                aliases: new[] { "--task", "-t" },
+                description: "Name of the task running TcUnit tests (auto-detected if only one task)");
+            var tcuPlcOpt = new Option<string?>(
+                aliases: new[] { "--plc", "-p" },
+                description: "Target only this PLC project");
+            var tcuTimeoutOpt = new Option<int>(
+                aliases: new[] { "--timeout" },
+                description: "Timeout in minutes (default: 10)",
+                getDefaultValue: () => 10);
+            var tcuDisableIoOpt = new Option<bool>(
+                aliases: new[] { "--disable-io", "-i" },
+                description: "Disable I/O devices (for running without hardware)",
+                getDefaultValue: () => false);
+            var tcuSkipBuildOpt = new Option<bool>(
+                aliases: new[] { "--skip-build" },
+                description: "Skip building the solution",
+                getDefaultValue: () => false);
+            
+            runTcUnitCommand.AddOption(tcuSolutionOpt);
+            runTcUnitCommand.AddOption(tcuTcVersionOpt);
+            runTcUnitCommand.AddOption(tcuAmsNetIdOpt);
+            runTcUnitCommand.AddOption(tcuTaskOpt);
+            runTcUnitCommand.AddOption(tcuPlcOpt);
+            runTcUnitCommand.AddOption(tcuTimeoutOpt);
+            runTcUnitCommand.AddOption(tcuDisableIoOpt);
+            runTcUnitCommand.AddOption(tcuSkipBuildOpt);
+            
+            runTcUnitCommand.SetHandler((string solution, string? tcVersion, string? amsNetId, string? task, string? plc, int timeout, bool disableIo, bool skipBuild) =>
+            {
+                var result = RunTcUnitCommand.Execute(solution, amsNetId, task, plc, tcVersion, timeout, disableIo, skipBuild);
+                Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            }, tcuSolutionOpt, tcuTcVersionOpt, tcuAmsNetIdOpt, tcuTaskOpt, tcuPlcOpt, tcuTimeoutOpt, tcuDisableIoOpt, tcuSkipBuildOpt);
+            
+            rootCommand.AddCommand(runTcUnitCommand);
+
             return await rootCommand.InvokeAsync(args);
         }
 

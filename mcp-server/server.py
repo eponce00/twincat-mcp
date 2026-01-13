@@ -27,6 +27,7 @@ Tools:
 - twincat_static_analysis: Run static code analysis (requires TE1200)
 - twincat_list_routes: List available ADS routes (PLCs)
 - twincat_get_error_list: Get VS Error List contents (errors, warnings, messages)
+- twincat_run_tcunit: Run TcUnit tests and return results
 """
 
 import json
@@ -120,9 +121,23 @@ def disarm_dangerous_operations() -> dict:
     return {"armed": False}
 
 
-def check_armed_for_tool(tool_name: str) -> tuple[bool, str]:
+def check_armed_for_tool(tool_name: str, arguments: dict = None) -> tuple[bool, str]:
     """Check if a tool can be executed. Returns (allowed, message)."""
     if tool_name not in DANGEROUS_TOOLS:
+        # Special case: twincat_run_tcunit requires armed mode for remote targets
+        if tool_name == "twincat_run_tcunit" and arguments:
+            ams_net_id = arguments.get("amsNetId", "127.0.0.1.1.1")
+            # Local targets don't require arming
+            if ams_net_id and not ams_net_id.startswith("127.0.0.1"):
+                if not is_armed():
+                    return False, (
+                        f"🔒 SAFETY: Running TcUnit tests on remote PLC '{ams_net_id}' requires armed mode.\n\n"
+                        f"Local testing (127.0.0.1.1.1) does not require arming.\n"
+                        f"To run tests on a remote PLC:\n"
+                        f"1. Call 'twincat_arm_dangerous_operations' with a reason\n"
+                        f"2. Then retry this operation within {ARMED_MODE_TTL} seconds\n\n"
+                        f"This safety mechanism prevents accidental PLC modifications."
+                    )
         return True, ""
     
     if not is_armed():
@@ -155,6 +170,27 @@ def check_confirmation(tool_name: str, arguments: dict) -> tuple[bool, str]:
         )
     
     return True, ""
+
+
+def format_duration(seconds: float) -> str:
+    """Format duration in human-readable format."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        mins = int(seconds // 60)
+        secs = seconds % 60
+        return f"{mins}m {secs:.1f}s"
+    else:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h {mins}m"
+
+
+def add_timing_to_output(output: str, start_time: float) -> str:
+    """Add execution timing to tool output."""
+    elapsed = time.time() - start_time
+    return f"{output}\n\n⏱️ Execution time: {format_duration(elapsed)}"
+
 
 # Initialize MCP server
 server = Server("twincat-mcp")
@@ -228,6 +264,89 @@ def run_tc_automation(command: str, args: list[str]) -> dict:
             "success": False,
             "errorMessage": str(e)
         }
+
+
+def run_tc_automation_with_progress(command: str, args: list[str], timeout_minutes: int = 10) -> tuple[dict, list[str]]:
+    """
+    Run TcAutomation.exe with progress capture from stderr.
+    Returns (result_dict, progress_messages).
+    """
+    exe_path = find_tc_automation_exe()
+    cmd = [str(exe_path), command] + args
+    progress_messages = []
+    
+    try:
+        # Use Popen for real-time stderr capture
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=str(exe_path.parent)
+        )
+        
+        # Read stderr in a thread while process runs
+        import threading
+        import queue
+        
+        stderr_queue = queue.Queue()
+        
+        def read_stderr():
+            for line in iter(process.stderr.readline, ''):
+                if line:
+                    stderr_queue.put(line.strip())
+            process.stderr.close()
+        
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+        stderr_thread.start()
+        
+        # Wait for process with timeout
+        timeout_seconds = timeout_minutes * 60 + 60  # Add buffer
+        try:
+            stdout, _ = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return {
+                "success": False,
+                "errorMessage": f"Command timed out after {timeout_minutes} minutes"
+            }, progress_messages
+        
+        # Collect all progress messages
+        while not stderr_queue.empty():
+            try:
+                line = stderr_queue.get_nowait()
+                if line.startswith("[PROGRESS]"):
+                    progress_messages.append(line[10:].strip())  # Remove "[PROGRESS] "
+                else:
+                    progress_messages.append(line)
+            except queue.Empty:
+                break
+        
+        # Parse JSON result
+        if stdout.strip():
+            try:
+                result = json.loads(stdout)
+                result["progressMessages"] = progress_messages
+                return result, progress_messages
+            except json.JSONDecodeError:
+                return {
+                    "success": False,
+                    "errorMessage": f"Invalid JSON output: {stdout}",
+                    "progressMessages": progress_messages
+                }, progress_messages
+        else:
+            return {
+                "success": False,
+                "errorMessage": "No output from TcAutomation.exe",
+                "progressMessages": progress_messages
+            }, progress_messages
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "errorMessage": str(e),
+            "progressMessages": progress_messages
+        }, progress_messages
 
 
 @server.list_tools()
@@ -897,6 +1016,56 @@ async def list_tools() -> list[Tool]:
                 "destructiveHint": False,
                 "idempotentHint": True
             }
+        ),
+        Tool(
+            name="twincat_run_tcunit",
+            description="Run TcUnit tests on a TwinCAT PLC project and return results. Handles full test workflow: build, configure task, set boot project, optionally disable I/O, activate, restart, and poll for results. Returns test counts (passed/failed) and individual test results.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "amsNetId": {
+                        "type": "string",
+                        "description": "Target AMS Net ID (default: 127.0.0.1.1.1 for local)"
+                    },
+                    "taskName": {
+                        "type": "string",
+                        "description": "Name of the task running TcUnit tests (auto-detected if only one task)"
+                    },
+                    "plcName": {
+                        "type": "string",
+                        "description": "Target only this PLC project"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    },
+                    "timeoutMinutes": {
+                        "type": "integer",
+                        "description": "Timeout in minutes (default: 10)",
+                        "default": 10
+                    },
+                    "disableIo": {
+                        "type": "boolean",
+                        "description": "Disable I/O devices for running without hardware (default: false)",
+                        "default": False
+                    },
+                    "skipBuild": {
+                        "type": "boolean",
+                        "description": "Skip building the solution (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["solutionPath"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False
+            }
         )
     ]
 
@@ -930,8 +1099,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         
         return [TextContent(type="text", text=output)]
     
-    # Check armed state for dangerous tools
-    allowed, message = check_armed_for_tool(name)
+    # Check armed state for dangerous tools (pass arguments for context-aware checks)
+    allowed, message = check_armed_for_tool(name, arguments)
     if not allowed:
         return [TextContent(type="text", text=message)]
     
@@ -939,6 +1108,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     confirmed, conf_message = check_confirmation(name, arguments)
     if not confirmed:
         return [TextContent(type="text", text=conf_message)]
+    
+    # Start timing for all tool operations
+    tool_start_time = time.time()
     
     if name == "twincat_build":
         solution_path = arguments.get("solutionPath", "")
@@ -973,7 +1145,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 for w in result["warnings"]:
                     output += f"  - {w.get('fileName', '')}:{w.get('line', '')}: {w.get('description', '')}\n"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_get_info":
         solution_path = arguments.get("solutionPath", "")
@@ -998,7 +1170,7 @@ PLC Projects:
             else:
                 output += "  (none found)\n"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_clean":
         solution_path = arguments.get("solutionPath", "")
@@ -1015,7 +1187,7 @@ PLC Projects:
         else:
             output = f"❌ Clean failed: {result.get('error', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_set_target":
         solution_path = arguments.get("solutionPath", "")
@@ -1035,7 +1207,7 @@ PLC Projects:
         else:
             output = f"❌ Set target failed: {result.get('error', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_activate":
         solution_path = arguments.get("solutionPath", "")
@@ -1056,7 +1228,7 @@ PLC Projects:
         else:
             output = f"❌ Activation failed: {result.get('error', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_restart":
         solution_path = arguments.get("solutionPath", "")
@@ -1077,7 +1249,7 @@ PLC Projects:
         else:
             output = f"❌ Restart failed: {result.get('error', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_deploy":
         solution_path = arguments.get("solutionPath", "")
@@ -1116,7 +1288,7 @@ PLC Projects:
                 for e in result["errors"]:
                     output += f"  - {e.get('file', '')}:{e.get('line', '')}: {e.get('description', '')}\n"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_list_plcs":
         solution_path = arguments.get("solutionPath", "")
@@ -1150,7 +1322,7 @@ PLC Count: {result.get('PlcCount', 0)}
             else:
                 output += "  (no PLC projects found)\n"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_set_boot_project":
         solution_path = arguments.get("solutionPath", "")
@@ -1183,7 +1355,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_disable_io":
         solution_path = arguments.get("solutionPath", "")
@@ -1221,7 +1393,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_set_variant":
         solution_path = arguments.get("solutionPath", "")
@@ -1245,7 +1417,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     # Phase 4: ADS Communication Tools
     # Note: C# outputs PascalCase JSON keys (Success, AdsState, etc.)
@@ -1269,7 +1441,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_set_state":
         ams_net_id = arguments.get("amsNetId", "")
@@ -1294,7 +1466,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed to set state: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_read_var":
         ams_net_id = arguments.get("amsNetId", "")
@@ -1313,7 +1485,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed to read '{symbol}': {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_write_var":
         ams_net_id = arguments.get("amsNetId", "")
@@ -1333,7 +1505,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed to write '{symbol}': {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     # Phase 4: Task Management Tools
     elif name == "twincat_list_tasks":
@@ -1362,7 +1534,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_configure_task":
         solution_path = arguments.get("solutionPath", "")
@@ -1392,7 +1564,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed to configure '{task_name}': {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_configure_rt":
         solution_path = arguments.get("solutionPath", "")
@@ -1417,7 +1589,7 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     # Code Analysis Tools
     elif name == "twincat_check_all_objects":
@@ -1474,7 +1646,7 @@ PLC Count: {result.get('PlcCount', 0)}
                 if len(warnings) > 10:
                     output += f"  ... and {len(warnings) - 10} more\n"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_static_analysis":
         solution_path = arguments.get("solutionPath", "")
@@ -1530,7 +1702,7 @@ PLC Count: {result.get('PlcCount', 0)}
                 if "TE1200" in result.get("errorMessage", "") or "license" in result.get("errorMessage", "").lower():
                     output += "\n💡 Tip: Static Analysis requires the TE1200 license from Beckhoff."
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_list_routes":
         # List ADS routes from TwinCAT StaticRoutes.xml
@@ -1588,7 +1760,7 @@ PLC Count: {result.get('PlcCount', 0)}
         except Exception as e:
             output = f"❌ Failed to parse routes file: {str(e)}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_get_error_list":
         solution_path = arguments.get("solutionPath", "")
@@ -1651,7 +1823,130 @@ PLC Count: {result.get('PlcCount', 0)}
         else:
             output = f"❌ Failed to read error list: {result.get('errorMessage', 'Unknown error')}"
         
-        return [TextContent(type="text", text=output)]
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+    
+    elif name == "twincat_run_tcunit":
+        solution_path = arguments.get("solutionPath", "")
+        ams_net_id = arguments.get("amsNetId")
+        task_name = arguments.get("taskName")
+        plc_name = arguments.get("plcName")
+        tc_version = arguments.get("tcVersion")
+        timeout_minutes = arguments.get("timeoutMinutes", 10)
+        disable_io = arguments.get("disableIo", False)
+        skip_build = arguments.get("skipBuild", False)
+        
+        args = ["--solution", solution_path]
+        if ams_net_id:
+            args.extend(["--amsnetid", ams_net_id])
+        if task_name:
+            args.extend(["--task", task_name])
+        if plc_name:
+            args.extend(["--plc", plc_name])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        if timeout_minutes != 10:
+            args.extend(["--timeout", str(timeout_minutes)])
+        if disable_io:
+            args.append("--disable-io")
+        if skip_build:
+            args.append("--skip-build")
+        
+        # Use streaming function to capture progress
+        result, progress_messages = run_tc_automation_with_progress("run-tcunit", args, timeout_minutes)
+        
+        # Build output with progress section
+        output = "🧪 TcUnit Test Run\n\n"
+        
+        # Show execution progress
+        if progress_messages:
+            output += "📋 Execution Log:\n"
+            for msg in progress_messages:
+                # Add step icons based on content
+                if "error" in msg.lower() or "failed" in msg.lower():
+                    output += f"  ❌ {msg}\n"
+                elif "succeeded" in msg.lower() or "passed" in msg.lower() or "completed" in msg.lower():
+                    output += f"  ✅ {msg}\n"
+                elif "waiting" in msg.lower() or "polling" in msg.lower():
+                    output += f"  ⏳ {msg}\n"
+                elif "starting" in msg.lower() or "opening" in msg.lower() or "loading" in msg.lower():
+                    output += f"  🔄 {msg}\n"
+                elif "building" in msg.lower() or "cleaning" in msg.lower():
+                    output += f"  🔨 {msg}\n"
+                elif "configuring" in msg.lower() or "configured" in msg.lower():
+                    output += f"  ⚙️ {msg}\n"
+                elif "activating" in msg.lower() or "activated" in msg.lower():
+                    output += f"  📤 {msg}\n"
+                elif "restarting" in msg.lower() or "restart" in msg.lower():
+                    output += f"  🔄 {msg}\n"
+                elif "disabling" in msg.lower() or "disabled" in msg.lower():
+                    output += f"  🚫 {msg}\n"
+                else:
+                    output += f"  ▸ {msg}\n"
+            output += "\n"
+        
+        if result.get("success"):
+            total_tests = result.get("totalTests", 0)
+            passed = result.get("passedTests", 0)
+            failed = result.get("failedTests", 0)
+            test_suites = result.get("testSuites", 0)
+            duration = result.get("duration", 0)
+            
+            # Determine overall status
+            if failed > 0:
+                status = "❌ TESTS FAILED"
+            elif total_tests > 0:
+                status = "✅ ALL TESTS PASSED"
+            else:
+                status = "⚠️ NO TESTS FOUND"
+            
+            output += f"{'='*40}\n"
+            output += f"{status}\n"
+            output += f"{'='*40}\n\n"
+            
+            output += f"📊 Summary:\n"
+            output += f"  • Test Suites: {test_suites}\n"
+            output += f"  • Total Tests: {total_tests}\n"
+            output += f"  • ✅ Passed: {passed}\n"
+            output += f"  • ❌ Failed: {failed}\n"
+            if duration:
+                output += f"  • Duration: {duration:.1f}s\n"
+            
+            # Show failed test details if any
+            failed_details = result.get("failedTestDetails", [])
+            if failed_details:
+                output += f"\n🔴 Failed Tests:\n"
+                for detail in failed_details:
+                    output += f"  • {detail}\n"
+            
+            # Show test messages (TcUnit output)
+            test_messages = result.get("testMessages", [])
+            if test_messages:
+                output += f"\n💬 TcUnit Output:\n"
+                for msg in test_messages[-20:]:  # Last 20 messages
+                    output += f"  {msg}\n"
+                if len(test_messages) > 20:
+                    output += f"  ... and {len(test_messages) - 20} more messages\n"
+        else:
+            error_msg = result.get("errorMessage", "Unknown error")
+            output += f"{'='*40}\n"
+            output += f"❌ TEST RUN FAILED\n"
+            output += f"{'='*40}\n\n"
+            output += f"Error: {error_msg}\n"
+            
+            # Show any test messages collected before failure
+            test_messages = result.get("testMessages", [])
+            if test_messages:
+                output += f"\n💬 Messages before failure:\n"
+                for msg in test_messages:
+                    output += f"  {msg}\n"
+            # Show any error details
+            build_errors = result.get("buildErrors", [])
+            if build_errors:
+                output += f"\n\n🔴 Build Errors:\n"
+                for err in build_errors:
+                    output += f"  • {err}\n"
+        
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
