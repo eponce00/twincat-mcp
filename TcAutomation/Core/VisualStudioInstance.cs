@@ -71,6 +71,7 @@ namespace TcAutomation.Core
 
         /// <summary>
         /// Try to attach to an existing VS instance that has our solution open.
+        /// Uses a timeout to avoid hanging on zombie COM instances.
         /// </summary>
         private bool TryAttachToExistingInstance()
         {
@@ -103,39 +104,13 @@ namespace TcAutomation.Core
 
                         if (obj is DTE2 dte)
                         {
-                            try
+                            // Use a timeout task to avoid hanging on zombie COM instances
+                            var checkTask = System.Threading.Tasks.Task.Run(() => TryCheckAndReuseDte(dte));
+                            if (checkTask.Wait(TimeSpan.FromSeconds(5)) && checkTask.Result)
                             {
-                                // Check if this instance has our solution open
-                                var solution = dte.Solution;
-                                
-                                if (solution != null && !string.IsNullOrEmpty(solution.FullName))
-                                {
-                                    // Compare solution paths (case-insensitive on Windows)
-                                    if (string.Equals(
-                                        Path.GetFullPath(solution.FullName), 
-                                        Path.GetFullPath(_solutionFilePath), 
-                                        StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        // Found an instance with our solution!
-                                        // Check if it's an automation instance (SuppressUI=true)
-                                        // or a user-launched interactive VS (SuppressUI=false)
-                                        bool suppressUI = dte.SuppressUI;
-                                        
-                                        if (suppressUI)
-                                        {
-                                            // This is an automation instance we created - safe to reuse
-                                            _dte = dte;
-                                            ConfigureDte();
-                                            return true;
-                                        }
-                                        // If SuppressUI=false, it's an interactive session - skip
-                                    }
-                                }
+                                return true;
                             }
-                            catch
-                            {
-                                // DTE may be disconnected or invalid - skip this instance
-                            }
+                            // If timeout or returned false, continue to next instance
                         }
                     }
                 }
@@ -145,6 +120,47 @@ namespace TcAutomation.Core
                 // Failed to enumerate ROT, fall back to creating new instance
             }
 
+            return false;
+        }
+
+        /// <summary>
+        /// Check if a DTE instance can be reused (runs in a separate task with timeout).
+        /// </summary>
+        private bool TryCheckAndReuseDte(DTE2 dte)
+        {
+            try
+            {
+                // Check if this instance has our solution open
+                var solution = dte.Solution;
+                
+                if (solution != null && !string.IsNullOrEmpty(solution.FullName))
+                {
+                    // Compare solution paths (case-insensitive on Windows)
+                    if (string.Equals(
+                        Path.GetFullPath(solution.FullName), 
+                        Path.GetFullPath(_solutionFilePath), 
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Found an instance with our solution!
+                        // Check if it's an automation instance (SuppressUI=true)
+                        // or a user-launched interactive VS (SuppressUI=false)
+                        bool suppressUI = dte.SuppressUI;
+                        
+                        if (suppressUI)
+                        {
+                            // This is an automation instance we created - safe to reuse
+                            _dte = dte;
+                            ConfigureDte();
+                            return true;
+                        }
+                        // If SuppressUI=false, it's an interactive session - skip
+                    }
+                }
+            }
+            catch
+            {
+                // DTE may be disconnected or invalid - skip this instance
+            }
             return false;
         }
 
