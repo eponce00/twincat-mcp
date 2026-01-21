@@ -82,6 +82,7 @@ Dangerous operations require explicitly **arming** the server first:
 - `twincat_deploy` - Full deployment workflow
 - `twincat_set_state` - Changes PLC state (Run/Stop/Config)
 - `twincat_write_var` - Writes to PLC variables
+- `twincat_run_tcunit` - Only when targeting remote PLCs (local testing is safe)
 
 ### ✅ Confirmation Required
 
@@ -259,6 +260,35 @@ Once installed, the TwinCAT tools work in **any VS Code workspace**.
 | `twincat_list_tasks` | List real-time tasks |
 | `twincat_configure_task` | Enable/disable task, set autostart |
 | `twincat_configure_rt` | Configure RT CPU cores and load limit |
+
+### TcUnit Testing
+| Tool | Description |
+|------|-------------|
+| `twincat_run_tcunit` | Run TcUnit tests with full automation: build → configure → activate → poll results |
+| `twincat_get_error_list` | Get VS Error List contents (errors, warnings, ADS messages) |
+
+**`twincat_run_tcunit`** handles the complete test workflow:
+1. Build the solution
+2. Configure the test task (enable, autostart)
+3. Set boot project
+4. Optionally disable I/O devices (for running without hardware)
+5. Activate configuration
+6. Restart TwinCAT
+7. Poll for test completion
+8. Return pass/fail counts and test details
+
+**Parameters:**
+- `solutionPath` (required): Path to TwinCAT .sln file
+- `amsNetId`: Target PLC (default: `127.0.0.1.1.1` for local)
+- `taskName`: Test task name (auto-detected if only one task)
+- `plcName`: Target specific PLC project
+- `timeoutMinutes`: Test timeout (default: 10)
+- `disableIo`: Disable I/O devices (default: false)
+- `skipBuild`: Skip building (default: false)
+
+**Example:** *"Run TcUnit tests on my project"*
+
+> **Note:** Local testing (127.0.0.1.1.1) does not require armed mode. Remote PLC testing requires armed mode for safety.
 
 ---
 
