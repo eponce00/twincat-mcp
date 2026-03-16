@@ -33,7 +33,7 @@ An **MCP (Model Context Protocol) server** that enables AI assistants like GitHu
 - **Build Solutions** - Compile projects and get detailed error/warning reports with file paths and line numbers
 - **Check All Objects** - Compile all objects including unused ones (catches errors in unreferenced function blocks)
 - **Static Analysis** - Run static code analysis with naming conventions and coding rules (requires TE1200 license)
-- **Generate Library** - Export a PLC project as a TwinCAT `.library` artifact
+- **Generate Library** - Export a PLC project as a TwinCAT `.library` artifact (existing output is renamed to `*.backup_yyyyMMdd_HHmmss.library`)
 - **Project Info** - Get TwinCAT version, Visual Studio version, PLC list, and configuration details
 - **Clean** - Remove build artifacts
 
@@ -237,7 +237,7 @@ Once installed, the TwinCAT tools work in **any VS Code workspace**.
 | `twincat_clean` | Clean solution (remove build artifacts) |
 | `twincat_check_all_objects` | Check all PLC objects including unused ones (catches errors in unreferenced FBs) |
 | `twincat_static_analysis` | Run static code analysis (requires TE1200 license) |
-| `twincat_generate_library` | Export a PLC project as a `.library` file (default output: solution directory) |
+| `twincat_generate_library` | Export a PLC project as a `.library` file (default output: solution directory; existing file is renamed to `*.backup_yyyyMMdd_HHmmss.library`) |
 
 ### Deployment (⚠️ Require Armed Mode + Confirmation)
 | Tool | Description |

@@ -584,12 +584,12 @@ namespace TcAutomation.Commands
             string extension = Path.GetExtension(outputLibraryPath);
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
-            string backupPath = Path.Combine(directory, $"{fileNameNoExt}.{timestamp}{extension}");
+            string backupPath = Path.Combine(directory, $"{fileNameNoExt}.backup_{timestamp}{extension}");
             int suffix = 1;
 
             while (File.Exists(backupPath))
             {
-                backupPath = Path.Combine(directory, $"{fileNameNoExt}.{timestamp}_{suffix:00}{extension}");
+                backupPath = Path.Combine(directory, $"{fileNameNoExt}.backup_{timestamp}_{suffix:00}{extension}");
                 suffix++;
             }
 
