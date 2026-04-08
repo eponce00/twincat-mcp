@@ -459,6 +459,41 @@ namespace TcAutomation
             
             rootCommand.AddCommand(staticAnalysisCommand);
 
+            // === GENERATE-LIBRARY COMMAND ===
+            var generateLibraryCommand = new Command("generate-library", "Generate a TwinCAT .library file from a PLC project");
+            var genLibSolutionOpt = CreateSolutionOption();
+            var genLibPlcOpt = new Option<string>(
+                aliases: new[] { "--plc", "-p" },
+                description: "PLC project name to export as a library");
+            genLibPlcOpt.IsRequired = true;
+            var genLibLocationOpt = new Option<string?>(
+                aliases: new[] { "--library-location", "-l" },
+                description: "Output directory or explicit .library file path (default: solution directory)");
+            var genLibTcVersionOpt = CreateTcVersionOption();
+            var genLibSkipBuildOpt = new Option<bool>(
+                aliases: new[] { "--skip-build" },
+                description: "Skip build before library generation",
+                getDefaultValue: () => false);
+            var genLibDryRunOpt = new Option<bool>(
+                aliases: new[] { "--dry-run" },
+                description: "Validate flow without exporting library",
+                getDefaultValue: () => false);
+
+            generateLibraryCommand.AddOption(genLibSolutionOpt);
+            generateLibraryCommand.AddOption(genLibPlcOpt);
+            generateLibraryCommand.AddOption(genLibLocationOpt);
+            generateLibraryCommand.AddOption(genLibTcVersionOpt);
+            generateLibraryCommand.AddOption(genLibSkipBuildOpt);
+            generateLibraryCommand.AddOption(genLibDryRunOpt);
+
+            generateLibraryCommand.SetHandler((string solution, string plc, string? libraryLocation, string? tcVersion, bool skipBuild, bool dryRun) =>
+            {
+                var result = GenerateLibraryCommand.Execute(solution, plc, libraryLocation, tcVersion, skipBuild, dryRun);
+                Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            }, genLibSolutionOpt, genLibPlcOpt, genLibLocationOpt, genLibTcVersionOpt, genLibSkipBuildOpt, genLibDryRunOpt);
+
+            rootCommand.AddCommand(generateLibraryCommand);
+
             // === GET-ERROR-LIST COMMAND ===
             var getErrorListCommand = new Command("get-error-list", "Get contents of Visual Studio Error List (errors, warnings, messages/ADS logs)");
             var gelSolutionOpt = CreateSolutionOption();

@@ -25,6 +25,7 @@ Tools:
 - twincat_configure_rt: Configure real-time CPU settings
 - twincat_check_all_objects: Check all PLC objects including unused ones
 - twincat_static_analysis: Run static code analysis (requires TE1200)
+- twincat_generate_library: Export a PLC project as a TwinCAT .library artifact
 - twincat_list_routes: List available ADS routes (PLCs)
 - twincat_get_error_list: Get VS Error List contents (errors, warnings, messages)
 - twincat_run_tcunit: Run TcUnit tests and return results
@@ -961,6 +962,47 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="twincat_generate_library",
+            description="Generate a TwinCAT .library artifact from a specific PLC project in a solution. Defaults output to the solution directory when no location is provided.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file"
+                    },
+                    "plcName": {
+                        "type": "string",
+                        "description": "PLC project name to export as a .library"
+                    },
+                    "libraryLocation": {
+                        "type": "string",
+                        "description": "Optional output directory or explicit .library file path"
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version. Optional."
+                    },
+                    "skipBuild": {
+                        "type": "boolean",
+                        "description": "Skip build before export (default: false)",
+                        "default": False
+                    },
+                    "dryRun": {
+                        "type": "boolean",
+                        "description": "Validate flow without exporting (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["solutionPath", "plcName"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
             name="twincat_list_routes",
             description="List all configured ADS routes (PLCs) from TwinCAT. Shows available targets with their names, IP addresses, and AMS Net IDs. Useful for discovering PLCs before connecting.",
             inputSchema={
@@ -1702,6 +1744,41 @@ PLC Count: {result.get('PlcCount', 0)}
                 if "TE1200" in result.get("errorMessage", "") or "license" in result.get("errorMessage", "").lower():
                     output += "\n💡 Tip: Static Analysis requires the TE1200 license from Beckhoff."
         
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+    elif name == "twincat_generate_library":
+        solution_path = arguments.get("solutionPath", "")
+        plc_name = arguments.get("plcName", "")
+        library_location = arguments.get("libraryLocation")
+        tc_version = arguments.get("tcVersion")
+        skip_build = arguments.get("skipBuild", False)
+        dry_run = arguments.get("dryRun", False)
+
+        args = ["--solution", solution_path, "--plc", plc_name]
+        if library_location:
+            args.extend(["--library-location", library_location])
+        if tc_version:
+            args.extend(["--tcversion", tc_version])
+        if skip_build:
+            args.append("--skip-build")
+        if dry_run:
+            args.append("--dry-run")
+
+        result = run_tc_automation("generate-library", args)
+
+        if result.get("success"):
+            status_prefix = "🔍 DRY RUN: " if result.get("dryRun") else "✅ "
+            output = f"{status_prefix}{result.get('message', 'Library generated successfully')}\n\n"
+            output += f"PLC: {result.get('plcName', plc_name)}\n"
+            output += f"Output: {result.get('outputLibraryPath', 'Unknown')}\n"
+            output += f"Build Skipped: {'Yes' if result.get('buildSkipped') else 'No'}"
+        else:
+            output = "❌ Library generation failed\n\n"
+            if result.get("errorMessage"):
+                output += f"Error: {result.get('errorMessage')}\n"
+            if result.get("outputLibraryPath"):
+                output += f"Resolved Output Path: {result.get('outputLibraryPath')}\n"
+
         return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_list_routes":
