@@ -88,6 +88,51 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
+        /// Close all open documents in the DTE without saving. Prevents the
+        /// "File has been changed outside the environment" and "Conflicting
+        /// File Modification Detected" modal dialogs from appearing when
+        /// TwinCAT rewrites files (like PlcTask.TcTTO) during build/activate.
+        /// The .suo file from prior IDE sessions can cause documents to be
+        /// reopened automatically when our headless DTE loads the solution,
+        /// so this must be called right after LoadSolution().
+        /// </summary>
+        public void CloseAllDocuments()
+        {
+            if (_dte == null) return;
+
+            try
+            {
+                var docs = new System.Collections.Generic.List<EnvDTE.Document>();
+                foreach (EnvDTE.Document d in _dte.Documents)
+                    docs.Add(d);
+
+                foreach (var doc in docs)
+                {
+                    try { doc.Close(EnvDTE.vsSaveChanges.vsSaveChangesNo); }
+                    catch { }
+                }
+
+                // Also close any open windows (tool windows excluded by filter).
+                var windows = new System.Collections.Generic.List<EnvDTE.Window>();
+                foreach (EnvDTE.Window w in _dte.Windows)
+                {
+                    if (w.Kind == "Document") windows.Add(w);
+                }
+                foreach (var w in windows)
+                {
+                    try { w.Close(EnvDTE.vsSaveChanges.vsSaveChangesNo); }
+                    catch { }
+                }
+
+                Console.Error.WriteLine($"[DEBUG] Closed {docs.Count} document(s) and {windows.Count} window(s) in DTE");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[DEBUG] CloseAllDocuments failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Get the TwinCAT project.
         /// </summary>
         public EnvDTE.Project GetProject()
@@ -120,15 +165,18 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Build the solution.
+        /// Build the solution. Uses async Build(false) + SpinWait on BuildState
+        /// to reliably wait until the build completes, matching the pattern used
+        /// by TcUnit-Runner. Synchronous Build(true) + Sleep is unreliable.
         /// </summary>
         public void BuildSolution()
         {
             if (_solution == null)
                 throw new InvalidOperationException("Solution not loaded.");
 
-            _solution.SolutionBuild.Build(true);
-            Thread.Sleep(3000);
+            _solution.SolutionBuild.Build(false);
+            System.Threading.SpinWait.SpinUntil(
+                () => _solution.SolutionBuild.BuildState == EnvDTE.vsBuildState.vsBuildStateDone);
         }
 
         /// <summary>

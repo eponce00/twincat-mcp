@@ -98,6 +98,7 @@
     <Compile Include="Core\MessageFilter.cs" />
     <Compile Include="Core\TcFileUtilities.cs" />
     <Compile Include="Core\VisualStudioInstance.cs" />
+    <Compile Include="Core\DialogWatchdog.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
     <Compile Include="Commands\CleanCommand.cs" />

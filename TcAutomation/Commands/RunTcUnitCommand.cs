@@ -115,6 +115,16 @@ namespace TcAutomation.Commands
                 vsInstance = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersion);
                 vsInstance.Load();
                 vsInstance.LoadSolution();
+
+                // Close any auto-reopened documents from the .suo (prior IDE session).
+                // These cause modal "file changed outside environment" dialogs when
+                // TwinCAT rewrites files during build/activate.
+                vsInstance.CloseAllDocuments();
+
+                // Start background watchdog to auto-dismiss any remaining modal
+                // dialogs that escape SuppressUI (known TcXaeShell issue).
+                DialogWatchdog.Start();
+
                 Progress("vs", "Solution loaded successfully");
 
                 var sysManager = vsInstance.GetSystemManager();
@@ -191,8 +201,13 @@ namespace TcAutomation.Commands
                     }
                 }
 
-                // Set boot project autostart for all PLCs (or specific one)
-                Progress("config", "Configuring boot project...");
+                // Enable boot project autostart for all PLCs (or specific one).
+                // IMPORTANT: Do NOT call GenerateBootProject() here. Per TcUnit-Runner
+                // reference, ActivateConfiguration() generates the boot project
+                // internally. Calling GenerateBootProject() explicitly triggers
+                // E_FAIL/E_UNEXPECTED because it requires active solution build
+                // configuration state that is only set during an actual build.
+                Progress("config", "Enabling boot project autostart...");
                 int amsPort = 851;
                 for (int i = 1; i <= plcConfig.ChildCount; i++)
                 {
@@ -205,16 +220,16 @@ namespace TcAutomation.Commands
 
                     ITcPlcProject iecProject = (ITcPlcProject)plcProject;
                     iecProject.BootProjectAutostart = true;
-                    iecProject.GenerateBootProject(true);
 
-                    // Get AMS port from project
+                    // Get AMS port from project XML (read-only)
                     string xml = plcProject.ProduceXml();
                     var extractedPort = ExtractAmsPort(xml);
                     Console.Error.WriteLine($"[DEBUG] ExtractAmsPort for '{plcProjectName}': {extractedPort?.ToString() ?? "null"}");
                     amsPort = extractedPort ?? 851;
-                    
-                    Progress("config", $"Boot project configured for '{plcProjectName}' (port {amsPort})");
+
+                    Progress("config", $"BootProjectAutostart enabled for '{plcProjectName}' (port {amsPort})");
                 }
+                Thread.Sleep(1000);
 
                 // Set target
                 Progress("target", $"Setting target to {amsNetId}...");
@@ -507,6 +522,7 @@ namespace TcAutomation.Commands
             }
             finally
             {
+                DialogWatchdog.Stop();
                 adsClient?.Disconnect();
                 adsClient?.Dispose();
                 vsInstance?.Close();
