@@ -48,6 +48,10 @@ namespace TcAutomation.Commands
         private const string MARKER_SUCCESSFUL = "| Successful tests:";
         private const string MARKER_FAILED = "| Failed tests:";
         private const string MARKER_DURATION = "| Duration:";
+        // TcUnit prints one of these as the terminator:
+        //   "==========TESTS FINISHED RUNNING==========" (standard TcUnit)
+        //   "TEST RESULTS EXPORTED"                     (TcUnit-Runner-Support library)
+        private const string MARKER_FINISHED = "TESTS FINISHED RUNNING";
         private const string MARKER_EXPORTED = "TEST RESULTS EXPORTED";
 
         public static TcUnitResult Execute(
@@ -384,7 +388,7 @@ namespace TcAutomation.Commands
                         {
                             duration = ExtractDouble(desc, MARKER_DURATION);
                         }
-                        if (desc.Contains(MARKER_EXPORTED))
+                        if (desc.Contains(MARKER_EXPORTED) || desc.Contains(MARKER_FINISHED))
                         {
                             resultsExported = true;
                         }
@@ -468,16 +472,23 @@ namespace TcAutomation.Commands
                         }
                         else
                         {
-                            Progress("poll", "Waiting for TcUnit results...");
+                            Progress("poll", $"Waiting for TcUnit results... (error list has {errorItems.Count} items)");
+                            // Debug: dump first 5 error list items to help diagnose
+                            for (int dbg = 1; dbg <= Math.Min(5, errorItems.Count); dbg++)
+                            {
+                                Console.Error.WriteLine($"[DEBUG] ErrorItem[{dbg}]: {errorItems.Item(dbg).Description?.Substring(0, Math.Min(200, errorItems.Item(dbg).Description?.Length ?? 0))}");
+                            }
                         }
                     }
 
-                    // Check if results are complete
-                    if (resultsExported && testSuites >= 0 && tests >= 0 && passed >= 0 && failed >= 0)
+                    // Check if results are complete.
+                    // TcUnit-Runner only checks that all summary values are populated.
+                    // No need to wait for "TESTS FINISHED RUNNING" / "TEST RESULTS EXPORTED".
+                    if (testSuites >= 0 && tests >= 0 && passed >= 0 && failed >= 0)
                     {
                         Progress("poll", "TcUnit results received!");
-                        // Wait a bit more for final messages
-                        Thread.Sleep(3000);
+                        // Wait for any remaining detailed messages (test names, failures, etc.)
+                        Thread.Sleep(10000);
                         break;
                     }
                 }
@@ -682,7 +693,8 @@ namespace TcAutomation.Commands
                         message.Contains(MARKER_SUCCESSFUL) ||
                         message.Contains(MARKER_FAILED) ||
                         message.Contains(MARKER_DURATION) ||
-                        message.Contains(MARKER_EXPORTED));
+                        message.Contains(MARKER_EXPORTED) ||
+                        message.Contains(MARKER_FINISHED));
             }
 
             // Look for task name in format 'TaskName'

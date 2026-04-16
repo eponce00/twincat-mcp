@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using EnvDTE80;
 using TCatSysManagerLib;
@@ -24,6 +27,7 @@ namespace TcAutomation.Core
         private EnvDTE.Solution? _solution;
         private EnvDTE.Project? _tcProject;
         private bool _loaded;
+        private HashSet<int>? _preExistingPids;
 
         public VisualStudioInstance(string solutionFilePath, string tcVersion, string? forceTcVersion = null)
         {
@@ -50,6 +54,32 @@ namespace TcAutomation.Core
         {
             if (_dte == null)
                 throw new InvalidOperationException("DTE not loaded. Call Load() first.");
+
+            // Delete the .suo file before opening. The .suo stores per-user
+            // window state (open documents, docking layout, bookmarks). If it
+            // has open documents, VS auto-reopens them when the solution loads
+            // — which causes "File changed outside environment" dialogs to
+            // spam throughout build/activate as TwinCAT rewrites those files.
+            // Deleting it has no effect on actual project data.
+            try
+            {
+                string suoDir = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(_solutionFilePath) ?? "",
+                    ".vs",
+                    System.IO.Path.GetFileNameWithoutExtension(_solutionFilePath));
+                if (System.IO.Directory.Exists(suoDir))
+                {
+                    foreach (var suo in System.IO.Directory.GetFiles(suoDir, "*.suo", System.IO.SearchOption.AllDirectories))
+                    {
+                        try { System.IO.File.Delete(suo); Console.Error.WriteLine($"[DEBUG] Deleted stale .suo: {suo}"); }
+                        catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[DEBUG] .suo cleanup failed (non-fatal): {ex.Message}");
+            }
 
             _solution = _dte.Solution;
             _solution.Open(_solutionFilePath);
@@ -190,19 +220,37 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Close Visual Studio instance.
+        /// Close Visual Studio instance. Force-kills the process if DTE.Quit() fails.
         /// </summary>
         public void Close()
         {
-            if (_loaded && _dte != null)
+            if (_dte != null)
             {
                 Thread.Sleep(3000); // Avoid busy errors
                 try
                 {
                     _dte.Quit();
+                    Thread.Sleep(5000);
+                }
+                catch { }
+
+                // Force-kill the process we spawned (identify by PID diff)
+                try
+                {
+                    var currentPids = Process.GetProcessesByName("TcXaeShell")
+                        .Concat(Process.GetProcessesByName("devenv"));
+                    foreach (var proc in currentPids)
+                    {
+                        if (_preExistingPids != null && !_preExistingPids.Contains(proc.Id))
+                        {
+                            Console.Error.WriteLine($"[DEBUG] Force-killing spawned DTE process (PID {proc.Id})");
+                            try { proc.Kill(); proc.WaitForExit(5000); } catch { }
+                        }
+                    }
                 }
                 catch { }
             }
+            _dte = null;
             _loaded = false;
         }
 
@@ -213,6 +261,32 @@ namespace TcAutomation.Core
 
         private void LoadDevelopmentToolsEnvironment(string vsVersion)
         {
+            // Snapshot existing TcXaeShell/devenv PIDs so we can identify ours later
+            _preExistingPids = new HashSet<int>(
+                Process.GetProcessesByName("TcXaeShell").Select(p => p.Id)
+                .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id)));
+
+            // Kill any orphaned headless TcXaeShell processes from previous crashed runs
+            // (those with no main window title are headless zombies)
+            foreach (var proc in Process.GetProcessesByName("TcXaeShell"))
+            {
+                try
+                {
+                    if (string.IsNullOrEmpty(proc.MainWindowTitle))
+                    {
+                        Console.Error.WriteLine($"[DEBUG] Killing orphaned headless TcXaeShell (PID {proc.Id}, started {proc.StartTime})");
+                        proc.Kill();
+                        proc.WaitForExit(5000);
+                    }
+                }
+                catch { }
+            }
+
+            // Re-snapshot after cleanup
+            _preExistingPids = new HashSet<int>(
+                Process.GetProcessesByName("TcXaeShell").Select(p => p.Id)
+                .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id)));
+
             // Try TcXaeShell first, then Visual Studio
             string[] progIds = new[]
             {

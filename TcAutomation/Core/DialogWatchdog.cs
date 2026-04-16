@@ -13,10 +13,10 @@ namespace TcAutomation.Core
     ///
     /// Dialogs handled:
     /// - "File has been changed outside the environment. Reload?"
-    ///     -> click "No" (keep in-memory version, don't reload — TwinCAT has
-    ///        just rewritten the file on disk, reload would trigger more churn)
+    ///     -> click "Yes to All" (reload all changed files — keeps VS in sync
+    ///        with what TwinCAT wrote to disk, which is needed for error list)
     /// - "Conflicting File Modification Detected" (project-level)
-    ///     -> click "Ignore" (keep project state as-is)
+    ///     -> click "Reload All" or "Ignore" (keep project state in sync)
     /// - "Target system reports a fatal error" (AdsError popup from activation)
     ///     -> click "OK" (the failure is already returned via the ADS exception)
     /// </summary>
@@ -100,16 +100,20 @@ namespace TcAutomation.Core
             {
                 if (HasChildText(hWnd, "changed outside the environment"))
                 {
-                    Console.Error.WriteLine("[DialogWatchdog] Auto-dismissing 'file changed outside' dialog (No)");
-                    ClickButton(hWnd, "&No");
+                    // Click "Yes to All" to reload — VS must stay in sync for error list to work.
+                    // Try "Yes to &All" first, then "&Yes" as fallback.
+                    Console.Error.WriteLine("[DialogWatchdog] Auto-dismissing 'file changed outside' dialog (Yes to All)");
+                    if (!ClickButton(hWnd, "Yes to &All"))
+                        ClickButton(hWnd, "&Yes");
                     return true;
                 }
             }
 
             if (t == "Conflicting File Modification Detected")
             {
-                Console.Error.WriteLine("[DialogWatchdog] Auto-dismissing 'Conflicting File Modification' dialog (Ignore)");
-                ClickButton(hWnd, "&Ignore");
+                Console.Error.WriteLine("[DialogWatchdog] Auto-dismissing 'Conflicting File Modification' dialog (Reload All)");
+                if (!ClickButton(hWnd, "Reload &All"))
+                    ClickButton(hWnd, "&Ignore");
                 return true;
             }
 
@@ -140,13 +144,15 @@ namespace TcAutomation.Core
             return found;
         }
 
-        private static void ClickButton(IntPtr dialog, string buttonText)
+        private static bool ClickButton(IntPtr dialog, string buttonText)
         {
             IntPtr btn = FindChildButton(dialog, buttonText);
             if (btn != IntPtr.Zero)
             {
                 SendMessage(btn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+                return true;
             }
+            return false;
         }
 
         private static IntPtr FindChildButton(IntPtr parent, string text)
