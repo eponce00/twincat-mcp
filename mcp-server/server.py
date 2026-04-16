@@ -1108,6 +1108,20 @@ async def list_tools() -> list[Tool]:
                 "destructiveHint": True,
                 "idempotentHint": False
             }
+        ),
+        Tool(
+            name="twincat_kill_stale",
+            description="Kill stale TcXaeShell and devenv processes that may be holding COM locks on the solution. Use this when a build fails with RPC (0x800706BE) or COM errors. This will close any open TcXaeShell IDE windows.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": True
+            }
         )
     ]
 
@@ -1177,7 +1191,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         else:
             output = f"❌ Build failed\n"
             if result.get("errorMessage"):
-                output += f"\nError: {result['errorMessage']}\n"
+                error_msg = result['errorMessage']
+                output += f"\nError: {error_msg}\n"
+                # Detect RPC/COM errors caused by stale TcXaeShell instances
+                if "0x800706BE" in error_msg or "RPC" in error_msg or "COM" in error_msg:
+                    output += "\n💡 This error is likely caused by a stale TcXaeShell/devenv process holding locks on the solution.\n"
+                    output += "   Use the `twincat_kill_stale` tool to kill stale TcXaeShell/devenv processes, then retry the build.\n"
             if result.get("errors"):
                 output += "\n🔴 Errors:\n"
                 for e in result["errors"]:
@@ -2022,6 +2041,26 @@ PLC Count: {result.get('PlcCount', 0)}
                 output += f"\n\n🔴 Build Errors:\n"
                 for err in build_errors:
                     output += f"  • {err}\n"
+        
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+    
+    elif name == "twincat_kill_stale":
+        killed = []
+        for proc_name in ("TcXaeShell", "devenv"):
+            try:
+                result = subprocess.run(
+                    ["taskkill", "/F", "/IM", f"{proc_name}.exe"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    killed.append(proc_name)
+            except Exception:
+                pass
+        
+        if killed:
+            output = f"🔪 Killed: {', '.join(killed)}\n\nYou can now retry the build."
+        else:
+            output = "✅ No stale TcXaeShell or devenv processes found."
         
         return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
