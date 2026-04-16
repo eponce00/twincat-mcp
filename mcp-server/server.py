@@ -235,7 +235,7 @@ def run_tc_automation(command: str, args: list[str]) -> dict:
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,  # 5 minute timeout
+            timeout=120,  # 2 minute timeout
             cwd=str(exe_path.parent)
         )
         
@@ -258,7 +258,7 @@ def run_tc_automation(command: str, args: list[str]) -> dict:
     except subprocess.TimeoutExpired:
         return {
             "success": False,
-            "errorMessage": "Command timed out after 5 minutes"
+            "errorMessage": "Command timed out after 2 minutes"
         }
     except Exception as e:
         return {
