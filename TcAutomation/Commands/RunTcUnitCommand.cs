@@ -555,21 +555,15 @@ namespace TcAutomation.Commands
                 
                 if (isTargetTask)
                 {
-                    // Enable the test task using native API
-                    task.Disabled = DISABLED_STATE.SMDS_NOT_DISABLED;
-                    
-                    // Set AutoStart via XML (no native API available)
-                    xml = SetAutoStartInXml(xml, true);
-                    task.ConsumeXml(xml);
+                    // Enable and autostart the test task — all via XML like TcUnit-Runner
+                    string newXml = SetDisabledAndAutoStartInXml(xml, false, true);
+                    task.ConsumeXml(newXml);
                 }
                 else if (disableOthers)
                 {
-                    // Disable other tasks using native API
-                    task.Disabled = DISABLED_STATE.SMDS_DISABLED;
-                    
-                    // Set AutoStart=false via XML
-                    xml = SetAutoStartInXml(xml, false);
-                    task.ConsumeXml(xml);
+                    // Disable other tasks — all via XML like TcUnit-Runner
+                    string newXml = SetDisabledAndAutoStartInXml(xml, true, false);
+                    task.ConsumeXml(newXml);
                 }
 
                 // Same 3 second delay as TcUnit-Runner after each task update
@@ -599,14 +593,19 @@ namespace TcAutomation.Commands
             }
         }
 
-        private static string SetAutoStartInXml(string xml, bool autostart)
+        private static string SetDisabledAndAutoStartInXml(string xml, bool disabled, bool autostart)
         {
             try
             {
                 var doc = new XmlDocument();
                 doc.LoadXml(xml);
 
-                // Use same XPath as TcUnit-Runner: /TreeItem/TaskDef/AutoStart
+                // Set Disabled flag: /TreeItem/TaskDef/Disabled
+                var disabledNode = doc.SelectSingleNode("/TreeItem/TaskDef/Disabled");
+                if (disabledNode != null)
+                    disabledNode.InnerText = disabled ? "true" : "false";
+
+                // Set AutoStart flag: /TreeItem/TaskDef/AutoStart
                 var autostartNode = doc.SelectSingleNode("/TreeItem/TaskDef/AutoStart");
                 if (autostartNode != null)
                     autostartNode.InnerText = autostart.ToString().ToLower();
