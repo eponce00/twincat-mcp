@@ -293,16 +293,25 @@ def run_tc_automation_with_progress(command: str, args: list[str], timeout_minut
         stderr_queue = queue.Queue()
         
         def read_stderr():
-            for line in iter(process.stderr.readline, ''):
-                if line:
-                    stderr_queue.put(line.strip())
-            process.stderr.close()
+            try:
+                for line in iter(process.stderr.readline, ''):
+                    if line:
+                        stderr_queue.put(line.strip())
+            except ValueError:
+                pass  # stderr closed before thread finished reading
+            finally:
+                try:
+                    process.stderr.close()
+                except Exception:
+                    pass
         
         stderr_thread = threading.Thread(target=read_stderr, daemon=True)
         stderr_thread.start()
         
         # Wait for process with timeout
-        timeout_seconds = timeout_minutes * 60 + 60  # Add buffer
+        # Add 3 min overhead for VS startup + activation + restart + sleeps
+        # on top of the user-requested poll timeout
+        timeout_seconds = timeout_minutes * 60 + 180
         try:
             stdout, _ = process.communicate(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
