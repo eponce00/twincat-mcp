@@ -36,3 +36,8 @@ node_modules/
 # Development notes (not for public repo)
 PLAN.md
 PROGRESS.md
+
+# Temp files used for automated commits
+_commit_msg.txt
+_smoke*.py
+_refactor_*.py
