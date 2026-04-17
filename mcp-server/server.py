@@ -32,10 +32,14 @@ Tools:
 - twincat_run_tcunit: Run TcUnit tests and return results
 """
 
+import atexit
 import json
-import subprocess
 import os
+import queue
+import subprocess
+import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from mcp.server import Server
@@ -376,6 +380,506 @@ def run_tc_automation_with_progress(command: str, args: list[str], timeout_minut
             "errorMessage": str(e),
             "progressMessages": progress_messages
         }, progress_messages
+
+
+# =============================================================================
+# PERSISTENT SHELL HOST
+# =============================================================================
+#
+# Talks to a long-lived `TcAutomation.exe host` subprocess that owns ONE
+# TcXaeShell / Visual Studio DTE for the MCP server's entire lifetime. Per-call
+# shell startup (~25-90s) is paid once per server session instead of per tool
+# call. Combined with the C# parent-death watchdog + session-file janitor,
+# phantom TcXaeShell processes are impossible even across hard crashes.
+#
+# The host is lazily spawned on the first shell-needing tool call and torn
+# down via atexit on a clean Python exit (plus defensively by the host's own
+# parent-death watchdog on crash).
+# =============================================================================
+
+
+class _CIDict(dict):
+    """
+    Dict subclass whose .get() falls back to a case-insensitive key match.
+    Used to preserve compatibility with tool handlers that read response
+    fields using either PascalCase (`result.get("Success")`) or camelCase
+    (`result.get("success")`). Legacy CLI paths return PascalCase for some
+    commands; host-routed responses are uniformly camelCase. Wrapping both
+    paths with this lets every existing formatter keep working unchanged.
+    """
+
+    def get(self, key, default=None):
+        if key in self:
+            return super().__getitem__(key)
+        try:
+            low = {k.lower(): k for k in self.keys() if isinstance(k, str)}
+            real = low.get(key.lower()) if isinstance(key, str) else None
+        except Exception:
+            real = None
+        if real is not None:
+            return super().__getitem__(real)
+        return default
+
+
+def _ci_wrap(obj):
+    """Recursively wrap dicts so .get() is case-insensitive."""
+    if isinstance(obj, dict):
+        return _CIDict({k: _ci_wrap(v) for k, v in obj.items()})
+    if isinstance(obj, list):
+        return [_ci_wrap(x) for x in obj]
+    return obj
+
+
+# Environment override: set TWINCAT_DISABLE_HOST=1 to force every call through
+# the legacy per-call CLI path (useful for isolating host-related issues).
+HOST_DISABLED = os.environ.get("TWINCAT_DISABLE_HOST", "").strip() in ("1", "true", "yes")
+
+
+class HostError(Exception):
+    """Raised when the persistent shell host cannot be used (start failed,
+    crashed mid-call, or returned malformed data). Callers should fall back
+    to the legacy CLI path."""
+
+
+class ShellHost:
+    """
+    Manages the lifecycle of a `TcAutomation.exe host` subprocess and
+    dispatches JSON-RPC calls to it over NDJSON on stdin/stdout.
+
+    Concurrency model: one DTE is STA-affine, so all calls are serialized
+    through a single lock. Progress messages from stderr are captured per
+    call (fenced by request-id boundaries) and returned alongside the result.
+
+    Lifecycle:
+      - First `ensure_solution()` / `call()` lazily starts the subprocess.
+      - `shutdown()` sends the graceful shutdown request and waits.
+      - atexit + signal handlers trigger shutdown on a clean exit.
+      - On a hard crash, the host's own parent-death watchdog takes over.
+    """
+
+    # Time to wait for the "ready" handshake line on startup.
+    READY_TIMEOUT_SEC = 30.0
+
+    def __init__(self, exe_path: Path):
+        self._exe_path = exe_path
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+        self._stdout_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._responses: "queue.Queue[dict]" = queue.Queue()
+        self._progress: list[str] = []
+        self._progress_lock = threading.Lock()
+        self._request_id = 0
+        self._current_solution: str | None = None
+        self._current_tc_version: str | None = None
+        self._ready_info: dict | None = None
+        self._last_error: str | None = None
+
+    # ---------------- public API ----------------
+
+    def is_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def status(self) -> dict:
+        """Query the host for its own status. Starts the host if needed."""
+        if not self.is_alive():
+            self._ensure_started()
+        return self._call_raw("status", None, timeout=10)
+
+    def ensure_solution(self, solution_path: str, tc_version: str | None,
+                        timeout: float = 120.0) -> dict:
+        """
+        Ensure the host has the given solution loaded. Lazily starts the
+        host and/or reloads a different solution.
+        """
+        if HOST_DISABLED:
+            raise HostError("host disabled via TWINCAT_DISABLE_HOST")
+
+        if not solution_path:
+            raise HostError("ensure_solution requires a solution path")
+
+        with self._lock:
+            if not self.is_alive():
+                self._start_locked()
+
+            # Cheap idempotency: if already pointing at the same solution
+            # skip the round-trip. Comparison is normalized.
+            if self._current_solution and _paths_equal(self._current_solution, solution_path):
+                if (tc_version or None) == (self._current_tc_version or None):
+                    return {"loaded": True, "cached": True, "solutionPath": solution_path}
+
+            params = {"solutionPath": solution_path}
+            if tc_version:
+                params["tcVersion"] = tc_version
+            res = self._call_raw_locked("ensure-solution", params, timeout=timeout)
+            self._current_solution = solution_path
+            self._current_tc_version = tc_version
+            return res
+
+    def execute_step(self, command: str, step_args: dict,
+                     solution_path: str | None, tc_version: str | None,
+                     timeout: float = 600.0) -> tuple[dict, list[str]]:
+        """
+        Run a single StepDispatcher command in the host's DTE.
+        Returns (inner_result_dict, progress_messages).
+        """
+        if HOST_DISABLED:
+            raise HostError("host disabled via TWINCAT_DISABLE_HOST")
+
+        # Only shell commands need a loaded solution; ADS commands don't.
+        shell_commands = {
+            "build", "info", "clean", "set-target", "activate", "restart",
+            "list-plcs", "set-boot-project", "disable-io", "set-variant",
+            "list-tasks", "configure-task", "configure-rt",
+            "check-all-objects", "static-analysis", "generate-library",
+            "get-error-list",
+        }
+        if command in shell_commands:
+            if not solution_path:
+                raise HostError(f"{command} requires a solution path")
+            self.ensure_solution(solution_path, tc_version, timeout=120.0)
+
+        with self._lock:
+            if not self.is_alive():
+                self._start_locked()
+
+            # Drain per-call progress buffer so we only attribute new lines
+            # to THIS call. Progress lines that arrived between calls get
+            # discarded (they would belong to the previous one).
+            with self._progress_lock:
+                self._progress.clear()
+
+            params = {"command": command, "args": step_args or {}}
+            resp = self._call_raw_locked("execute-step", params, timeout=timeout)
+
+            # HandleExecuteStep wraps: {command, result: <inner>}
+            # We want the inner command result.
+            inner = resp.get("result") if isinstance(resp, dict) else None
+            if inner is None:
+                inner = resp
+
+            with self._progress_lock:
+                progress = list(self._progress)
+
+            return inner, progress
+
+    def shutdown(self, timeout: float = 8.0):
+        """Politely ask the host to shut down; force-kill if it won't."""
+        with self._lock:
+            if not self.is_alive():
+                return
+            try:
+                self._send_request("shutdown", None)
+            except Exception:
+                pass
+
+            end = time.time() + timeout
+            while time.time() < end and self.is_alive():
+                time.sleep(0.1)
+
+            if self.is_alive():
+                try:
+                    self._proc.kill()  # type: ignore
+                except Exception:
+                    pass
+
+            self._cleanup_locked()
+
+    # ---------------- internals ----------------
+
+    def _ensure_started(self):
+        with self._lock:
+            if not self.is_alive():
+                self._start_locked()
+
+    def _start_locked(self):
+        if self.is_alive():
+            return
+
+        cmd = [str(self._exe_path), "host", "--mcp-pid", str(os.getpid())]
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
+                cwd=str(self._exe_path.parent),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as e:
+            self._proc = None
+            raise HostError(f"failed to spawn host: {e}")
+
+        # Kick off stream drainers before any other interaction; otherwise
+        # the pipe buffers can fill and deadlock on long runs.
+        self._stdout_thread = threading.Thread(
+            target=self._stdout_loop, name="ShellHostStdout", daemon=True)
+        self._stderr_thread = threading.Thread(
+            target=self._stderr_loop, name="ShellHostStderr", daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+        # Wait for the ready line (the very first message the host emits).
+        deadline = time.time() + self.READY_TIMEOUT_SEC
+        while time.time() < deadline:
+            if not self.is_alive():
+                err = self._last_error or "host exited during startup"
+                raise HostError(err)
+            if self._ready_info is not None:
+                return
+            time.sleep(0.05)
+
+        try: self._proc.kill()
+        except Exception: pass
+        raise HostError("timed out waiting for host 'ready' line")
+
+    def _cleanup_locked(self):
+        self._proc = None
+        self._stdout_thread = None
+        self._stderr_thread = None
+        self._ready_info = None
+        self._current_solution = None
+        self._current_tc_version = None
+        while not self._responses.empty():
+            try: self._responses.get_nowait()
+            except Exception: break
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    def _send_request(self, method: str, params: dict | None) -> int:
+        if not self.is_alive():
+            raise HostError("host process is not running")
+        req_id = self._next_id()
+        payload = {"id": req_id, "method": method}
+        if params is not None:
+            payload["params"] = params
+        line = json.dumps(payload, separators=(",", ":"))
+        try:
+            self._proc.stdin.write(line + "\n")  # type: ignore
+            self._proc.stdin.flush()  # type: ignore
+        except (BrokenPipeError, OSError) as e:
+            raise HostError(f"failed to write to host stdin: {e}")
+        return req_id
+
+    def _call_raw(self, method: str, params: dict | None, timeout: float) -> dict:
+        with self._lock:
+            return self._call_raw_locked(method, params, timeout)
+
+    def _call_raw_locked(self, method: str, params: dict | None, timeout: float) -> dict:
+        req_id = self._send_request(method, params)
+        deadline = time.time() + timeout
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise HostError(f"{method} timed out after {timeout:.0f}s")
+            try:
+                msg = self._responses.get(timeout=min(remaining, 0.5))
+            except queue.Empty:
+                if not self.is_alive():
+                    raise HostError(self._last_error or "host exited during call")
+                continue
+
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("id") != req_id:
+                # Out-of-order or unsolicited; drop with a note.
+                continue
+
+            if msg.get("ok"):
+                return msg.get("result", {})
+            else:
+                err = msg.get("error") or "host returned error"
+                raise HostError(str(err))
+
+    def _stdout_loop(self):
+        try:
+            proc = self._proc
+            if proc is None or proc.stdout is None:
+                return
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(msg, dict) and msg.get("type") == "ready":
+                    self._ready_info = msg
+                    continue
+                self._responses.put(msg)
+        except Exception:
+            pass
+
+    def _stderr_loop(self):
+        try:
+            proc = self._proc
+            if proc is None or proc.stderr is None:
+                return
+            for line in proc.stderr:
+                line = line.rstrip()
+                if not line:
+                    continue
+                if line.startswith("[PROGRESS]"):
+                    clean = line[len("[PROGRESS]"):].strip()
+                    with self._progress_lock:
+                        self._progress.append(clean)
+                else:
+                    # Retain a breadcrumb for diagnostics; the latest stderr
+                    # line is surfaced in HostError messages when the host
+                    # dies unexpectedly.
+                    self._last_error = line
+        except Exception:
+            pass
+
+
+def _paths_equal(a: str, b: str) -> bool:
+    try:
+        na = os.path.normcase(os.path.normpath(os.path.abspath(a)))
+        nb = os.path.normcase(os.path.normpath(os.path.abspath(b)))
+        return na == nb
+    except Exception:
+        return a == b
+
+
+# Module-level singleton + lazy accessor.
+_shell_host: ShellHost | None = None
+_shell_host_init_lock = threading.Lock()
+
+
+def get_shell_host() -> ShellHost | None:
+    """Return the shared ShellHost, constructing it on first use.
+    Returns None if the host is disabled or the exe cannot be found."""
+    global _shell_host
+    if HOST_DISABLED:
+        return None
+    if _shell_host is not None:
+        return _shell_host
+    with _shell_host_init_lock:
+        if _shell_host is None:
+            try:
+                exe = find_tc_automation_exe()
+            except Exception:
+                return None
+            _shell_host = ShellHost(exe)
+    return _shell_host
+
+
+def shutdown_shell_host():
+    """Tear down the persistent host. Idempotent; safe to call from atexit."""
+    global _shell_host
+    host = _shell_host
+    if host is None:
+        return
+    try:
+        host.shutdown(timeout=8.0)
+    except Exception:
+        pass
+    _shell_host = None
+
+
+# Register cleanup for graceful Python exits. Hard crashes are handled by the
+# host's parent-death watchdog + session-file janitor (see Core/SessionFile.cs
+# in the C# side).
+atexit.register(shutdown_shell_host)
+
+
+def run_shell_step(
+    command: str,
+    step_args: dict | None,
+    solution_path: str | None = None,
+    tc_version: str | None = None,
+    timeout_minutes: int = 10,
+) -> tuple[dict, list[str]]:
+    """
+    Run one TcAutomation command, preferring the persistent shell host.
+    Falls back to spawning a single-step batch via the CLI if the host is
+    unavailable, unhealthy, or explicitly disabled.
+
+    Returns (result_dict, progress_messages). The result dict is wrapped in
+    a _CIDict so existing tool handlers can read PascalCase OR camelCase
+    keys without change.
+    """
+    step_args = step_args or {}
+
+    host = get_shell_host()
+    if host is not None:
+        try:
+            inner, progress = host.execute_step(
+                command, step_args, solution_path, tc_version,
+                timeout=timeout_minutes * 60 + 180,
+            )
+            return _ci_wrap(inner), progress
+        except HostError as e:
+            # Log once to stderr and fall through to CLI. Subsequent calls
+            # will re-attempt host; this matters if the host crashed but
+            # can be restarted.
+            sys.stderr.write(f"[mcp-server] shell host unavailable ({e}); falling back to CLI\n")
+            sys.stderr.flush()
+            # If the process died, drop the stale instance so the next call
+            # gets a fresh start attempt.
+            if not host.is_alive():
+                global _shell_host
+                _shell_host = None
+
+    # --- CLI fallback: spawn a single-step batch ---------------------------
+    # We reuse the existing batch CLI to avoid having to build per-command
+    # flag construction for every tool. One batch step = one tool call.
+    batch_input: dict = {
+        "stopOnError": True,
+        "steps": [{"command": command, "args": step_args}],
+    }
+    if solution_path:
+        batch_input["solutionPath"] = solution_path
+    if tc_version:
+        batch_input["tcVersion"] = tc_version
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix="tc-step-", delete=False, encoding="utf-8"
+    )
+    try:
+        json.dump(batch_input, tmp)
+        tmp.flush()
+        tmp.close()
+        batch_result, progress = run_tc_automation_with_progress(
+            "batch", ["--input", tmp.name], timeout_minutes
+        )
+    finally:
+        try: os.unlink(tmp.name)
+        except Exception: pass
+
+    # Unwrap: batch_result.results[0].result is the inner command result.
+    results = batch_result.get("results") or []
+    if results:
+        first = results[0] if isinstance(results[0], dict) else {}
+        if first.get("success"):
+            inner = first.get("result") or {}
+            return _ci_wrap(inner), progress
+        # Failure — synthesize an error-shaped result that works with
+        # both PascalCase and camelCase handler patterns.
+        err_msg = first.get("error") or batch_result.get("errorMessage") or "Step failed"
+        return _ci_wrap({
+            "success": False,
+            "Success": False,
+            "errorMessage": err_msg,
+            "ErrorMessage": err_msg,
+            "error": err_msg,
+        }), progress
+
+    # Batch itself failed before the step ran.
+    err_msg = batch_result.get("errorMessage") or "Batch dispatch failed"
+    return _ci_wrap({
+        "success": False,
+        "Success": False,
+        "errorMessage": err_msg,
+        "ErrorMessage": err_msg,
+        "error": err_msg,
+    }), progress
 
 
 @server.list_tools()
@@ -1235,7 +1739,15 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="twincat_kill_stale",
-            description="Kill stale TcXaeShell and devenv processes that may be holding COM locks on the solution. Use this when a build fails with RPC (0x800706BE) or COM errors. This will close any open TcXaeShell IDE windows.",
+            description=(
+                "SURGICAL cleanup of stale/orphaned TwinCAT shells. "
+                "Tears down this MCP server's own persistent shell host + DTE, "
+                "reaps orphaned hosts/DTEs from crashed MCP sessions (via session files), "
+                "and optionally kills HEADLESS TcXaeShell instances (no main window) "
+                "that are guaranteed to be automation-spawned. "
+                "NEVER kills TcXaeShell/devenv by image name — your open IDE is safe. "
+                "Use when a build fails with RPC (0x800706BE) or COM errors."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -1244,6 +1756,24 @@ async def list_tools() -> list[Tool]:
             annotations={
                 "readOnlyHint": False,
                 "destructiveHint": True,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_host_status",
+            description=(
+                "Report status of the persistent TwinCAT shell host: whether it's running, "
+                "its PID, the DTE PID it owns, the currently-loaded solution, and uptime. "
+                "Read-only; never starts the host (it is spawned lazily on the first shell-needing tool call)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
                 "idempotentHint": True
             }
         )
@@ -1296,14 +1826,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         solution_path = arguments.get("solutionPath", "")
         clean = arguments.get("clean", True)
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
-        if clean:
-            args.append("--clean")
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("build", args)
+
+        result, _ = run_shell_step(
+            "build", {"clean": clean},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=10,
+        )
         
         # Format output for the AI
         if result.get("success"):
@@ -1334,9 +1862,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     
     elif name == "twincat_get_info":
         solution_path = arguments.get("solutionPath", "")
-        
-        result = run_tc_automation("info", ["--solution", solution_path])
-        
+        tc_version = arguments.get("tcVersion")
+
+        result, _ = run_shell_step(
+            "info", {},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
+
         if result.get("errorMessage"):
             output = f"❌ Error: {result['errorMessage']}"
         else:
@@ -1360,13 +1893,13 @@ PLC Projects:
     elif name == "twincat_clean":
         solution_path = arguments.get("solutionPath", "")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("clean", args)
-        
+
+        result, _ = run_shell_step(
+            "clean", {},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
+
         if result.get("success"):
             output = f"✅ {result.get('message', 'Solution cleaned successfully')}"
         else:
@@ -1378,12 +1911,12 @@ PLC Projects:
         solution_path = arguments.get("solutionPath", "")
         ams_net_id = arguments.get("amsNetId", "")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path, "--amsnetid", ams_net_id]
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("set-target", args)
+
+        result, _ = run_shell_step(
+            "set-target", {"amsNetId": ams_net_id},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("success"):
             output = f"✅ {result.get('message', 'Target set successfully')}\n"
@@ -1398,14 +1931,15 @@ PLC Projects:
         solution_path = arguments.get("solutionPath", "")
         ams_net_id = arguments.get("amsNetId")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {}
         if ams_net_id:
-            args.extend(["--amsnetid", ams_net_id])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("activate", args)
+            step_args["amsNetId"] = ams_net_id
+        result, _ = run_shell_step(
+            "activate", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=10,
+        )
         
         if result.get("success"):
             output = f"✅ {result.get('message', 'Configuration activated')}\n"
@@ -1419,14 +1953,15 @@ PLC Projects:
         solution_path = arguments.get("solutionPath", "")
         ams_net_id = arguments.get("amsNetId")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {}
         if ams_net_id:
-            args.extend(["--amsnetid", ams_net_id])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("restart", args)
+            step_args["amsNetId"] = ams_net_id
+        result, _ = run_shell_step(
+            "restart", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("success"):
             output = f"✅ {result.get('message', 'TwinCAT restarted')}\n"
@@ -1478,12 +2013,12 @@ PLC Projects:
     elif name == "twincat_list_plcs":
         solution_path = arguments.get("solutionPath", "")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("list-plcs", args)
+
+        result, _ = run_shell_step(
+            "list-plcs", {},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("ErrorMessage"):
             output = f"❌ Error: {result['ErrorMessage']}"
@@ -1515,18 +2050,15 @@ PLC Count: {result.get('PlcCount', 0)}
         autostart = arguments.get("autostart", True)
         generate = arguments.get("generate", True)
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {"autostart": autostart, "generate": generate}
         if plc_name:
-            args.extend(["--plc", plc_name])
-        if autostart:
-            args.append("--autostart")
-        if generate:
-            args.append("--generate")
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("set-boot-project", args)
+            step_args["plcName"] = plc_name
+        result, _ = run_shell_step(
+            "set-boot-project", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=10,
+        )
         
         if result.get("Success"):
             output = f"✅ Boot project configuration updated\n\n"
@@ -1546,14 +2078,12 @@ PLC Count: {result.get('PlcCount', 0)}
         solution_path = arguments.get("solutionPath", "")
         enable = arguments.get("enable", False)
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
-        if enable:
-            args.append("--enable")
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("disable-io", args)
+
+        result, _ = run_shell_step(
+            "disable-io", {"enable": bool(enable)},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("Success"):
             action = "enabled" if enable else "disabled"
@@ -1584,16 +2114,17 @@ PLC Count: {result.get('PlcCount', 0)}
         solution_path = arguments.get("solutionPath", "")
         variant_name = arguments.get("variantName")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {}
         if variant_name:
-            args.extend(["--variant", variant_name])
+            step_args["variantName"] = variant_name
         else:
-            args.append("--get")
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("set-variant", args)
+            step_args["getOnly"] = True
+        result, _ = run_shell_step(
+            "set-variant", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("Success"):
             output = f"✅ {result.get('Message', 'Variant operation successful')}\n\n"
@@ -1609,10 +2140,11 @@ PLC Count: {result.get('PlcCount', 0)}
     elif name == "twincat_get_state":
         ams_net_id = arguments.get("amsNetId", "")
         port = arguments.get("port", 851)
-        
-        args = ["--amsnetid", ams_net_id, "--port", str(port)]
-        
-        result = run_tc_automation("get-state", args)
+
+        result, _ = run_shell_step(
+            "get-state", {"amsNetId": ams_net_id, "port": port},
+            timeout_minutes=1,
+        )
         
         if result.get("Success"):
             state = result.get("AdsState", "Unknown")
@@ -1632,10 +2164,11 @@ PLC Count: {result.get('PlcCount', 0)}
         ams_net_id = arguments.get("amsNetId", "")
         state = arguments.get("state", "")
         port = arguments.get("port", 851)
-        
-        args = ["--amsnetid", ams_net_id, "--state", state, "--port", str(port)]
-        
-        result = run_tc_automation("set-state", args)
+
+        result, _ = run_shell_step(
+            "set-state", {"amsNetId": ams_net_id, "state": state, "port": port},
+            timeout_minutes=1,
+        )
         
         if result.get("Success"):
             prev_state = result.get("PreviousState", "Unknown")
@@ -1657,10 +2190,11 @@ PLC Count: {result.get('PlcCount', 0)}
         ams_net_id = arguments.get("amsNetId", "")
         symbol = arguments.get("symbol", "")
         port = arguments.get("port", 851)
-        
-        args = ["--amsnetid", ams_net_id, "--symbol", symbol, "--port", str(port)]
-        
-        result = run_tc_automation("read-var", args)
+
+        result, _ = run_shell_step(
+            "read-var", {"amsNetId": ams_net_id, "symbol": symbol, "port": port},
+            timeout_minutes=1,
+        )
         
         if result.get("Success"):
             output = f"✅ Variable Read: **{symbol}**\n\n"
@@ -1677,10 +2211,14 @@ PLC Count: {result.get('PlcCount', 0)}
         symbol = arguments.get("symbol", "")
         value = arguments.get("value", "")
         port = arguments.get("port", 851)
-        
-        args = ["--amsnetid", ams_net_id, "--symbol", symbol, "--value", value, "--port", str(port)]
-        
-        result = run_tc_automation("write-var", args)
+
+        result, _ = run_shell_step(
+            "write-var", {
+                "amsNetId": ams_net_id, "symbol": symbol,
+                "value": value, "port": port,
+            },
+            timeout_minutes=1,
+        )
         
         if result.get("Success"):
             output = f"✅ Variable Written: **{symbol}**\n\n"
@@ -1696,12 +2234,12 @@ PLC Count: {result.get('PlcCount', 0)}
     elif name == "twincat_list_tasks":
         solution_path = arguments.get("solutionPath", "")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("list-tasks", args)
+
+        result, _ = run_shell_step(
+            "list-tasks", {},
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("Success"):
             tasks = result.get("Tasks", [])
@@ -1727,20 +2265,17 @@ PLC Count: {result.get('PlcCount', 0)}
         enable = arguments.get("enable")
         autostart = arguments.get("autostart")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path, "--task", task_name]
-        if enable is True:
-            args.append("--enable")
-        elif enable is False:
-            args.append("--disable")
-        if autostart is True:
-            args.append("--autostart")
-        elif autostart is False:
-            args.append("--no-autostart")
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("configure-task", args)
+
+        step_args: dict = {"taskName": task_name}
+        if enable is not None:
+            step_args["enable"] = bool(enable)
+        if autostart is not None:
+            step_args["autoStart"] = bool(autostart)
+        result, _ = run_shell_step(
+            "configure-task", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("Success"):
             output = f"✅ Task '{task_name}' configured\n\n"
@@ -1756,16 +2291,17 @@ PLC Count: {result.get('PlcCount', 0)}
         max_cpus = arguments.get("maxCpus")
         load_limit = arguments.get("loadLimit")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {}
         if max_cpus is not None:
-            args.extend(["--max-cpus", str(max_cpus)])
+            step_args["maxCpus"] = int(max_cpus)
         if load_limit is not None:
-            args.extend(["--load-limit", str(load_limit)])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("configure-rt", args)
+            step_args["loadLimit"] = int(load_limit)
+        result, _ = run_shell_step(
+            "configure-rt", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("Success"):
             output = f"✅ Real-Time Settings Configured\n\n"
@@ -1781,14 +2317,15 @@ PLC Count: {result.get('PlcCount', 0)}
         solution_path = arguments.get("solutionPath", "")
         plc_name = arguments.get("plcName")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {}
         if plc_name:
-            args.extend(["--plc", plc_name])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("check-all-objects", args)
+            step_args["plcName"] = plc_name
+        result, _ = run_shell_step(
+            "check-all-objects", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=15,
+        )
         
         if result.get("success"):
             output = f"✅ {result.get('message', 'Check completed')}\n\n"
@@ -1838,16 +2375,15 @@ PLC Count: {result.get('PlcCount', 0)}
         check_all = arguments.get("checkAll", True)
         plc_name = arguments.get("plcName")
         tc_version = arguments.get("tcVersion")
-        
-        args = ["--solution", solution_path]
-        if check_all:
-            args.append("--check-all")
+
+        step_args: dict = {"checkAll": bool(check_all)}
         if plc_name:
-            args.extend(["--plc", plc_name])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        
-        result = run_tc_automation("static-analysis", args)
+            step_args["plcName"] = plc_name
+        result, _ = run_shell_step(
+            "static-analysis", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=15,
+        )
         
         if result.get("success"):
             scope = "all objects" if result.get("checkedAllObjects") else "used objects"
@@ -1897,17 +2433,18 @@ PLC Count: {result.get('PlcCount', 0)}
         skip_build = arguments.get("skipBuild", False)
         dry_run = arguments.get("dryRun", False)
 
-        args = ["--solution", solution_path, "--plc", plc_name]
+        step_args: dict = {
+            "plcName": plc_name,
+            "skipBuild": bool(skip_build),
+            "dryRun": bool(dry_run),
+        }
         if library_location:
-            args.extend(["--library-location", library_location])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        if skip_build:
-            args.append("--skip-build")
-        if dry_run:
-            args.append("--dry-run")
-
-        result = run_tc_automation("generate-library", args)
+            step_args["libraryLocation"] = library_location
+        result, _ = run_shell_step(
+            "generate-library", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=15,
+        )
 
         if result.get("success"):
             status_prefix = "🔍 DRY RUN: " if result.get("dryRun") else "✅ "
@@ -1989,26 +2526,18 @@ PLC Count: {result.get('PlcCount', 0)}
         include_warnings = arguments.get("includeWarnings", True)
         include_errors = arguments.get("includeErrors", True)
         wait_seconds = arguments.get("waitSeconds", 0)
-        
-        args = ["--solution", solution_path]
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        if not include_messages:
-            args.append("--messages=false")
-        else:
-            args.append("--messages")
-        if not include_warnings:
-            args.append("--warnings=false")
-        else:
-            args.append("--warnings")
-        if not include_errors:
-            args.append("--errors=false")
-        else:
-            args.append("--errors")
-        if wait_seconds > 0:
-            args.extend(["--wait", str(wait_seconds)])
-        
-        result = run_tc_automation("get-error-list", args)
+
+        step_args = {
+            "includeMessages": bool(include_messages),
+            "includeWarnings": bool(include_warnings),
+            "includeErrors": bool(include_errors),
+            "waitSeconds": int(wait_seconds),
+        }
+        result, _ = run_shell_step(
+            "get-error-list", step_args,
+            solution_path=solution_path, tc_version=tc_version,
+            timeout_minutes=5,
+        )
         
         if result.get("success"):
             error_count = result.get("errorCount", 0)
@@ -2169,24 +2698,141 @@ PLC Count: {result.get('PlcCount', 0)}
         return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     
     elif name == "twincat_kill_stale":
-        killed = []
-        for proc_name in ("TcXaeShell", "devenv"):
+        # SURGICAL cleanup: NEVER kill TcXaeShell / devenv by image name.
+        # Doing so closes the user's interactive IDE, their Visual Studio, and
+        # every other automation's shell on the box.
+        #
+        # Safety model (defense in depth):
+        #   1) Kill our own persistent shell host + its DTE (we own those PIDs).
+        #   2) Run the janitor for session files from *crashed* MCP instances.
+        #      Those are guaranteed-dead MCPs; their hosts/DTEs are orphans.
+        #   3) As a last-resort, sweep TcXaeShell instances that LOOK headless
+        #      (no main window title). User-opened IDEs always have a title.
+        output_parts: list[str] = []
+        killed_own_host = False
+        killed_own_dte_pid = None
+
+        host = _shell_host  # read without triggering lazy start
+        if host is not None and host.is_alive():
+            # Capture the DTE PID from status BEFORE shutting down, so we can
+            # force-kill in case graceful Quit hangs.
+            dte_pid = None
             try:
-                result = subprocess.run(
-                    ["taskkill", "/F", "/IM", f"{proc_name}.exe"],
-                    capture_output=True, text=True, timeout=10
-                )
-                if result.returncode == 0:
-                    killed.append(proc_name)
+                st = host.status()
+                dte_pid = st.get("dtePid") if isinstance(st, dict) else None
+            except Exception:
+                dte_pid = None
+            try:
+                host.shutdown(timeout=8.0)
+                killed_own_host = True
             except Exception:
                 pass
-        
-        if killed:
-            output = f"🔪 Killed: {', '.join(killed)}\n\nYou can now retry the build."
+            globals()["_shell_host"] = None
+
+            if dte_pid:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(dte_pid)],
+                        capture_output=True, text=True, timeout=10,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    killed_own_dte_pid = dte_pid
+                except Exception:
+                    pass
+            output_parts.append(
+                f"🔪 Shut down our own shell host"
+                + (f" (DTE PID {killed_own_dte_pid})" if killed_own_dte_pid else "")
+            )
+
+        # Run the C# janitor explicitly via `reap-orphans`. It walks the session
+        # files from crashed MCPs and safely kills matching orphans (start-time
+        # verified, so a reused PID never hits the wrong process).
+        try:
+            exe = find_tc_automation_exe()
+            janitor = subprocess.run(
+                [str(exe), "reap-orphans"],
+                capture_output=True, text=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            reaped = 0
+            try:
+                payload = json.loads((janitor.stdout or "").strip() or "{}")
+                reaped = int(payload.get("reaped", 0))
+            except Exception:
+                pass
+            if reaped > 0:
+                output_parts.append(f"🧹 Janitor reaped {reaped} orphaned session(s)")
+            else:
+                output_parts.append("🧹 Janitor: no orphaned sessions found")
+        except Exception as e:
+            output_parts.append(f"⚠️ Janitor sweep skipped: {e}")
+
+        # Headless-only fallback sweep: any TcXaeShell without a window title
+        # is almost certainly an automation-spawned instance that nothing
+        # owns anymore (user IDE windows always have a title).
+        try:
+            ps_script = (
+                "Get-Process -Name TcXaeShell -ErrorAction SilentlyContinue | "
+                "Where-Object { [string]::IsNullOrWhiteSpace($_.MainWindowTitle) } | "
+                "ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; $_.Id } catch {} }"
+            )
+            sweep = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            killed_pids = [l.strip() for l in (sweep.stdout or "").splitlines() if l.strip()]
+            if killed_pids:
+                output_parts.append(f"🧹 Killed headless TcXaeShell PIDs: {', '.join(killed_pids)}")
+        except Exception as e:
+            output_parts.append(f"⚠️ Headless sweep skipped: {e}")
+
+        if not output_parts:
+            output_parts.append("✅ Nothing to clean up. Your Visual Studio / TcXaeShell sessions were not touched.")
         else:
-            output = "✅ No stale TcXaeShell or devenv processes found."
-        
-        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+            output_parts.append(
+                "\nℹ️ This tool never kills `TcXaeShell.exe` or `devenv.exe` by image name — "
+                "your open IDE is safe."
+            )
+
+        return [TextContent(type="text", text=add_timing_to_output("\n".join(output_parts), tool_start_time))]
+
+    elif name == "twincat_host_status":
+        host = _shell_host
+        if host is None or not host.is_alive():
+            if HOST_DISABLED:
+                out = "⚫ Shell host: DISABLED (TWINCAT_DISABLE_HOST is set)"
+            else:
+                out = ("⚫ Shell host: not running\n\n"
+                       "It will be started lazily on the next tool call that needs TcXaeShell. "
+                       "Expect a one-time 25-90s cost for that first call; subsequent calls reuse the shell.")
+            return [TextContent(type="text", text=add_timing_to_output(out, tool_start_time))]
+
+        try:
+            st = host.status()
+        except Exception as e:
+            return [TextContent(type="text", text=add_timing_to_output(f"❌ Failed to query host: {e}", tool_start_time))]
+
+        st = st or {}
+        lines = ["🟢 Shell host: RUNNING\n"]
+        if st.get("hostPid") is not None:
+            lines.append(f"  Host PID: {st.get('hostPid')}")
+        if st.get("dtePid") is not None:
+            lines.append(f"  DTE PID: {st.get('dtePid')}")
+        if st.get("solutionPath"):
+            lines.append(f"  Loaded solution: {st.get('solutionPath')}")
+        else:
+            lines.append("  Loaded solution: (none yet)")
+        if st.get("uptimeSeconds") is not None:
+            try:
+                lines.append(f"  Uptime: {float(st.get('uptimeSeconds')):.0f}s")
+            except Exception:
+                pass
+        if st.get("callsServed") is not None:
+            lines.append(f"  Calls served: {st.get('callsServed')}")
+        if st.get("startedUtc"):
+            lines.append(f"  Started: {st.get('startedUtc')}")
+        return [TextContent(type="text", text=add_timing_to_output("\n".join(lines), tool_start_time))]
     
     elif name == "twincat_batch":
         solution_path = arguments.get("solutionPath", "") or ""

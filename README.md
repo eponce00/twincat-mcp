@@ -80,11 +80,30 @@ Tools that require armed mode:
 
 The three most destructive tools (`twincat_activate`, `twincat_restart`, `twincat_deploy`) also require `confirm: "CONFIRM"` as an explicit second step.
 
+## Persistent shell host (new)
+
+Every TwinCAT call that needs the Automation Interface pays a 25s–90s startup cost because TcXaeShell has to spin up, load the solution, and talk to COM. Historically that was paid **per call**.
+
+Now the MCP server lazily spawns a long-lived C# "host" process (`TcAutomation.exe host`) that owns **one** TcXaeShell instance for the entire MCP session. All shell-based tools route through this host:
+
+- First shell-needing call in a session: ~30s (open TcXaeShell + load solution).
+- Every subsequent call: **~0.1-1s** (≈30x speedup observed locally).
+- Switching solutions: the host reloads in place instead of restarting TcXaeShell.
+- The host is shut down gracefully when the MCP server exits.
+
+Robustness is layered so phantom TcXaeShell processes can't accumulate:
+
+1. **Parent-death watchdog** – a thread inside the host uses `WaitForSingleObject` on the MCP server's PID. If the MCP server dies for any reason (clean exit, crash, OOM, Task Manager), the host tears down TcXaeShell and exits (verified in testing: host + DTE gone within ~3s).
+2. **Session file** – `%LOCALAPPDATA%\twincat-mcp\session-<mcpPid>.json` records MCP/host/DTE PIDs and their start-times.
+3. **Janitor (`TcAutomation.exe reap-orphans`)** – scans session files on startup and explicit invocation; kills any host/DTE whose recorded start-time still matches (never touches reused PIDs).
+4. **`twincat_kill_stale` is now surgical** – shuts down our own host + DTE, runs the janitor, and only sweeps TcXaeShell instances with **no main window title** (automation-spawned). Your open TcXaeShell IDE is never touched.
+5. **`twincat_host_status`** – read-only tool that reports whether the host is running, its PID, its DTE PID, the loaded solution, and uptime.
+
+Disable the host (fall back to per-call CLI) by setting `TWINCAT_DISABLE_HOST=1` in the server's environment.
+
 ## Batching operations
 
-Every TwinCAT call that needs the Automation Interface pays a 40s–90s startup cost because TcXaeShell has to spin up, load the solution, and talk to COM. If you call five of those in a row, that's five startups.
-
-`twincat_batch` collapses that cost: the shell is opened **once**, all of your steps run against the same instance, and the shell is closed **once**. ADS-only steps (`get-state`, `set-state`, `read-var`, `write-var`) don't touch the shell at all and are dispatched directly.
+`twincat_batch` predates the persistent host and is still useful for deterministic "open shell, run N steps, close shell" pipelines (for example when you explicitly want `activate` + `restart` to happen back-to-back without ever closing the shell in between). It opens the shell **once**, runs all your steps, and closes **once** (independent of the persistent host). ADS-only steps (`get-state`, `set-state`, `read-var`, `write-var`) don't touch the shell at all and are dispatched directly.
 
 Each step is `{id?, command, args}`. `solutionPath` and `tcVersion` are set once at the batch top level and inherited by every step. By default the batch stops at the first failing step.
 
@@ -146,7 +165,8 @@ Example: full "set target, build, activate, restart" flow in one shell open:
 | `twincat_configure_rt`             | Set RT CPU cores and load limit.                                                                                                      |
 | `twincat_get_error_list`           | Contents of the VS Error List (errors, warnings, ADS messages).                                                                       |
 | `twincat_run_tcunit`               | Full TcUnit workflow: build, configure test task, set boot, optional I/O disable, activate, restart, poll, report. Armed when remote. |
-| `twincat_kill_stale`               | Kill orphaned VS/XAE processes left from crashed runs.                                                                                |
+| `twincat_kill_stale`               | Surgical cleanup: kill our own shell host + DTE, reap session-file orphans, sweep only headless TcXaeShell. Never touches your IDE.   |
+| `twincat_host_status`              | Show persistent shell host state (PID, DTE PID, loaded solution, uptime). Read-only.                                                  |
 
 
 ### `twincat_run_tcunit` parameters

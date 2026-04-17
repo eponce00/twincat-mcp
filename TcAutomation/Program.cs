@@ -33,16 +33,26 @@ namespace TcAutomation
         [STAThread] // Required for COM STA thread
         static int Main(string[] args)
         {
-            // Register COM message filter for retry logic
-            MessageFilter.Register();
-            
+            // The persistent host owns its own MessageFilter lifetime across many
+            // requests, so do NOT wrap it with the outer Register/Revoke. All
+            // other subcommands get the existing global registration.
+            bool isHostSubcommand = args.Length > 0 && string.Equals(args[0], "host", StringComparison.OrdinalIgnoreCase);
+
+            if (!isHostSubcommand)
+            {
+                MessageFilter.Register();
+            }
+
             try
             {
                 return MainAsync(args).GetAwaiter().GetResult();
             }
             finally
             {
-                MessageFilter.Revoke();
+                if (!isHostSubcommand)
+                {
+                    MessageFilter.Revoke();
+                }
             }
         }
 
@@ -591,6 +601,54 @@ namespace TcAutomation
             }, batchInputOpt);
 
             rootCommand.AddCommand(batchCommand);
+
+            // === HOST COMMAND ===
+            // Long-lived "shell host" process that holds ONE TcXaeShell instance
+            // for the entire MCP server's lifetime. Per-call startup cost becomes
+            // ~0s for calls 2..N in a session. Session files + parent-death
+            // watchdog guarantee no phantom processes even across hard crashes.
+            var hostCommand = new Command("host", "Long-lived shell host (NDJSON over stdio; owns one DTE for the MCP server's lifetime)");
+            var hostMcpPidOpt = new Option<int>(
+                aliases: new[] { "--mcp-pid" },
+                description: "PID of the parent MCP process. Host exits if this process dies.");
+            hostMcpPidOpt.IsRequired = true;
+            var hostPollOpt = new Option<int?>(
+                aliases: new[] { "--parent-poll-ms" },
+                description: "Fallback parent-death polling interval (used if OpenProcess fails). Default 1000ms.");
+            hostCommand.AddOption(hostMcpPidOpt);
+            hostCommand.AddOption(hostPollOpt);
+
+            hostCommand.SetHandler((int mcpPid, int? parentPollMs) =>
+            {
+                // HostCommand runs its own request loop; it intentionally does
+                // not exit until stdin closes, shutdown is requested, or parent
+                // dies. Return its exit code to the OS.
+                Environment.ExitCode = HostCommand.Execute(mcpPid, parentPollMs);
+            }, hostMcpPidOpt, hostPollOpt);
+
+            rootCommand.AddCommand(hostCommand);
+
+            // === REAP-ORPHANS COMMAND ===
+            // Explicit janitor run: scans session files from crashed MCP sessions
+            // and safely kills any still-alive host/DTE processes whose start-time
+            // matches the recorded one. Emits a JSON summary for tooling.
+            var reapCommand = new Command("reap-orphans", "Reap orphaned TwinCAT host/DTE processes from crashed MCP sessions (surgical: start-time verified)");
+            reapCommand.SetHandler(() =>
+            {
+                int count = 0;
+                try
+                {
+                    count = SessionFile.ReapOrphans();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(JsonSerializer.Serialize(new { success = false, error = ex.Message }, JsonOptions));
+                    Environment.ExitCode = 1;
+                    return;
+                }
+                Console.WriteLine(JsonSerializer.Serialize(new { success = true, reaped = count }, JsonOptions));
+            });
+            rootCommand.AddCommand(reapCommand);
 
             return await rootCommand.InvokeAsync(args);
         }

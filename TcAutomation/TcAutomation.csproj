@@ -99,6 +99,8 @@
     <Compile Include="Core\TcFileUtilities.cs" />
     <Compile Include="Core\VisualStudioInstance.cs" />
     <Compile Include="Core\DialogWatchdog.cs" />
+    <Compile Include="Core\StepDispatcher.cs" />
+    <Compile Include="Core\SessionFile.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
     <Compile Include="Commands\CleanCommand.cs" />
@@ -123,6 +125,7 @@
     <Compile Include="Commands\GetErrorListCommand.cs" />
     <Compile Include="Commands\RunTcUnitCommand.cs" />
     <Compile Include="Commands\BatchCommand.cs" />
+    <Compile Include="Commands\HostCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>

@@ -19,15 +19,34 @@ namespace TcAutomation.Core
     /// </summary>
     public class VisualStudioInstance : IDisposable
     {
-        private readonly string _solutionFilePath;
-        private readonly string _tcVersion;
-        private readonly string? _forceTcVersion;
+        private string _solutionFilePath;
+        private string _tcVersion;
+        private string? _forceTcVersion;
         
         private DTE2? _dte;
         private EnvDTE.Solution? _solution;
         private EnvDTE.Project? _tcProject;
         private bool _loaded;
         private HashSet<int>? _preExistingPids;
+
+        /// <summary>
+        /// The Windows PID of the TcXaeShell/devenv process we launched.
+        /// Populated after Load() via PID-diff against the pre-existing snapshot.
+        /// Used by the persistent host to write session files and force-kill on
+        /// shutdown even if DTE.Quit() fails or the DTE proxy becomes unresponsive.
+        /// </summary>
+        public int? DteProcessId { get; private set; }
+
+        /// <summary>
+        /// True once a solution is successfully opened and a TwinCAT project is found.
+        /// Cleared by ReloadSolution() until the new solution is fully loaded.
+        /// </summary>
+        public bool IsSolutionLoaded => _loaded;
+
+        /// <summary>
+        /// The solution path currently loaded (or most recently requested).
+        /// </summary>
+        public string SolutionFilePath => _solutionFilePath;
 
         public VisualStudioInstance(string solutionFilePath, string tcVersion, string? forceTcVersion = null)
         {
@@ -115,6 +134,57 @@ namespace TcAutomation.Core
             }
 
             throw new InvalidOperationException("No TwinCAT project found in solution after 30 seconds.");
+        }
+
+        /// <summary>
+        /// Close the currently-loaded solution (if any) and open a different one
+        /// in the SAME DTE instance. Avoids paying the ~25-30s shell-startup cost
+        /// when the host is asked to switch projects. Only the solution-close /
+        /// solution-open cost applies (seconds).
+        /// </summary>
+        public void ReloadSolution(string newSolutionFilePath, string newTcVersion, string? newForceTcVersion = null)
+        {
+            if (_dte == null)
+                throw new InvalidOperationException("DTE not loaded. Call Load() first.");
+
+            // Close the existing solution without saving. We intentionally do not
+            // call DTE.Solution.Close(true) because TwinCAT can rewrite files on
+            // close, which triggers modal save dialogs.
+            try
+            {
+                if (_solution != null)
+                {
+                    try
+                    {
+                        if (_solution.IsOpen)
+                        {
+                            _solution.Close(false);
+                            Thread.Sleep(500);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"[DEBUG] Solution.Close raised (non-fatal): {ex.Message}");
+                    }
+                }
+            }
+            finally
+            {
+                _solution = null;
+                _tcProject = null;
+                _loaded = false;
+            }
+
+            _solutionFilePath = newSolutionFilePath;
+            _tcVersion = newTcVersion;
+            _forceTcVersion = newForceTcVersion;
+
+            // Switch TC version in-place. Different solutions may target different
+            // versions; this is cheap when we're just changing a registry-backed
+            // selector on the remote manager.
+            LoadTwinCATVersion();
+
+            LoadSolution();
         }
 
         /// <summary>
@@ -305,7 +375,28 @@ namespace TcAutomation.Core
                     if (type == null) continue;
 
                     _dte = (DTE2)Activator.CreateInstance(type)!;
-                    
+
+                    // Identify which TcXaeShell/devenv we just spawned by diffing PIDs.
+                    // This PID is what the persistent host persists + force-kills on
+                    // cleanup (the COM runtime owns the process lifecycle otherwise).
+                    try
+                    {
+                        var newPids = Process.GetProcessesByName("TcXaeShell")
+                            .Select(p => p.Id)
+                            .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id))
+                            .ToList();
+                        foreach (var pid in newPids)
+                        {
+                            if (_preExistingPids != null && !_preExistingPids.Contains(pid))
+                            {
+                                DteProcessId = pid;
+                                Console.Error.WriteLine($"[DEBUG] Tracked DTE process PID: {pid}");
+                                break;
+                            }
+                        }
+                    }
+                    catch { }
+
                     ConfigureDte();
                     LoadTwinCATVersion();
                     return;
