@@ -26,7 +26,8 @@ namespace TcAutomation.Core
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis",
-            "generate-library", "get-error-list"
+            "generate-library", "get-error-list",
+            "deploy", "run-tcunit"
         };
 
         /// <summary>
@@ -180,6 +181,28 @@ namespace TcAutomation.Core
                         bool includeErrors = GetBool(argsElement, "includeErrors", hasArgs) ?? true;
                         int waitSeconds = GetInt(argsElement, "waitSeconds", hasArgs) ?? 0;
                         return GetErrorListCommand.ExecuteInSession(vsInstance, includeMessages, includeWarnings, includeErrors, waitSeconds);
+                    }
+                    case "deploy":
+                    {
+                        string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
+                            ?? throw new ArgumentException("deploy requires args.amsNetId");
+                        string? plcName = GetString(argsElement, "plcName", hasArgs) ?? GetString(argsElement, "plc", hasArgs);
+                        bool skipBuild = GetBool(argsElement, "skipBuild", hasArgs) ?? false;
+                        bool dryRun = GetBool(argsElement, "dryRun", hasArgs) ?? false;
+                        return DeployCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId, plcName, skipBuild, dryRun);
+                    }
+                    case "run-tcunit":
+                    {
+                        string? amsNetId = GetString(argsElement, "amsNetId", hasArgs);
+                        string? taskName = GetString(argsElement, "taskName", hasArgs) ?? GetString(argsElement, "task", hasArgs);
+                        string? plcName = GetString(argsElement, "plcName", hasArgs) ?? GetString(argsElement, "plc", hasArgs);
+                        int timeoutMinutes = GetInt(argsElement, "timeoutMinutes", hasArgs) ?? GetInt(argsElement, "timeout", hasArgs) ?? 10;
+                        bool disableIo = GetBool(argsElement, "disableIo", hasArgs) ?? false;
+                        bool skipBuild = GetBool(argsElement, "skipBuild", hasArgs) ?? false;
+                        return RunTcUnitCommand.ExecuteInSession(
+                            vsInstance, solutionPath,
+                            amsNetId, taskName, plcName,
+                            timeoutMinutes, disableIo, skipBuild);
                     }
                 }
             }

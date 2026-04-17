@@ -533,6 +533,7 @@ class ShellHost:
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis", "generate-library",
             "get-error-list",
+            "deploy", "run-tcunit",
         }
         if command in shell_commands:
             if not solution_path:
@@ -1979,19 +1980,22 @@ PLC Projects:
         tc_version = arguments.get("tcVersion")
         skip_build = arguments.get("skipBuild", False)
         dry_run = arguments.get("dryRun", False)
-        
-        args = ["--solution", solution_path, "--amsnetid", ams_net_id]
+
+        step_args: dict = {"amsNetId": ams_net_id}
         if plc_name:
-            args.extend(["--plc", plc_name])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
+            step_args["plcName"] = plc_name
         if skip_build:
-            args.append("--skip-build")
+            step_args["skipBuild"] = True
         if dry_run:
-            args.append("--dry-run")
-        
-        result = run_tc_automation("deploy", args)
-        
+            step_args["dryRun"] = True
+
+        result, _ = run_shell_step(
+            "deploy", step_args,
+            solution_path=solution_path,
+            tc_version=tc_version,
+            timeout_minutes=20,
+        )
+
         if result.get("success"):
             output = f"{'🔍 DRY RUN: ' if dry_run else ''}✅ {result.get('message', 'Deployment successful')}\n\n"
             output += f"Target: {result.get('targetNetId', ams_net_id)}\n"
@@ -2584,25 +2588,25 @@ PLC Count: {result.get('PlcCount', 0)}
         timeout_minutes = arguments.get("timeoutMinutes", 10)
         disable_io = arguments.get("disableIo", False)
         skip_build = arguments.get("skipBuild", False)
-        
-        args = ["--solution", solution_path]
+
+        step_args: dict = {"timeoutMinutes": timeout_minutes}
         if ams_net_id:
-            args.extend(["--amsnetid", ams_net_id])
+            step_args["amsNetId"] = ams_net_id
         if task_name:
-            args.extend(["--task", task_name])
+            step_args["taskName"] = task_name
         if plc_name:
-            args.extend(["--plc", plc_name])
-        if tc_version:
-            args.extend(["--tcversion", tc_version])
-        if timeout_minutes != 10:
-            args.extend(["--timeout", str(timeout_minutes)])
+            step_args["plcName"] = plc_name
         if disable_io:
-            args.append("--disable-io")
+            step_args["disableIo"] = True
         if skip_build:
-            args.append("--skip-build")
-        
-        # Use streaming function to capture progress
-        result, progress_messages = run_tc_automation_with_progress("run-tcunit", args, timeout_minutes)
+            step_args["skipBuild"] = True
+
+        result, progress_messages = run_shell_step(
+            "run-tcunit", step_args,
+            solution_path=solution_path,
+            tc_version=tc_version,
+            timeout_minutes=timeout_minutes,
+        )
         
         # Build output with progress section
         output = "🧪 TcUnit Test Run\n\n"

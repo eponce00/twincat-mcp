@@ -54,6 +54,11 @@ namespace TcAutomation.Commands
         private const string MARKER_FINISHED = "TESTS FINISHED RUNNING";
         private const string MARKER_EXPORTED = "TEST RESULTS EXPORTED";
 
+        /// <summary>
+        /// CLI entrypoint: opens a one-shot VS instance, runs the test workflow,
+        /// closes it. Used by `TcAutomation.exe run-tcunit` from the MCP's
+        /// CLI-fallback path and anyone invoking the tool directly.
+        /// </summary>
         public static TcUnitResult Execute(
             string solutionPath,
             string? amsNetId = null,
@@ -65,19 +70,7 @@ namespace TcAutomation.Commands
             bool skipBuild = false)
         {
             var result = new TcUnitResult();
-            var stopwatch = Stopwatch.StartNew();
 
-            // Default to local runtime
-            amsNetId = amsNetId ?? "127.0.0.1.1.1";
-
-            // Helper to output progress
-            void Progress(string step, string message)
-            {
-                Console.Error.WriteLine($"[PROGRESS] {step}: {message}");
-                Console.Error.Flush();
-            }
-
-            // Validate input
             if (!File.Exists(solutionPath))
             {
                 result.Success = false;
@@ -85,18 +78,14 @@ namespace TcAutomation.Commands
                 return result;
             }
 
-            Progress("init", "Starting TcUnit test run...");
+            ProgressStatic("init", "Starting TcUnit test run...");
 
             VisualStudioInstance? vsInstance = null;
-            AdsClient? adsClient = null;
-
             try
             {
-                // Register COM message filter
                 MessageFilter.Register();
 
-                // Find TwinCAT project
-                Progress("init", "Looking for TwinCAT project...");
+                ProgressStatic("init", "Looking for TwinCAT project...");
                 var tcProjectPath = TcFileUtilities.FindTwinCATProjectFile(solutionPath);
                 if (string.IsNullOrEmpty(tcProjectPath))
                 {
@@ -105,7 +94,6 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                // Get TwinCAT version
                 var projectTcVersion = TcFileUtilities.GetTcVersion(tcProjectPath);
                 if (string.IsNullOrEmpty(projectTcVersion))
                 {
@@ -114,22 +102,77 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                // Load Visual Studio
-                Progress("vs", "Opening Visual Studio and loading solution...");
+                ProgressStatic("vs", "Opening Visual Studio and loading solution...");
                 vsInstance = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersion);
                 vsInstance.Load();
                 vsInstance.LoadSolution();
-
-                // Close any auto-reopened documents from the .suo (prior IDE session).
-                // These cause modal "file changed outside environment" dialogs when
-                // TwinCAT rewrites files during build/activate.
                 vsInstance.CloseAllDocuments();
+                ProgressStatic("vs", "Solution loaded successfully");
 
-                // Start background watchdog to auto-dismiss any remaining modal
-                // dialogs that escape SuppressUI (known TcXaeShell issue).
+                return ExecuteInSession(
+                    vsInstance, solutionPath,
+                    amsNetId, taskName, plcName,
+                    timeoutMinutes, disableIo, skipBuild);
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"TcUnit execution failed: {ex.Message}";
+                ProgressStatic("error", $"Exception: {ex.Message}");
+                return result;
+            }
+            finally
+            {
+                try { MessageFilter.Revoke(); } catch { }
+                try { vsInstance?.Close(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Runs the TcUnit workflow against an already-open VS instance.
+        /// Used by the persistent shell host so the ~30s TcXaeShell cold-start
+        /// is paid once per MCP session instead of per test run.
+        ///
+        /// Contract differences vs Execute:
+        ///   - Caller owns the VisualStudioInstance (and the MessageFilter).
+        ///     This method will NOT close the DTE or revoke the MessageFilter.
+        ///   - Caller is responsible for ensuring the solution is loaded.
+        ///
+        /// NOTE: This mutates the solution on disk (task enable/autostart XML,
+        /// BootProjectAutostart=true, target netId, optionally I/O disabled).
+        /// Same side effects as the standalone Execute() — migration to host
+        /// does NOT change this. If you need a pristine solution afterwards,
+        /// call VisualStudioInstance.ReloadSolution().
+        /// </summary>
+        public static TcUnitResult ExecuteInSession(
+            VisualStudioInstance vsInstance,
+            string solutionPath,
+            string? amsNetId = null,
+            string? taskName = null,
+            string? plcName = null,
+            int timeoutMinutes = 10,
+            bool disableIo = false,
+            bool skipBuild = false)
+        {
+            var result = new TcUnitResult();
+            var stopwatch = Stopwatch.StartNew();
+
+            amsNetId = amsNetId ?? "127.0.0.1.1.1";
+
+            void Progress(string step, string message) => ProgressStatic(step, message);
+
+            AdsClient? adsClient = null;
+            bool dialogWatchdogStarted = false;
+
+            try
+            {
+                // Close any auto-reopened documents from the .suo. In host mode
+                // this has usually already been done at ensure-solution, but it
+                // is cheap and idempotent so we repeat to be safe.
+                try { vsInstance.CloseAllDocuments(); } catch { }
+
                 DialogWatchdog.Start();
-
-                Progress("vs", "Solution loaded successfully");
+                dialogWatchdogStarted = true;
 
                 var sysManager = vsInstance.GetSystemManager();
 
@@ -534,14 +577,32 @@ namespace TcAutomation.Commands
             }
             finally
             {
-                DialogWatchdog.Stop();
-                adsClient?.Disconnect();
-                adsClient?.Dispose();
-                vsInstance?.Close();
-                MessageFilter.Revoke();
+                if (dialogWatchdogStarted)
+                {
+                    try { DialogWatchdog.Stop(); } catch { }
+                }
+                try { adsClient?.Disconnect(); } catch { }
+                try { adsClient?.Dispose(); } catch { }
+                // NOTE: We do NOT close vsInstance here. The caller (host or CLI
+                // wrapper) owns its lifetime. Same for MessageFilter.Revoke().
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// stderr progress helper — matches the legacy "[PROGRESS] step: message"
+        /// line format that both run_tc_automation_with_progress and
+        /// ShellHost.stderr_loop know how to parse.
+        /// </summary>
+        private static void ProgressStatic(string step, string message)
+        {
+            try
+            {
+                Console.Error.WriteLine($"[PROGRESS] {step}: {message}");
+                Console.Error.Flush();
+            }
+            catch { }
         }
 
         private static void ConfigureTask(ITcSmTreeItem realTimeConfig, string taskName, bool disableOthers)
