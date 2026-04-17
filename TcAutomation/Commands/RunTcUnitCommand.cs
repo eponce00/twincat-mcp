@@ -247,9 +247,10 @@ namespace TcAutomation.Commands
                 Progress("config", "Setting DontCheckTarget to suppress activation dialog...");
                 automationInterface.SetDontCheckTarget(amsNetId);
 
-                // Configure CPU cores for isolated real-time to avoid vmx86.sys dialog
-                Progress("config", "Configuring CPU cores for real-time...");
-                automationInterface.AssignCPUCores();
+                // NOTE: Do NOT call AssignCPUCores() here. The project's RT config
+                // (MaxCpus, NonWinCpus, Affinity) must match the target hardware.
+                // Overwriting it causes activation failures on remote PLCs.
+                // TcUnit-Runner does not modify RT config either.
 
                 // Disable I/O if requested - use the improved method from AutomationInterface
                 if (disableIo)
