@@ -124,6 +124,9 @@ namespace TcAutomation.Core
                             {
                                 _tcProject = proj;
                                 _loaded = true;
+                                // Re-hide after solution open: the shell will
+                                // often restore visibility while loading projects.
+                                HideMainWindow();
                                 return;
                             }
                         }
@@ -407,6 +410,16 @@ namespace TcAutomation.Core
             _dte.UserControl = false;
             _dte.SuppressUI = true;
 
+            // Hide the main window so the shell runs truly headless.
+            // This is the reason users would see a TcXaeShell window pop up
+            // during every build/activate/deploy — SuppressUI only hides
+            // modal dialogs, not the IDE frame itself.
+            //
+            // MainWindow can be briefly unavailable immediately after the
+            // Activator.CreateInstance call (the shell is still initializing
+            // its UI thread), so retry a few times before giving up.
+            HideMainWindow();
+
             // Configure error list to capture all types
             _dte.ToolWindows.ErrorList.ShowErrors = true;
             _dte.ToolWindows.ErrorList.ShowMessages = true;
@@ -422,6 +435,44 @@ namespace TcAutomation.Core
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[DEBUG] Failed to set SilentMode: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Hide the DTE main window. Uses a short retry loop because
+        /// MainWindow can throw RPC_E_SERVERCALL_RETRYLATER or return null
+        /// while the shell is still coming up after CreateInstance.
+        /// Also tries to minimize as a belt-and-braces fallback if hiding
+        /// ever fails silently on a given shell version.
+        /// </summary>
+        private void HideMainWindow()
+        {
+            if (_dte == null) return;
+
+            const int maxAttempts = 10;
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                try
+                {
+                    var mainWin = _dte.MainWindow;
+                    if (mainWin != null)
+                    {
+                        mainWin.Visible = false;
+                        try { mainWin.WindowState = EnvDTE.vsWindowState.vsWindowStateMinimize; } catch { }
+                        Console.Error.WriteLine($"[DEBUG] DTE MainWindow hidden (attempt {attempt})");
+                        return;
+                    }
+                }
+                catch (Exception ex) when (attempt < maxAttempts)
+                {
+                    Console.Error.WriteLine($"[DEBUG] HideMainWindow attempt {attempt} transient: {ex.Message}");
+                    Thread.Sleep(250);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[DEBUG] HideMainWindow failed after {attempt} attempts: {ex.Message}");
+                    return;
+                }
             }
         }
 
