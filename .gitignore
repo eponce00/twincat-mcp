@@ -5,7 +5,9 @@ TcAutomation/publish/
 
 # Python
 mcp-server/__pycache__/
+mcp-server/**/__pycache__/
 mcp-server/*.pyc
+mcp-server/**/*.pyc
 .venv/
 venv/
 *.egg-info/
