@@ -29,6 +29,20 @@ namespace TcAutomation.Core
         private bool _loaded;
         private HashSet<int>? _preExistingPids;
 
+        // Silent-reload state. When we change DTE options (AutoloadExternalChanges,
+        // etc.) we remember the previous value so we can restore it on Close()
+        // — DTE writes these options back to the user's registry profile, so
+        // leaving them tweaked would leak into the user's interactive TcXaeShell.
+        private readonly List<(string Category, string Page, string Item, object? Original)> _savedPreferences
+            = new List<(string, string, string, object?)>();
+
+        // Belt-and-suspenders visibility watchdog. If any modal we couldn't
+        // suppress promotes the main window (modals need a visible parent),
+        // this thread flips MainWindow.Visible back to false within ~500ms so
+        // the user doesn't see a TcXaeShell frame flash into view.
+        private Thread? _visibilityWatchdog;
+        private volatile bool _watchdogShouldStop;
+
         /// <summary>
         /// The Windows PID of the TcXaeShell/devenv process we launched.
         /// Populated after Load() via PID-diff against the pre-existing snapshot.
@@ -297,8 +311,17 @@ namespace TcAutomation.Core
         /// </summary>
         public void Close()
         {
+            // Stop the watchdog FIRST so it doesn't race DTE teardown by
+            // calling MainWindow on a dying COM object.
+            StopVisibilityWatchdog();
+
             if (_dte != null)
             {
+                // Restore any user preferences we tweaked at startup BEFORE
+                // Quit, because Quit may persist the current (our-modified)
+                // values to the registry profile.
+                RestoreDteOptions();
+
                 Thread.Sleep(3000); // Avoid busy errors
                 try
                 {
@@ -425,6 +448,25 @@ namespace TcAutomation.Core
             _dte.ToolWindows.ErrorList.ShowMessages = true;
             _dte.ToolWindows.ErrorList.ShowWarnings = true;
 
+            // Silent-reload: when an external edit touches a file that VS is
+            // tracking, reload it silently instead of popping the
+            // "This item has been modified outside of the source editor.
+            //  Do you want to reload it?" modal. That modal is the reason
+            // users occasionally see our hidden main window flash into view —
+            // a modal dialog needs a visible parent window, so VS promotes
+            // the main window out from under us to attach it.
+            //
+            // We KEEP DetectFileChangesOutsideIDE=true so the shell still
+            // picks up edits (otherwise a subsequent build would compile
+            // stale content); we just don't want the dialog.
+            //
+            // AutoloadExternalChanges only fires silently when there are no
+            // in-memory edits to the file. Our headless shell never opens
+            // documents interactively (we even delete the .suo to keep it
+            // that way), so the precondition is always met.
+            ApplyDteOption("Environment", "Documents", "DetectFileChangesOutsideIDE", true);
+            ApplyDteOption("Environment", "Documents", "AutoloadExternalChanges", true);
+
             // Enable TwinCAT silent mode
             try
             {
@@ -435,6 +477,137 @@ namespace TcAutomation.Core
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[DEBUG] Failed to set SilentMode: {ex.Message}");
+            }
+
+            // Start the visibility watchdog last, after all configuration is
+            // done. If anything above somehow unhid the window (race with UI
+            // thread), the watchdog will re-hide on its first tick.
+            StartVisibilityWatchdog();
+        }
+
+        /// <summary>
+        /// Apply a DTE option and remember the previous value so we can
+        /// restore it on Close(). DTE options can persist to the user's
+        /// registry profile, so restoring is important to avoid leaking our
+        /// session-local tweaks into the user's interactive shell.
+        ///
+        /// Silently swallows failures — the property may not exist on every
+        /// shell SKU / version, and a missing preference isn't worth
+        /// aborting startup over.
+        /// </summary>
+        private void ApplyDteOption(string category, string page, string item, object newValue)
+        {
+            if (_dte == null) return;
+
+            try
+            {
+                var props = _dte.Properties[category, page];
+                var prop = props.Item(item);
+                object? original = null;
+                try { original = prop.Value; } catch { /* readable-only in some SKUs */ }
+
+                _savedPreferences.Add((category, page, item, original));
+                prop.Value = newValue;
+                Console.Error.WriteLine(
+                    $"[DEBUG] DTE option {category}.{page}.{item}: {original ?? "(unknown)"} -> {newValue}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[DEBUG] DTE option {category}.{page}.{item} not applied (non-fatal): {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Restore every DTE option we tweaked in ConfigureDte. Best-effort:
+        /// if the DTE is already tearing down, we swallow errors.
+        /// </summary>
+        private void RestoreDteOptions()
+        {
+            if (_dte == null) return;
+
+            foreach (var (category, page, item, original) in _savedPreferences)
+            {
+                if (original == null) continue;
+                try
+                {
+                    _dte.Properties[category, page].Item(item).Value = original;
+                    Console.Error.WriteLine(
+                        $"[DEBUG] DTE option {category}.{page}.{item} restored to {original}");
+                }
+                catch { /* shutting down; best effort */ }
+            }
+            _savedPreferences.Clear();
+        }
+
+        /// <summary>
+        /// Start a background thread that re-hides the main window whenever
+        /// it observes it become visible. Modal dialogs (from TwinCAT, VS
+        /// itself, or extensions) need a visible parent window; some of
+        /// them bypass SuppressUI entirely and will promote our hidden
+        /// MainWindow to attach. This thread snaps it back to invisible
+        /// within ~500ms so the user doesn't see a frame flash.
+        ///
+        /// The watchdog only writes when the observed state is `visible` —
+        /// it doesn't busy-write `Visible=false` on every tick.
+        /// </summary>
+        private void StartVisibilityWatchdog()
+        {
+            if (_visibilityWatchdog != null) return;
+            _watchdogShouldStop = false;
+
+            _visibilityWatchdog = new Thread(VisibilityWatchdogLoop)
+            {
+                IsBackground = true,
+                Name = "DteVisibilityWatchdog",
+            };
+            _visibilityWatchdog.Start();
+            Console.Error.WriteLine("[DEBUG] VisibilityWatchdog started");
+        }
+
+        private void VisibilityWatchdogLoop()
+        {
+            while (!_watchdogShouldStop)
+            {
+                try
+                {
+                    // Local copy — Close() may null out _dte concurrently.
+                    var dte = _dte;
+                    if (dte == null)
+                    {
+                        return;
+                    }
+
+                    var mainWin = dte.MainWindow;
+                    if (mainWin != null && mainWin.Visible)
+                    {
+                        mainWin.Visible = false;
+                        try { mainWin.WindowState = EnvDTE.vsWindowState.vsWindowStateMinimize; } catch { }
+                        Console.Error.WriteLine("[DEBUG] VisibilityWatchdog re-hid the DTE main window");
+                    }
+                }
+                catch
+                {
+                    // COM busy, RPC disconnected, or DTE torn down. Next
+                    // tick will retry or the stop flag will exit.
+                }
+
+                // 500ms is fast enough that a briefly-raised window is
+                // imperceptible, and slow enough that the cost is
+                // negligible (two COM calls per tick in the idle case).
+                Thread.Sleep(500);
+            }
+            Console.Error.WriteLine("[DEBUG] VisibilityWatchdog stopped");
+        }
+
+        private void StopVisibilityWatchdog()
+        {
+            _watchdogShouldStop = true;
+            var t = _visibilityWatchdog;
+            _visibilityWatchdog = null;
+            if (t != null)
+            {
+                try { t.Join(2000); } catch { }
             }
         }
 
