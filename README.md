@@ -4,131 +4,28 @@
 
 <h1 align="center">TwinCAT MCP Server</h1>
 
-<p align="center">
-  <strong>Connect AI assistants to TwinCAT automation</strong><br>
-  Build, deploy, and monitor TwinCAT PLCs directly from VS Code with GitHub Copilot
-</p>
-
-<p align="center">
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#available-tools">Tools</a> •
-  <a href="#troubleshooting">Troubleshooting</a>
-</p>
+<p align="center">Build, deploy, and poke at TwinCAT PLCs from any MCP-aware AI client.</p>
 
 ---
 
-## What is this?
+## What it does
 
-An **MCP (Model Context Protocol) server** that enables AI assistants like GitHub Copilot to interact with TwinCAT XAE and PLCs. Ask Copilot to build your project, deploy to a PLC, read variables, or check system state - all through natural language.
+An MCP server that wraps the TwinCAT Automation Interface and ADS so an AI assistant (VS Code + Copilot, Cursor, Claude Desktop, etc.) can do your PLC work for you: build a solution, read compile errors, flip I/O, deploy to a target, run TcUnit, read and write symbols, and so on.
 
-> ⚠️ **Unofficial**: This is a community project and is not affiliated with or endorsed by Beckhoff Automation.
-
----
-
-## Features
-
-### 🔨 Build & Validate
-- **Build Solutions** - Compile projects and get detailed error/warning reports with file paths and line numbers
-- **Check All Objects** - Compile all objects including unused ones (catches errors in unreferenced function blocks)
-- **Static Analysis** - Run static code analysis with naming conventions and coding rules (requires TE1200 license)
-- **Generate Library** - Export a PLC project as a TwinCAT `.library` artifact (existing output is renamed to `*.backup_yyyyMMdd_HHmmss.library`)
-- **Project Info** - Get TwinCAT version, Visual Studio version, PLC list, and configuration details
-- **Clean** - Remove build artifacts
-
-### 🚀 Deployment
-- **Set Target** - Configure target AMS Net ID for deployment
-- **Activate** - Download configuration to target PLC
-- **Restart** - Start/restart TwinCAT runtime
-- **Deploy** - Full deployment workflow (build → set target → activate → restart)
-
-### 📡 ADS Communication (No Visual Studio Required)
-- **Get State** - Read TwinCAT runtime state (Run/Config/Stop)
-- **Set State** - Switch between Run/Config/Stop modes
-- **Read Variable** - Read PLC variables by symbol path
-- **Write Variable** - Write values to PLC variables
-
-### ⚙️ Configuration Management
-- **List PLCs** - List all PLC projects with AMS ports
-- **Boot Project** - Configure boot project autostart settings
-- **Disable I/O** - Enable/disable I/O devices (for testing without hardware)
-- **Variants** - Get/set project variants (TwinCAT 4024+)
-- **List Tasks** - Show real-time tasks with cycle times and priorities
-- **Configure Task** - Enable/disable tasks, set autostart
-- **Configure RT** - Set real-time CPU cores and load limits
-
----
-
-## Safety Features
-
-This MCP server includes multiple safety mechanisms to prevent accidental damage to production PLCs.
-
-### 🔒 SAFE/ARMED Mode
-
-Dangerous operations require explicitly **arming** the server first:
-
-```
-"Arm dangerous operations for deploying hotfix to line 3"
-```
-
-- Server starts in **SAFE mode** - destructive tools are blocked
-- Call `twincat_arm_dangerous_operations` to enable dangerous tools
-- Armed mode **auto-expires after 5 minutes** (configurable)
-- Call with `disarm: true` to manually return to safe mode
-
-**Dangerous tools (require armed mode):**
-- `twincat_activate` - Downloads config to PLC
-- `twincat_restart` - Restarts TwinCAT runtime  
-- `twincat_deploy` - Full deployment workflow
-- `twincat_set_state` - Changes PLC state (Run/Stop/Config)
-- `twincat_write_var` - Writes to PLC variables
-- `twincat_run_tcunit` - Only when targeting remote PLCs (local testing is safe)
-
-### ✅ Confirmation Required
-
-The most destructive operations require an additional `confirm: "CONFIRM"` parameter:
-
-- `twincat_activate`
-- `twincat_restart`
-- `twincat_deploy`
-
-This provides a two-step safety check: arm first, then confirm.
-
-### 🏷️ Tool Annotations
-
-All tools include MCP protocol annotations to help AI assistants understand risk levels:
-
-| Annotation | Meaning |
-|------------|---------|
-| `readOnlyHint: true` | Tool only reads data, no modifications |
-| `destructiveHint: true` | Tool can cause significant changes |
-| `idempotentHint: true` | Safe to retry, same result each time |
-
-### ⚙️ Configuration
-
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `TWINCAT_ARMED_TTL` | `300` | Armed mode timeout in seconds (5 min) |
-
----
+Unofficial. Not affiliated with Beckhoff.
 
 ## Prerequisites
 
-| Software | Version | Notes |
-|----------|---------|-------|
-| **Windows** | 10/11 | Required for COM interop |
-| **Visual Studio** | 2019/2022 | With ".NET desktop development" workload |
-| **.NET Framework** | 4.7.2 | [Developer Pack](https://dotnet.microsoft.com/download/dotnet-framework/net472) |
-| **TwinCAT XAE** | 3.1.4024+ | [Beckhoff Downloads](https://www.beckhoff.com/) |
-| **Python** | 3.10+ | Check "Add to PATH" during install |
-| **VS Code** | Latest | With GitHub Copilot extension |
+| Software | Version |
+|---|---|
+| Windows | 10 or 11 |
+| Visual Studio | 2019 or 2022 with the ".NET desktop development" workload |
+| .NET Framework | 4.7.2 Developer Pack |
+| TwinCAT XAE | 3.1.4024 or newer |
+| Python | 3.10 or newer, on PATH |
+| MCP client | VS Code + Copilot, Cursor, Claude Desktop, etc. |
 
----
-
-## Installation
-
-### Quick Setup (Recommended)
+## Install
 
 ```powershell
 git clone https://github.com/eponce92/twincat-mcp.git
@@ -136,246 +33,118 @@ cd twincat-mcp
 .\setup.bat
 ```
 
-This will:
-1. ✅ Check all prerequisites
-2. ✅ Build TcAutomation.exe with MSBuild
-3. ✅ Install Python dependencies
-4. ✅ Register MCP server in VS Code globally (using `--add-mcp` CLI)
+`setup.bat` checks prerequisites, builds `TcAutomation.exe`, installs the Python deps, and registers the server with VS Code.
 
-### Manual Installation
+### Manual registration
 
-If you prefer to install manually or the setup script doesn't work:
+If the script fails or you want a different client:
 
 ```powershell
-# Build the project
 .\scripts\build.ps1
-
-# Install Python dependencies
 pip install -r mcp-server/requirements.txt
+```
 
-# Register with VS Code (or VS Code Insiders)
+Then point your MCP client at `mcp-server/server.py`.
+
+**VS Code (global):**
+```powershell
 code --add-mcp '{"name":"twincat-automation","type":"stdio","command":"python","args":["C:/path/to/twincat-mcp/mcp-server/server.py"]}'
 ```
 
-### Start the Server
-
-1. **Restart VS Code** (or `Ctrl+Shift+P` → "Developer: Reload Window")
-2. Press `Ctrl+Shift+P` → **"MCP: List Servers"**
-3. Click **"twincat-automation"** to start
-4. Click **"Start"** and **"Trust"** if prompted
-
----
-
-## Usage
-
-Once installed, the TwinCAT tools work in **any VS Code workspace**.
-
-### Example Commands in Copilot Chat
-
-```
-"Build my TwinCAT project at C:\Projects\MyMachine\Solution.sln"
-
-"Deploy to PLC at 192.168.1.10.1.1"
-
-"Read MAIN.bRunning from the PLC"
-
-"What's the TwinCAT state on 172.18.236.100.1.1?"
-
-"Disable I/O devices and activate to the test PLC"
-
-"List all tasks in my project"
-
-"Generate a TwinCAT library for PLC 'MainPlc' from C:\Projects\Machine\Machine.sln"
-
-"Generate a library for PLC 'MainPlc' and place it in C:\Artifacts\Libraries"
+**Cursor (global)** add to `~/.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "twincat-automation": {
+      "command": "python",
+      "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"]
+    }
+  }
+}
 ```
 
-### Example Outputs
+Restart the client and enable the server.
 
-**Build with errors:**
+## Safety
+
+The server starts in SAFE mode. Anything that can touch a running machine is blocked until you arm it:
+
 ```
-❌ Build failed (2 errors, 1 warning)
-
-🔴 Errors:
-  • POUs/MAIN.TcPOU:4 - C0077: Unknown type: 'DINT2'
-  • POUs/FB_Motor.TcPOU:15 - C0035: Program name expected
-
-🟡 Warnings:
-  • GVLs/GVL_Main.TcGVL:8 - C0371: Unused variable 'nTemp'
+Arm dangerous operations to deploy the hotfix.
 ```
 
-**PLC State:**
+Armed mode auto-expires after 5 minutes (override with `TWINCAT_ARMED_TTL` seconds). You can also disarm manually by calling `twincat_arm_dangerous_operations` with `disarm: true`.
+
+Tools that require armed mode:
+`twincat_activate`, `twincat_restart`, `twincat_deploy`, `twincat_set_state`, `twincat_write_var`, and `twincat_run_tcunit` against a remote target.
+
+The three most destructive tools (`twincat_activate`, `twincat_restart`, `twincat_deploy`) also require `confirm: "CONFIRM"` as an explicit second step.
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `twincat_arm_dangerous_operations` | Toggle SAFE/ARMED mode. |
+| `twincat_build` | Build a solution, return errors and warnings with file paths and line numbers. |
+| `twincat_check_all_objects` | Compile every object including unreferenced ones. Catches bugs a normal build skips. |
+| `twincat_static_analysis` | Static analysis via TE1200 (license required). |
+| `twincat_clean` | Remove build artifacts. |
+| `twincat_get_info` | TwinCAT version, VS version, PLCs in the solution. |
+| `twincat_generate_library` | Export a PLC project as a `.library` file. Existing output is renamed to `*.backup_yyyyMMdd_HHmmss.library`. |
+| `twincat_set_target` | Set the target AMS Net ID. |
+| `twincat_activate` | Activate configuration on the target. Armed + confirm. |
+| `twincat_restart` | Restart TwinCAT runtime. Armed + confirm. |
+| `twincat_deploy` | Build, activate, restart. Armed + confirm. |
+| `twincat_list_routes` | List ADS routes from the local router. |
+| `twincat_get_state` | Runtime state (Run/Config/Stop) via ADS. |
+| `twincat_set_state` | Change runtime state via ADS. Armed. |
+| `twincat_read_var` | Read a PLC variable by symbol path. |
+| `twincat_write_var` | Write a PLC variable. Armed. |
+| `twincat_list_plcs` | PLC projects and their AMS ports. |
+| `twincat_set_boot_project` | Configure boot project autostart. |
+| `twincat_disable_io` | Enable or disable I/O devices (test without hardware). |
+| `twincat_set_variant` | Get or set the project variant (4024+). |
+| `twincat_list_tasks` | Real-time tasks with cycle times and priorities. |
+| `twincat_configure_task` | Enable/disable a task, set autostart. |
+| `twincat_configure_rt` | Set RT CPU cores and load limit. |
+| `twincat_get_error_list` | Contents of the VS Error List (errors, warnings, ADS messages). |
+| `twincat_run_tcunit` | Full TcUnit workflow: build, configure test task, set boot, optional I/O disable, activate, restart, poll, report. Armed when remote. |
+| `twincat_kill_stale` | Kill orphaned VS/XAE processes left from crashed runs. |
+
+### `twincat_run_tcunit` parameters
+
+- `solutionPath` (required)
+- `amsNetId` (default `127.0.0.1.1.1`)
+- `taskName` (auto-detected if only one)
+- `plcName`
+- `timeoutMinutes` (default 10)
+- `disableIo` (default false)
+- `skipBuild` (default false)
+
+Local targets (`127.0.0.1.1.1`) do not require armed mode. Remote targets do.
+
+## Example prompts
+
 ```
-🟢 TwinCAT State: Run
-📡 AMS Net ID: 172.18.236.100.1.1
-📊 Device State: 1
-📝 Description: Run - Running normally
+Build my TwinCAT project at C:\Projects\MyMachine\Solution.sln
+Check all objects in TcForgeExample
+Read MAIN.bRunning from the PLC
+What is the TwinCAT state on 172.18.236.100.1.1?
+Disable I/O and activate to the test PLC
+Generate a library for PLC 'MainPlc' into C:\Artifacts\Libraries
+Run TcUnit tests on my project
 ```
-
-**Read Variable:**
-```
-✅ Variable Read: MAIN.bRunning
-📊 Value: True
-📋 Data Type: BOOL
-📐 Size: 1 bytes
-```
-
----
-
-## Available Tools
-
-### Safety Control
-| Tool | Description |
-|------|-------------|
-| `twincat_arm_dangerous_operations` | Arm/disarm dangerous operations (required before deploy, activate, restart, etc.) |
-
-### Build & Project Management
-| Tool | Description |
-|------|-------------|
-| `twincat_build` | Build solution, return errors/warnings with line numbers |
-| `twincat_get_info` | Get TwinCAT version, VS version, PLC list |
-| `twincat_clean` | Clean solution (remove build artifacts) |
-| `twincat_check_all_objects` | Check all PLC objects including unused ones (catches errors in unreferenced FBs) |
-| `twincat_static_analysis` | Run static code analysis (requires TE1200 license) |
-| `twincat_generate_library` | Export a PLC project as a `.library` file (default output: solution directory; existing file is renamed to `*.backup_yyyyMMdd_HHmmss.library`) |
-
-### Deployment (⚠️ Require Armed Mode + Confirmation)
-| Tool | Description |
-|------|-------------|
-| `twincat_set_target` | Set target AMS Net ID |
-| `twincat_activate` | Activate configuration on target (→ Config mode) |
-| `twincat_restart` | Restart TwinCAT runtime (→ Run mode) |
-| `twincat_deploy` | Full deployment: build → activate → restart |
-
-### ADS Communication
-| Tool | Description |
-|------|-------------|
-| `twincat_list_routes` | List available ADS routes (PLCs) from TwinCAT router |
-| `twincat_get_state` | Get runtime state via ADS (Run/Config/Stop) |
-| `twincat_set_state` | Set runtime state via ADS (⚠️ requires armed mode) |
-| `twincat_read_var` | Read PLC variable by symbol path |
-| `twincat_write_var` | Write value to PLC variable (⚠️ requires armed mode) |
-
-### Configuration
-| Tool | Description |
-|------|-------------|
-| `twincat_list_plcs` | List PLC projects with AMS ports |
-| `twincat_set_boot_project` | Configure boot project autostart |
-| `twincat_disable_io` | Enable/disable I/O devices |
-| `twincat_set_variant` | Get/set project variant |
-| `twincat_list_tasks` | List real-time tasks |
-| `twincat_configure_task` | Enable/disable task, set autostart |
-| `twincat_configure_rt` | Configure RT CPU cores and load limit |
-
-### TcUnit Testing
-| Tool | Description |
-|------|-------------|
-| `twincat_run_tcunit` | Run TcUnit tests with full automation: build → configure → activate → poll results |
-| `twincat_get_error_list` | Get VS Error List contents (errors, warnings, ADS messages) |
-
-**`twincat_run_tcunit`** handles the complete test workflow:
-1. Build the solution
-2. Configure the test task (enable, autostart)
-3. Set boot project
-4. Optionally disable I/O devices (for running without hardware)
-5. Activate configuration
-6. Restart TwinCAT
-7. Poll for test completion
-8. Return pass/fail counts and test details
-
-**Parameters:**
-- `solutionPath` (required): Path to TwinCAT .sln file
-- `amsNetId`: Target PLC (default: `127.0.0.1.1.1` for local)
-- `taskName`: Test task name (auto-detected if only one task)
-- `plcName`: Target specific PLC project
-- `timeoutMinutes`: Test timeout (default: 10)
-- `disableIo`: Disable I/O devices (default: false)
-- `skipBuild`: Skip building (default: false)
-
-**Example:** *"Run TcUnit tests on my project"*
-
-> **Note:** Local testing (127.0.0.1.1.1) does not require armed mode. Remote PLC testing requires armed mode for safety.
-
----
 
 ## Troubleshooting
 
-### MCP Server Not Starting
+**Server does not start.** In VS Code: `Ctrl+Shift+P` > `MCP: List Servers` > Start and Trust. In Cursor: Settings > MCP & Integrations > enable the server.
 
-1. Press `Ctrl+Shift+P` → **"MCP: List Servers"**
-2. Click "twincat-automation" → **"Start"**
-3. If prompted, click **"Trust"**
+**`MSB4803: ResolveComReference not supported`.** You built with `dotnet build` instead of MSBuild. Run `.\setup.bat` or `.\scripts\build.ps1`.
 
-### Build Error: "MSB4803: ResolveComReference not supported"
+**TwinCAT or Visual Studio not found.** Force the version in the prompt: `Build my project with TwinCAT version 3.1.4026.17`.
 
-You're using `dotnet build` instead of MSBuild. Use the setup script:
-```powershell
-.\setup.bat
-```
-
-### "TwinCAT/Visual Studio not found"
-
-Specify the TwinCAT version explicitly:
-```
-Build my project with TwinCAT version 3.1.4026.17
-```
-
-### ADS Connection Failed
-
-- Verify AMS Net ID is correct
-- Ensure ADS route exists to target
-- Check firewall allows ADS traffic (port 48898)
-
----
-
-## Project Structure
-
-```
-twincat-mcp/
-├── setup.bat               # One-click setup
-├── TcAutomation/           # .NET CLI tool (COM automation)
-│   ├── Commands/           # Build, Deploy, ADS commands
-│   ├── Core/               # VS instance, COM wrappers
-│   └── Models/             # JSON output models
-├── mcp-server/             # Python MCP server
-│   └── server.py           # MCP protocol implementation
-└── scripts/                # PowerShell helpers
-    ├── setup.ps1           # Prerequisites + build
-    ├── install-mcp.ps1     # Register with VS Code
-    └── test-*.ps1          # Test scripts
-```
-
----
-
-## Development
-
-### Adding New Tools
-
-1. Add command class in `TcAutomation/Commands/`
-2. Register in `Program.cs`
-3. Add tool definition and handler in `mcp-server/server.py`
-4. Test with `.\scripts\test-mcp-automated.ps1`
-
-### Building
-
-```powershell
-.\scripts\build.ps1
-```
-
-### Testing
-
-```powershell
-# Full test suite
-.\scripts\test-mcp-automated.ps1
-
-# Quick test (skip build)
-.\scripts\test-mcp-automated.ps1 -SkipBuild
-```
-
----
+**ADS connection failed.** Check the AMS Net ID, confirm the route exists in the TwinCAT router, and that port 48898 is open through the firewall.
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
-
----
+MIT. See `LICENSE`.
