@@ -7,6 +7,7 @@ steps, PLC list, dry-run prefix) so it lives in its own module to keep
 
 from mcp.types import TextContent
 
+from ..defaults import resolve_ams_net_id
 from ..dispatch import run_shell_step
 from ..formatting import add_timing_to_output
 from ._registry import register
@@ -15,7 +16,7 @@ from ._registry import register
 @register("twincat_deploy")
 async def handle_deploy(arguments: dict, tool_start_time: float) -> list[TextContent]:
     solution_path = arguments.get("solutionPath", "")
-    ams_net_id = arguments.get("amsNetId", "")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     plc_name = arguments.get("plcName")
     tc_version = arguments.get("tcVersion")
     skip_build = arguments.get("skipBuild", False)

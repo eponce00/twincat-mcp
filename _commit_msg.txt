@@ -1,0 +1,48 @@
+feat(defaults): configurable default PLC target via TWINCAT_DEFAULT_AMS_NET_ID
+
+Set `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP client's server env and
+every tool that takes an `amsNetId` (TcUnit, deploy, activate, restart,
+set-target, get/set state, read/write var) falls back to it when the
+agent didn't supply one. Unset = historic `127.0.0.1.1.1`, so existing
+installs see no behaviour change.
+
+  New `twincat_mcp/defaults.py`:
+    - `DEFAULT_AMS_NET_ID` resolved once at import from env var
+    - `resolve_ams_net_id(value)` — same fallback semantics everywhere
+      (None / empty / whitespace all collapse to the default)
+    - `is_local_target(id)` — drives the tcunit arm-for-remote gate
+    - `describe_default_for_schema()` — description suffix baked into
+      every `amsNetId` schema field so agents discover the effective
+      default through `list_tools` without a round-trip
+
+  Schemas:
+    - Drop `amsNetId` from `required` on set-target, deploy, get-state,
+      set-state, read-var, write-var (already optional on activate /
+      restart / tcunit). Agents can now call these with no target and
+      hit the configured default.
+    - Every `amsNetId` description gets the resolved default appended.
+
+  Handlers (ads.py, deploy.py, shell.py, tcunit.py):
+    - All `arguments.get("amsNetId", "")` / conditional-pass patterns
+      replaced with `resolve_ams_net_id(arguments.get("amsNetId"))`.
+
+  Safety:
+    - tcunit arm-for-remote gate now resolves the effective target via
+      the defaults module, so if the user's default is a remote rig,
+      running tcunit with no args still requires arming.
+    - Also fixes a latent bug: the original gate was `if arguments:`,
+      which short-circuits on `{}` — now explicitly `arguments is not
+      None`, because agents legitimately pass empty args now that the
+      server auto-fills the target.
+    - `check_confirmation` shows the *resolved* target in its error
+      message, not the literal "unknown target" when amsNetId is
+      omitted.
+
+  README gets a "Default target PLC" section above Safety with the
+  Cursor mcp.json `env` block showing how to set it.
+
+Smoke-tested both modes:
+  - fallback: tcunit without args → allowed (local), tcunit with remote
+    amsNetId → blocked until armed
+  - remote default: tcunit without args → blocked until armed, tcunit
+    with remote amsNetId → blocked until armed

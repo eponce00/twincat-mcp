@@ -9,6 +9,7 @@ is the bulk of the file.
 
 from mcp.types import TextContent
 
+from ..defaults import resolve_ams_net_id
 from ..dispatch import run_shell_step
 from ..formatting import add_timing_to_output
 from ._registry import register
@@ -17,7 +18,10 @@ from ._registry import register
 @register("twincat_run_tcunit")
 async def handle_run_tcunit(arguments: dict, tool_start_time: float) -> list[TextContent]:
     solution_path = arguments.get("solutionPath", "")
-    ams_net_id = arguments.get("amsNetId")
+    # Fill in the configured default target when the agent didn't
+    # specify one — so users can set TWINCAT_DEFAULT_AMS_NET_ID once
+    # and stop re-prompting the agent about which PLC to test against.
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     task_name = arguments.get("taskName")
     plc_name = arguments.get("plcName")
     tc_version = arguments.get("tcVersion")
@@ -25,9 +29,7 @@ async def handle_run_tcunit(arguments: dict, tool_start_time: float) -> list[Tex
     disable_io = arguments.get("disableIo", False)
     skip_build = arguments.get("skipBuild", False)
 
-    step_args: dict = {"timeoutMinutes": timeout_minutes}
-    if ams_net_id:
-        step_args["amsNetId"] = ams_net_id
+    step_args: dict = {"timeoutMinutes": timeout_minutes, "amsNetId": ams_net_id}
     if task_name:
         step_args["taskName"] = task_name
     if plc_name:

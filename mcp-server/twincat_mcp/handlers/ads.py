@@ -13,6 +13,7 @@ twincat_read_var, twincat_write_var.
 
 from mcp.types import TextContent
 
+from ..defaults import resolve_ams_net_id
 from ..dispatch import run_shell_step
 from ..formatting import add_timing_to_output
 from ._registry import register
@@ -20,7 +21,7 @@ from ._registry import register
 
 @register("twincat_get_state")
 async def handle_get_state(arguments: dict, tool_start_time: float) -> list[TextContent]:
-    ams_net_id = arguments.get("amsNetId", "")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     port = arguments.get("port", 851)
 
     result, _ = run_shell_step(
@@ -45,7 +46,7 @@ async def handle_get_state(arguments: dict, tool_start_time: float) -> list[Text
 
 @register("twincat_set_state")
 async def handle_set_state(arguments: dict, tool_start_time: float) -> list[TextContent]:
-    ams_net_id = arguments.get("amsNetId", "")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     state = arguments.get("state", "")
     port = arguments.get("port", 851)
 
@@ -73,7 +74,7 @@ async def handle_set_state(arguments: dict, tool_start_time: float) -> list[Text
 
 @register("twincat_read_var")
 async def handle_read_var(arguments: dict, tool_start_time: float) -> list[TextContent]:
-    ams_net_id = arguments.get("amsNetId", "")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     symbol = arguments.get("symbol", "")
     port = arguments.get("port", 851)
 
@@ -95,7 +96,7 @@ async def handle_read_var(arguments: dict, tool_start_time: float) -> list[TextC
 
 @register("twincat_write_var")
 async def handle_write_var(arguments: dict, tool_start_time: float) -> list[TextContent]:
-    ams_net_id = arguments.get("amsNetId", "")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     symbol = arguments.get("symbol", "")
     value = arguments.get("value", "")
     port = arguments.get("port", 851)

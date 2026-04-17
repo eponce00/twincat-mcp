@@ -65,6 +65,30 @@ code --add-mcp '{"name":"twincat-automation","type":"stdio","command":"python","
 
 Restart the client and enable the server.
 
+## Default target PLC
+
+Every tool that takes an `amsNetId` (TcUnit, deploy, activate, restart, get/set state, read/write var, set-target) falls back to a configurable default when the agent doesn't pass one. Out of the box that default is `127.0.0.1.1.1` (local runtime), which preserves the old behaviour.
+
+Point it at your test rig by setting `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP client's server config:
+
+**Cursor (`~/.cursor/mcp.json`):**
+
+```json
+{
+  "mcpServers": {
+    "twincat-automation": {
+      "command": "python",
+      "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"],
+      "env": {
+        "TWINCAT_DEFAULT_AMS_NET_ID": "5.22.157.86.1.1"
+      }
+    }
+  }
+}
+```
+
+The effective default is baked into every tool's schema description, so the agent sees it on `list_tools` and stops pestering you about which PLC to target. Agents can still override per-call by passing `amsNetId` explicitly. Safety gates resolve against the effective target too — if your default is remote, `twincat_run_tcunit` still requires armed mode.
+
 ## Safety
 
 The server starts in SAFE mode. Anything that can touch a running machine is blocked until you arm it:

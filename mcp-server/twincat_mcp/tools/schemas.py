@@ -11,6 +11,14 @@ calls `get_tool_schemas()` inside its `@server.list_tools()` handler.
 
 from mcp.types import Tool
 
+from ..defaults import DEFAULT_AMS_NET_ID, describe_default_for_schema
+
+
+# Description suffix for every `amsNetId` schema field. Resolved at
+# import-time from the env var so agents see the effective default in
+# `list_tools` output without making a round-trip call.
+_AMS_NET_ID_DESC = describe_default_for_schema()
+
 
 def get_tool_schemas() -> list[Tool]:
     """Return the list of Tool descriptors advertised via list_tools."""
@@ -218,14 +226,14 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": "Target AMS Net ID (e.g., '5.22.157.86.1.1')"
+                        "description": f"Target AMS Net ID (e.g., '5.22.157.86.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "tcVersion": {
                         "type": "string",
                         "description": "Force specific TwinCAT version. Optional."
                     }
                 },
-                "required": ["solutionPath", "amsNetId"]
+                "required": ["solutionPath"]
             },
             annotations={
                 "readOnlyHint": False,
@@ -245,7 +253,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": "Target AMS Net ID. Optional - uses project default if not specified."
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
                     },
                     "tcVersion": {
                         "type": "string",
@@ -276,7 +284,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": "Target AMS Net ID. Optional - uses project default if not specified."
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
                     },
                     "tcVersion": {
                         "type": "string",
@@ -307,7 +315,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": "Target AMS Net ID (e.g., '5.22.157.86.1.1')"
+                        "description": f"Target AMS Net ID (e.g., '5.22.157.86.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "plcName": {
                         "type": "string",
@@ -332,7 +340,7 @@ def get_tool_schemas() -> list[Tool]:
                         "description": "Safety confirmation. Must be 'CONFIRM' to execute."
                     }
                 },
-                "required": ["solutionPath", "amsNetId"]
+                "required": ["solutionPath"]
             },
             annotations={
                 "readOnlyHint": False,
@@ -464,7 +472,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1' or '127.0.0.1.1.1' for local)"
+                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1' or '127.0.0.1.1.1' for local). {_AMS_NET_ID_DESC}"
                     },
                     "port": {
                         "type": "integer",
@@ -472,7 +480,7 @@ def get_tool_schemas() -> list[Tool]:
                         "default": 851
                     }
                 },
-                "required": ["amsNetId"]
+                "required": []
             },
             annotations={
                 "readOnlyHint": True,
@@ -488,7 +496,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1')"
+                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "state": {
                         "type": "string",
@@ -500,7 +508,7 @@ def get_tool_schemas() -> list[Tool]:
                         "default": 851
                     }
                 },
-                "required": ["amsNetId", "state"]
+                "required": ["state"]
             },
             annotations={
                 "readOnlyHint": False,
@@ -516,7 +524,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1')"
+                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "symbol": {
                         "type": "string",
@@ -528,7 +536,7 @@ def get_tool_schemas() -> list[Tool]:
                         "default": 851
                     }
                 },
-                "required": ["amsNetId", "symbol"]
+                "required": ["symbol"]
             },
             annotations={
                 "readOnlyHint": True,
@@ -544,7 +552,7 @@ def get_tool_schemas() -> list[Tool]:
                 "properties": {
                     "amsNetId": {
                         "type": "string",
-                        "description": "AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1')"
+                        "description": f"AMS Net ID of the target PLC (e.g., '172.18.236.100.1.1'). {_AMS_NET_ID_DESC}"
                     },
                     "symbol": {
                         "type": "string",
@@ -560,7 +568,7 @@ def get_tool_schemas() -> list[Tool]:
                         "default": 851
                     }
                 },
-                "required": ["amsNetId", "symbol", "value"]
+                "required": ["symbol", "value"]
             },
             annotations={
                 "readOnlyHint": False,
@@ -828,7 +836,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "amsNetId": {
                         "type": "string",
-                        "description": "Target AMS Net ID (default: 127.0.0.1.1.1 for local)"
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
                     },
                     "taskName": {
                         "type": "string",

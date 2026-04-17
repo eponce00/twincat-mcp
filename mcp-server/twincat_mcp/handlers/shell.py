@@ -18,6 +18,7 @@ Handlers covered:
 
 from mcp.types import TextContent
 
+from ..defaults import resolve_ams_net_id
 from ..dispatch import run_shell_step
 from ..formatting import add_timing_to_output
 from ._registry import register
@@ -129,7 +130,7 @@ async def handle_clean(arguments: dict, tool_start_time: float) -> list[TextCont
 @register("twincat_set_target")
 async def handle_set_target(arguments: dict, tool_start_time: float) -> list[TextContent]:
     solution_path = arguments.get("solutionPath", "")
-    ams_net_id = arguments.get("amsNetId", "")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     tc_version = arguments.get("tcVersion")
 
     result, _ = run_shell_step(
@@ -151,14 +152,11 @@ async def handle_set_target(arguments: dict, tool_start_time: float) -> list[Tex
 @register("twincat_activate")
 async def handle_activate(arguments: dict, tool_start_time: float) -> list[TextContent]:
     solution_path = arguments.get("solutionPath", "")
-    ams_net_id = arguments.get("amsNetId")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     tc_version = arguments.get("tcVersion")
 
-    step_args: dict = {}
-    if ams_net_id:
-        step_args["amsNetId"] = ams_net_id
     result, _ = run_shell_step(
-        "activate", step_args,
+        "activate", {"amsNetId": ams_net_id},
         solution_path=solution_path, tc_version=tc_version,
         timeout_minutes=10,
     )
@@ -175,14 +173,11 @@ async def handle_activate(arguments: dict, tool_start_time: float) -> list[TextC
 @register("twincat_restart")
 async def handle_restart(arguments: dict, tool_start_time: float) -> list[TextContent]:
     solution_path = arguments.get("solutionPath", "")
-    ams_net_id = arguments.get("amsNetId")
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
     tc_version = arguments.get("tcVersion")
 
-    step_args: dict = {}
-    if ams_net_id:
-        step_args["amsNetId"] = ams_net_id
     result, _ = run_shell_step(
-        "restart", step_args,
+        "restart", {"amsNetId": ams_net_id},
         solution_path=solution_path, tc_version=tc_version,
         timeout_minutes=5,
     )
