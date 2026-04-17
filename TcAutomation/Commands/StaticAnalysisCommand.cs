@@ -93,9 +93,33 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
+                result = ExecuteInSession(vsInstance, checkAll, plcName);
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = ex.Message;
+            }
+            finally
+            {
+                vsInstance?.Close();
+                MessageFilter.Revoke();
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Run static analysis using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static StaticAnalysisResult ExecuteInSession(VisualStudioInstance vsInstance, bool checkAll = true, string plcName = null)
+        {
+            var result = new StaticAnalysisResult { CheckedAllObjects = checkAll };
+
+            try
+            {
                 var systemManager = vsInstance.GetSystemManager();
 
-                // Get PLC node
                 ITcSmTreeItem plcNode;
                 try
                 {
@@ -108,7 +132,6 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                // Iterate through PLC projects
                 int plcCount = 0;
                 foreach (ITcSmTreeItem plcProject in plcNode)
                 {
@@ -271,11 +294,6 @@ namespace TcAutomation.Commands
             {
                 result.Success = false;
                 result.ErrorMessage = ex.Message;
-            }
-            finally
-            {
-                vsInstance?.Close();
-                MessageFilter.Revoke();
             }
 
             return result;

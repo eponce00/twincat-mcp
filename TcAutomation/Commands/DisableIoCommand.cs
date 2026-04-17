@@ -37,11 +37,33 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
+                result = ExecuteInSession(vsInstance, solutionPath, enable);
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return result.Success ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return 1;
+            }
+            finally
+            {
+                vsInstance?.Close();
+            }
+        }
 
-                // Get the I/O devices root node
+        /// <summary>
+        /// Disable/enable I/O devices using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static DisableIoResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, bool enable)
+        {
+            var result = new DisableIoResult { SolutionPath = solutionPath };
+
+            try
+            {
+                var automation = new AutomationInterface(vsInstance);
+
                 ITcSmTreeItem ioDevicesRoot;
                 try
                 {
@@ -50,8 +72,7 @@ namespace TcAutomation.Commands
                 catch
                 {
                     result.ErrorMessage = "I/O Devices tree not found in project";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
                 int childCount = ioDevicesRoot.ChildCount;
@@ -61,27 +82,16 @@ namespace TcAutomation.Commands
                 {
                     result.Success = true;
                     result.Message = "No I/O devices found to modify";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 0;
+                    return result;
                 }
 
-                // Determine target state
-                // DISABLED_STATE enum values:
-                // - 0 = not disabled (enabled)
-                // - 1 = SMDS_DISABLED
-                // - 2 = SMDS_PARENT_DISABLED
-                // To enable, we set to 0 (cast from int since there's no named enum value for "enabled")
                 DISABLED_STATE targetState = enable ? (DISABLED_STATE)0 : DISABLED_STATE.SMDS_DISABLED;
                 string action = enable ? "enabled" : "disabled";
 
-                // Iterate through all top-level I/O devices
                 for (int i = 1; i <= childCount; i++)
                 {
                     ITcSmTreeItem device = ioDevicesRoot.Child[i];
-                    var deviceResult = new IoDeviceResult
-                    {
-                        Name = device.Name
-                    };
+                    var deviceResult = new IoDeviceResult { Name = device.Name };
 
                     try
                     {
@@ -112,23 +122,16 @@ namespace TcAutomation.Commands
                 }
 
                 result.Success = true;
-                if (result.ModifiedCount > 0)
-                    result.Message = $"{result.ModifiedCount} device(s) {action}";
-                else
-                    result.Message = $"All {result.TotalDevices} device(s) already {action} - no changes needed";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                result.Message = result.ModifiedCount > 0
+                    ? $"{result.ModifiedCount} device(s) {action}"
+                    : $"All {result.TotalDevices} device(s) already {action} - no changes needed";
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 1;
             }
-            finally
-            {
-                vsInstance?.Close();
-            }
+
+            return result;
         }
     }
 

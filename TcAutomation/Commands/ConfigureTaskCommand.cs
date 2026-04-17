@@ -39,12 +39,37 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
-                result.TaskName = taskName;
+                result = ExecuteInSession(vsInstance, solutionPath, taskName, enable, autoStart);
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return result.Success ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return 1;
+            }
+            finally
+            {
+                vsInstance?.Close();
+            }
+        }
 
-                // Get the real-time tasks tree item
+        /// <summary>
+        /// Configure a real-time task using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static ConfigureTaskResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string taskName, bool? enable, bool? autoStart)
+        {
+            var result = new ConfigureTaskResult
+            {
+                SolutionPath = solutionPath,
+                TaskName = taskName
+            };
+
+            try
+            {
+                var automation = new AutomationInterface(vsInstance);
+
                 ITcSmTreeItem tasksTreeItem;
                 try
                 {
@@ -53,18 +78,16 @@ namespace TcAutomation.Commands
                 catch
                 {
                     result.ErrorMessage = "Real-time tasks tree not found in project";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
-                // Find the specified task
                 ITcSmTreeItem? targetTask = null;
                 for (int i = 1; i <= tasksTreeItem.ChildCount; i++)
                 {
                     var taskItem = tasksTreeItem.Child[i];
                     string xml = taskItem.ProduceXml();
                     string itemName = GetItemNameFromXml(xml);
-                    
+
                     if (taskItem.Name.Equals(taskName, StringComparison.OrdinalIgnoreCase) ||
                         itemName.Equals(taskName, StringComparison.OrdinalIgnoreCase))
                     {
@@ -81,27 +104,21 @@ namespace TcAutomation.Commands
                         result.ErrorMessage += tasksTreeItem.Child[i].Name;
                         if (i < tasksTreeItem.ChildCount) result.ErrorMessage += ", ";
                     }
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
-                // Read current XML for AutoStart (no native property available)
                 string currentXml = targetTask.ProduceXml();
-                
-                // Get previous state - Disabled from native property, AutoStart from XML
+
                 bool wasDisabled = (targetTask.Disabled != DISABLED_STATE.SMDS_NOT_DISABLED);
                 bool wasAutoStart = GetAutoStartFromXml(currentXml);
                 result.PreviousDisabled = wasDisabled;
                 result.PreviousAutoStart = wasAutoStart;
 
-                // Apply changes
                 bool newDisabled = enable.HasValue ? !enable.Value : wasDisabled;
                 bool newAutoStart = autoStart.HasValue ? autoStart.Value : wasAutoStart;
 
-                // Use native API for Disabled property
                 targetTask.Disabled = newDisabled ? DISABLED_STATE.SMDS_DISABLED : DISABLED_STATE.SMDS_NOT_DISABLED;
-                
-                // Use XML only for AutoStart (no native API)
+
                 if (newAutoStart != wasAutoStart)
                 {
                     string newXml = SetAutoStartInXml(currentXml, newAutoStart);
@@ -110,28 +127,20 @@ namespace TcAutomation.Commands
                         targetTask.ConsumeXml(newXml);
                     }
                 }
-                
-                // Wait a moment for changes to take effect
+
                 System.Threading.Thread.Sleep(1000);
 
                 result.NewDisabled = newDisabled;
                 result.NewAutoStart = newAutoStart;
                 result.Success = true;
                 result.Message = $"Task '{taskName}' configured: Disabled={newDisabled}, AutoStart={newAutoStart}";
-
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 1;
             }
-            finally
-            {
-                vsInstance?.Close();
-            }
+
+            return result;
         }
 
         private static string GetItemNameFromXml(string xml)

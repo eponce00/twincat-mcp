@@ -33,42 +33,9 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
-                result.TcVersion = string.IsNullOrEmpty(tcVersion) ? projectTcVersion : tcVersion;
-                result.PlcCount = automation.PlcTreeItem.ChildCount;
-
-                // Enumerate all PLC projects
-                for (int i = 1; i <= automation.PlcTreeItem.ChildCount; i++)
-                {
-                    var plcProject = automation.PlcTreeItem.Child[i];
-                    var plcInfo = new ListPlcInfo
-                    {
-                        Name = plcProject.Name,
-                        Index = i
-                    };
-
-                    try
-                    {
-                        // Get detailed info from XML
-                        string xml = plcProject.ProduceXml();
-                        plcInfo.AmsPort = ParseAmsPortFromXml(xml);
-                        
-                        // Try to get IEC project interface for boot project info
-                        var iecProject = (TCatSysManagerLib.ITcPlcProject)plcProject;
-                        plcInfo.BootProjectAutostart = iecProject.BootProjectAutostart;
-                    }
-                    catch (Exception ex)
-                    {
-                        plcInfo.Error = ex.Message;
-                    }
-
-                    result.PlcProjects.Add(plcInfo);
-                }
-
+                result = ExecuteInSession(vsInstance, solutionPath, string.IsNullOrEmpty(tcVersion) ? projectTcVersion : tcVersion);
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                return string.IsNullOrEmpty(result.ErrorMessage) ? 0 : 1;
             }
             catch (Exception ex)
             {
@@ -80,6 +47,55 @@ namespace TcAutomation.Commands
             {
                 vsInstance?.Close();
             }
+        }
+
+        /// <summary>
+        /// List PLC projects using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static ListPlcsResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string tcVersion)
+        {
+            var result = new ListPlcsResult
+            {
+                SolutionPath = solutionPath,
+                TcVersion = tcVersion
+            };
+
+            try
+            {
+                var automation = new AutomationInterface(vsInstance);
+                result.PlcCount = automation.PlcTreeItem.ChildCount;
+
+                for (int i = 1; i <= automation.PlcTreeItem.ChildCount; i++)
+                {
+                    var plcProject = automation.PlcTreeItem.Child[i];
+                    var plcInfo = new ListPlcInfo
+                    {
+                        Name = plcProject.Name,
+                        Index = i
+                    };
+
+                    try
+                    {
+                        string xml = plcProject.ProduceXml();
+                        plcInfo.AmsPort = ParseAmsPortFromXml(xml);
+
+                        var iecProject = (TCatSysManagerLib.ITcPlcProject)plcProject;
+                        plcInfo.BootProjectAutostart = iecProject.BootProjectAutostart;
+                    }
+                    catch (Exception ex)
+                    {
+                        plcInfo.Error = ex.Message;
+                    }
+
+                    result.PlcProjects.Add(plcInfo);
+                }
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+            }
+
+            return result;
         }
 
         private static int ParseAmsPortFromXml(string xml)

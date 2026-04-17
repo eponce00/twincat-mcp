@@ -49,16 +49,7 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                result.TargetPlatform = automation.ActiveTargetPlatform;
-
-                // Get PLC projects
-                var plcProjects = automation.GetPlcProjects();
-                result.PlcProjects = plcProjects.Select(p => new Models.PlcInfo
-                {
-                    Name = p.Name,
-                    AmsPort = p.AmsPort
-                }).ToList();
+                PopulateFromSession(result, vsInstance);
             }
             catch (Exception ex)
             {
@@ -71,6 +62,50 @@ namespace TcAutomation.Commands
             }
 
             return await Task.FromResult(result);
+        }
+
+        /// <summary>
+        /// Populate project info using an already-open VS instance.
+        /// Used by batch mode so we don't re-open VS per step.
+        /// </summary>
+        public static ProjectInfo ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath)
+        {
+            var result = new ProjectInfo
+            {
+                SolutionPath = solutionPath
+            };
+
+            try
+            {
+                var tcProjectPath = TcFileUtilities.FindTwinCATProjectFile(solutionPath);
+                if (!string.IsNullOrEmpty(tcProjectPath))
+                {
+                    result.TcVersion = TcFileUtilities.GetTcVersion(tcProjectPath);
+                    result.TcVersionPinned = TcFileUtilities.IsTwinCATProjectPinned(tcProjectPath);
+                }
+                result.VisualStudioVersion = TcFileUtilities.GetVisualStudioVersion(solutionPath) ?? "Unknown";
+
+                PopulateFromSession(result, vsInstance);
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = $"Failed to get project info: {ex.Message}";
+            }
+
+            return result;
+        }
+
+        private static void PopulateFromSession(ProjectInfo result, VisualStudioInstance vsInstance)
+        {
+            var automation = new AutomationInterface(vsInstance);
+            result.TargetPlatform = automation.ActiveTargetPlatform;
+
+            var plcProjects = automation.GetPlcProjects();
+            result.PlcProjects = plcProjects.Select(p => new Models.PlcInfo
+            {
+                Name = p.Name,
+                AmsPort = p.AmsPort
+            }).ToList();
         }
     }
 }

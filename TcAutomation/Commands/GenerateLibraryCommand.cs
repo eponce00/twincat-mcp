@@ -92,6 +92,50 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
+                var sessionResult = ExecuteInSession(vsInstance, solutionPath, plcName, libraryLocation, skipBuild, dryRun);
+                return sessionResult;
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = ex.Message;
+                return result;
+            }
+            finally
+            {
+                vsInstance?.Close();
+                MessageFilter.Revoke();
+            }
+        }
+
+        /// <summary>
+        /// Generate a PLC library using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static GenerateLibraryResult ExecuteInSession(
+            VisualStudioInstance vsInstance,
+            string solutionPath,
+            string plcName,
+            string libraryLocation = null,
+            bool skipBuild = false,
+            bool dryRun = false)
+        {
+            var result = new GenerateLibraryResult
+            {
+                SolutionPath = solutionPath,
+                PlcName = plcName,
+                BuildSkipped = skipBuild,
+                DryRun = dryRun
+            };
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(plcName))
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "PLC project name is required";
+                    return result;
+                }
+
                 var automation = new AutomationInterface(vsInstance);
                 if (automation.PlcTreeItem.ChildCount <= 0)
                 {
@@ -161,11 +205,6 @@ namespace TcAutomation.Commands
                 result.Success = false;
                 result.ErrorMessage = ex.Message;
                 return result;
-            }
-            finally
-            {
-                vsInstance?.Close();
-                MessageFilter.Revoke();
             }
         }
 

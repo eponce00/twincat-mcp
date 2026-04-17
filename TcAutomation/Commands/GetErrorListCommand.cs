@@ -83,15 +83,43 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                // Optional wait for messages to accumulate (useful for async ADS logs)
+                result = ExecuteInSession(vsInstance, includeMessages, includeWarnings, includeErrors, waitSeconds);
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Failed to read error list: {ex.Message}";
+            }
+            finally
+            {
+                vsInstance?.Close();
+                MessageFilter.Revoke();
+            }
+
+            return await Task.FromResult(result);
+        }
+
+        /// <summary>
+        /// Read the VS error list using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static ErrorListResult ExecuteInSession(
+            VisualStudioInstance vsInstance,
+            bool includeMessages = true,
+            bool includeWarnings = true,
+            bool includeErrors = true,
+            int waitSeconds = 0)
+        {
+            var result = new ErrorListResult();
+
+            try
+            {
                 if (waitSeconds > 0)
                 {
                     Thread.Sleep(waitSeconds * 1000);
                 }
 
-                // Collect error list items
                 var errorItems = vsInstance.GetErrorItems();
-                
+
                 for (int i = 1; i <= errorItems.Count; i++)
                 {
                     var item = errorItems.Item(i);
@@ -110,7 +138,7 @@ namespace TcAutomation.Commands
                         include = includeWarnings;
                         if (include) result.WarningCount++;
                     }
-                    else // vsBuildErrorLevelLow = Messages
+                    else
                     {
                         level = "Message";
                         include = includeMessages;
@@ -139,13 +167,8 @@ namespace TcAutomation.Commands
                 result.Success = false;
                 result.ErrorMessage = $"Failed to read error list: {ex.Message}";
             }
-            finally
-            {
-                vsInstance?.Close();
-                MessageFilter.Revoke();
-            }
 
-            return await Task.FromResult(result);
+            return result;
         }
     }
 }

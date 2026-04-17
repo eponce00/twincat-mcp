@@ -37,24 +37,9 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                // Get automation interface and set target
-                var automationInterface = new AutomationInterface(vsInstance);
-                
-                string previousTarget = automationInterface.TargetNetId;
-                automationInterface.TargetNetId = amsNetId;
-
-                // Output result
-                var result = new
-                {
-                    success = true,
-                    solution = solutionPath,
-                    previousTarget = previousTarget,
-                    newTarget = amsNetId,
-                    message = $"Target AMS Net ID set to {amsNetId}"
-                };
-
+                var result = ExecuteInSession(vsInstance, solutionPath, amsNetId);
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                return result.Success ? 0 : 1;
             }
             catch (Exception ex)
             {
@@ -65,6 +50,35 @@ namespace TcAutomation.Commands
             {
                 vsInstance?.Close();
             }
+        }
+
+        /// <summary>
+        /// Set target AMS Net ID using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static SetTargetResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string amsNetId)
+        {
+            var result = new SetTargetResult { Solution = solutionPath, NewTarget = amsNetId };
+            try
+            {
+                if (!IsValidAmsNetId(amsNetId))
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Invalid AMS Net ID format: {amsNetId}. Expected format: x.x.x.x.x.x";
+                    return result;
+                }
+
+                var automationInterface = new AutomationInterface(vsInstance);
+                result.PreviousTarget = automationInterface.TargetNetId;
+                automationInterface.TargetNetId = amsNetId;
+                result.Success = true;
+                result.Message = $"Target AMS Net ID set to {amsNetId}";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Set target failed: {ex.Message}";
+            }
+            return result;
         }
 
         private static bool IsValidAmsNetId(string amsNetId)
@@ -90,5 +104,15 @@ namespace TcAutomation.Commands
             var result = new { success = false, error = message };
             Console.WriteLine(JsonSerializer.Serialize(result));
         }
+    }
+
+    public class SetTargetResult
+    {
+        public bool Success { get; set; }
+        public string Solution { get; set; } = "";
+        public string PreviousTarget { get; set; } = "";
+        public string NewTarget { get; set; } = "";
+        public string? Message { get; set; }
+        public string? ErrorMessage { get; set; }
     }
 }

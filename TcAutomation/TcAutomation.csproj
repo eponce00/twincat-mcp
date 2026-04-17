@@ -122,6 +122,7 @@
     <Compile Include="Commands\GenerateLibraryCommand.cs" />
     <Compile Include="Commands\GetErrorListCommand.cs" />
     <Compile Include="Commands\RunTcUnitCommand.cs" />
+    <Compile Include="Commands\BatchCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>

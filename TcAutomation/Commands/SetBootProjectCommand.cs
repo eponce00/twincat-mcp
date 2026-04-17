@@ -34,46 +34,61 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
+                result = ExecuteInSession(vsInstance, solutionPath, plcName, enableAutostart, generateBoot);
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return result.Success ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return 1;
+            }
+            finally
+            {
+                vsInstance?.Close();
+            }
+        }
+
+        /// <summary>
+        /// Configure boot project using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static SetBootProjectResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? plcName, bool enableAutostart, bool generateBoot)
+        {
+            var result = new SetBootProjectResult { SolutionPath = solutionPath };
+
+            try
+            {
                 var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
 
                 if (automation.PlcTreeItem.ChildCount <= 0)
                 {
                     result.ErrorMessage = "No PLC projects found in solution";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
                 bool foundTarget = false;
 
-                // Process PLC projects
                 for (int i = 1; i <= automation.PlcTreeItem.ChildCount; i++)
                 {
                     var plcProject = automation.PlcTreeItem.Child[i];
-                    
-                    // If plcName specified, only process that PLC
-                    if (!string.IsNullOrEmpty(plcName) && 
+
+                    if (!string.IsNullOrEmpty(plcName) &&
                         !plcProject.Name.Equals(plcName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
 
                     foundTarget = true;
-                    var plcResult = new PlcBootResult
-                    {
-                        Name = plcProject.Name
-                    };
+                    var plcResult = new PlcBootResult { Name = plcProject.Name };
 
                     try
                     {
                         var iecProject = (ITcPlcProject)plcProject;
-                        
-                        // Set autostart
+
                         iecProject.BootProjectAutostart = enableAutostart;
                         plcResult.AutostartEnabled = enableAutostart;
 
-                        // Generate boot project if requested
                         if (generateBoot)
                         {
                             iecProject.GenerateBootProject(true);
@@ -94,24 +109,22 @@ namespace TcAutomation.Commands
                 if (!string.IsNullOrEmpty(plcName) && !foundTarget)
                 {
                     result.ErrorMessage = $"PLC '{plcName}' not found in solution";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
-                result.Success = true;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                result.Success = result.PlcResults.TrueForAll(p => p.Success);
+                if (!result.Success && string.IsNullOrEmpty(result.ErrorMessage))
+                {
+                    var failed = result.PlcResults.Find(p => !p.Success);
+                    result.ErrorMessage = failed?.Error ?? "Boot project configuration failed";
+                }
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 1;
             }
-            finally
-            {
-                vsInstance?.Close();
-            }
+
+            return result;
         }
     }
 

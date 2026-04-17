@@ -30,19 +30,9 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                // Clean the solution
-                vsInstance.CleanSolution();
-
-                // Output result
-                var result = new
-                {
-                    success = true,
-                    solution = solutionPath,
-                    message = "Solution cleaned successfully"
-                };
-
+                var result = ExecuteInSession(vsInstance, solutionPath);
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                return result.Success ? 0 : 1;
             }
             catch (Exception ex)
             {
@@ -55,10 +45,38 @@ namespace TcAutomation.Commands
             }
         }
 
+        /// <summary>
+        /// Clean an already-loaded solution. Used by batch mode.
+        /// </summary>
+        public static CleanResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath)
+        {
+            var result = new CleanResult { Solution = solutionPath };
+            try
+            {
+                vsInstance.CleanSolution();
+                result.Success = true;
+                result.Message = "Solution cleaned successfully";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Clean failed: {ex.Message}";
+            }
+            return result;
+        }
+
         private static void OutputError(string message)
         {
             var result = new { success = false, error = message };
             Console.WriteLine(JsonSerializer.Serialize(result));
         }
+    }
+
+    public class CleanResult
+    {
+        public bool Success { get; set; }
+        public string Solution { get; set; } = "";
+        public string? Message { get; set; }
+        public string? ErrorMessage { get; set; }
     }
 }

@@ -34,56 +34,9 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
-
-                // Cast to ITcSysManager14 for access to project variants
-                // This requires TCatSysManagerLib V 3.3.0.0 or later (TwinCAT XAE 4024+)
-                ITcSysManager14 sysManager14;
-                try
-                {
-                    sysManager14 = (ITcSysManager14)automation.SystemManager;
-                }
-                catch (InvalidCastException)
-                {
-                    result.ErrorMessage = "Project variants require TwinCAT XAE 4024 or later";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
-                }
-
-                // Get current variant
-                result.PreviousVariant = sysManager14.CurrentProjectVariant ?? "";
-
-                if (getOnly || string.IsNullOrEmpty(variantName))
-                {
-                    // Just return current variant
-                    result.CurrentVariant = result.PreviousVariant;
-                    result.Success = true;
-                    result.Message = string.IsNullOrEmpty(result.CurrentVariant) 
-                        ? "No project variant set (using default)" 
-                        : $"Current variant: {result.CurrentVariant}";
-                }
-                else
-                {
-                    // Set new variant
-                    try
-                    {
-                        sysManager14.CurrentProjectVariant = variantName;
-                        result.CurrentVariant = sysManager14.CurrentProjectVariant ?? "";
-                        result.Success = true;
-                        result.Message = $"Project variant changed from '{result.PreviousVariant}' to '{result.CurrentVariant}'";
-                    }
-                    catch (Exception ex)
-                    {
-                        result.ErrorMessage = $"Failed to set variant '{variantName}': {ex.Message}";
-                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                        return 1;
-                    }
-                }
-
+                result = ExecuteInSession(vsInstance, solutionPath, variantName, getOnly);
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                return result.Success ? 0 : 1;
             }
             catch (Exception ex)
             {
@@ -95,6 +48,61 @@ namespace TcAutomation.Commands
             {
                 vsInstance?.Close();
             }
+        }
+
+        /// <summary>
+        /// Get/set project variant using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static SetVariantResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? variantName, bool getOnly)
+        {
+            var result = new SetVariantResult { SolutionPath = solutionPath };
+
+            try
+            {
+                var automation = new AutomationInterface(vsInstance);
+
+                ITcSysManager14 sysManager14;
+                try
+                {
+                    sysManager14 = (ITcSysManager14)automation.SystemManager;
+                }
+                catch (InvalidCastException)
+                {
+                    result.ErrorMessage = "Project variants require TwinCAT XAE 4024 or later";
+                    return result;
+                }
+
+                result.PreviousVariant = sysManager14.CurrentProjectVariant ?? "";
+
+                if (getOnly || string.IsNullOrEmpty(variantName))
+                {
+                    result.CurrentVariant = result.PreviousVariant;
+                    result.Success = true;
+                    result.Message = string.IsNullOrEmpty(result.CurrentVariant)
+                        ? "No project variant set (using default)"
+                        : $"Current variant: {result.CurrentVariant}";
+                }
+                else
+                {
+                    try
+                    {
+                        sysManager14.CurrentProjectVariant = variantName;
+                        result.CurrentVariant = sysManager14.CurrentProjectVariant ?? "";
+                        result.Success = true;
+                        result.Message = $"Project variant changed from '{result.PreviousVariant}' to '{result.CurrentVariant}'";
+                    }
+                    catch (Exception ex)
+                    {
+                        result.ErrorMessage = $"Failed to set variant '{variantName}': {ex.Message}";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+            }
+
+            return result;
         }
     }
 

@@ -37,11 +37,33 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
+                result = ExecuteInSession(vsInstance, solutionPath, maxCpus, loadLimit);
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return result.Success ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return 1;
+            }
+            finally
+            {
+                vsInstance?.Close();
+            }
+        }
 
-                // Get the real-time configuration tree item
+        /// <summary>
+        /// Configure real-time settings using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static ConfigureRtResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, int? maxCpus, int? loadLimit)
+        {
+            var result = new ConfigureRtResult { SolutionPath = solutionPath };
+
+            try
+            {
+                var automation = new AutomationInterface(vsInstance);
+
                 ITcSmTreeItem rtConfigTreeItem;
                 try
                 {
@@ -50,11 +72,9 @@ namespace TcAutomation.Commands
                 catch
                 {
                     result.ErrorMessage = "Real-time configuration tree not found in project";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
-                // Read current configuration
                 string currentXml = rtConfigTreeItem.ProduceXml();
                 var doc = XDocument.Parse(currentXml);
 
@@ -62,15 +82,12 @@ namespace TcAutomation.Commands
                 if (rtimeSetDef == null)
                 {
                     result.ErrorMessage = "Could not read RTimeSetDef from real-time configuration";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
-                // Read current values
                 result.PreviousMaxCpus = rtimeSetDef.Element("MaxCPUs")?.Value ?? "unknown";
                 result.PreviousAffinity = rtimeSetDef.Element("Affinity")?.Value ?? "unknown";
 
-                // Get system info
                 result.SystemCpuCount = Environment.ProcessorCount;
 
                 // Apply changes if specified
@@ -139,20 +156,13 @@ namespace TcAutomation.Commands
                 result.NewAffinity = newRtimeSetDef?.Element("Affinity")?.Value ?? "unknown";
                 result.Success = true;
                 result.Message = $"RT configuration updated: MaxCPUs={result.NewMaxCpus}, LoadLimit={loadLimit ?? 80}%";
-
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 1;
             }
-            finally
-            {
-                vsInstance?.Close();
-            }
+
+            return result;
         }
     }
 

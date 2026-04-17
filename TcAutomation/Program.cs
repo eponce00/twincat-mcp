@@ -572,6 +572,26 @@ namespace TcAutomation
             
             rootCommand.AddCommand(runTcUnitCommand);
 
+            // === BATCH COMMAND ===
+            // Runs an ordered list of steps against a single shared Visual Studio
+            // instance. Opens the shell once, runs all steps, closes once. This
+            // avoids paying the 40s-90s VS startup cost per operation when the
+            // agent wants to chain several things together (e.g. build + activate
+            // + restart, or set-target + set-boot-project + generate-library).
+            var batchCommand = new Command("batch", "Run a JSON-defined sequence of TwinCAT operations against a single shared shell");
+            var batchInputOpt = new Option<string>(
+                aliases: new[] { "--input", "-i" },
+                description: "Path to the batch input JSON file (or '-' to read from stdin)");
+            batchInputOpt.IsRequired = true;
+            batchCommand.AddOption(batchInputOpt);
+
+            batchCommand.SetHandler(async (string input) =>
+            {
+                await BatchCommand.ExecuteAsync(input);
+            }, batchInputOpt);
+
+            rootCommand.AddCommand(batchCommand);
+
             return await rootCommand.InvokeAsync(args);
         }
 

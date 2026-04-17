@@ -30,33 +30,9 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                // Get automation interface
-                var automationInterface = new AutomationInterface(vsInstance);
-
-                // Set target if provided
-                string targetNetId = amsNetId ?? automationInterface.TargetNetId;
-                if (!string.IsNullOrEmpty(amsNetId))
-                {
-                    automationInterface.TargetNetId = amsNetId;
-                }
-
-                // Restart TwinCAT
-                automationInterface.StartRestartTwinCAT();
-                
-                // Wait for restart to complete
-                System.Threading.Thread.Sleep(10000);
-
-                // Output result
-                var result = new
-                {
-                    success = true,
-                    solution = solutionPath,
-                    targetNetId = targetNetId,
-                    message = $"TwinCAT restarted on {targetNetId}"
-                };
-
+                var result = ExecuteInSession(vsInstance, solutionPath, amsNetId);
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                return result.Success ? 0 : 1;
             }
             catch (Exception ex)
             {
@@ -69,10 +45,50 @@ namespace TcAutomation.Commands
             }
         }
 
+        /// <summary>
+        /// Restart TwinCAT on target using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static RestartResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? amsNetId)
+        {
+            var result = new RestartResult { Solution = solutionPath };
+            try
+            {
+                var automationInterface = new AutomationInterface(vsInstance);
+
+                string targetNetId = amsNetId ?? automationInterface.TargetNetId;
+                if (!string.IsNullOrEmpty(amsNetId))
+                {
+                    automationInterface.TargetNetId = amsNetId;
+                }
+
+                automationInterface.StartRestartTwinCAT();
+                System.Threading.Thread.Sleep(10000);
+
+                result.TargetNetId = targetNetId;
+                result.Success = true;
+                result.Message = $"TwinCAT restarted on {targetNetId}";
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Restart failed: {ex.Message}";
+            }
+            return result;
+        }
+
         private static void OutputError(string message)
         {
             var result = new { success = false, error = message };
             Console.WriteLine(JsonSerializer.Serialize(result));
         }
+    }
+
+    public class RestartResult
+    {
+        public bool Success { get; set; }
+        public string Solution { get; set; } = "";
+        public string TargetNetId { get; set; } = "";
+        public string? Message { get; set; }
+        public string? ErrorMessage { get; set; }
     }
 }

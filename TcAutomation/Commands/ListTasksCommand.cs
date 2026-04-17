@@ -36,11 +36,33 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var automation = new AutomationInterface(vsInstance);
-                
-                result.SolutionPath = solutionPath;
+                result = ExecuteInSession(vsInstance, solutionPath);
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return result.Success ? 0 : 1;
+            }
+            catch (Exception ex)
+            {
+                result.ErrorMessage = ex.Message;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                return 1;
+            }
+            finally
+            {
+                vsInstance?.Close();
+            }
+        }
 
-                // Get the real-time tasks tree item
+        /// <summary>
+        /// List real-time tasks using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static ListTasksResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath)
+        {
+            var result = new ListTasksResult { SolutionPath = solutionPath };
+
+            try
+            {
+                var automation = new AutomationInterface(vsInstance);
+
                 ITcSmTreeItem tasksTreeItem;
                 try
                 {
@@ -49,13 +71,11 @@ namespace TcAutomation.Commands
                 catch
                 {
                     result.ErrorMessage = "Real-time tasks tree not found in project";
-                    Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                    return 1;
+                    return result;
                 }
 
                 result.TaskCount = tasksTreeItem.ChildCount;
 
-                // Enumerate all tasks
                 for (int i = 1; i <= tasksTreeItem.ChildCount; i++)
                 {
                     var taskItem = tasksTreeItem.Child[i];
@@ -67,7 +87,6 @@ namespace TcAutomation.Commands
 
                     try
                     {
-                        // Get detailed info from XML
                         string xml = taskItem.ProduceXml();
                         ParseTaskXml(xml, taskInfo);
                     }
@@ -80,19 +99,13 @@ namespace TcAutomation.Commands
                 }
 
                 result.Success = true;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 1;
             }
-            finally
-            {
-                vsInstance?.Close();
-            }
+
+            return result;
         }
 
         private static void ParseTaskXml(string xml, TaskInfo taskInfo)

@@ -84,9 +84,33 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
+                result = ExecuteInSession(vsInstance, plcName);
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = ex.Message;
+            }
+            finally
+            {
+                vsInstance?.Close();
+                MessageFilter.Revoke();
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Run CheckAllObjects using an already-open VS instance. Used by batch mode.
+        /// </summary>
+        public static CheckAllObjectsResult ExecuteInSession(VisualStudioInstance vsInstance, string plcName = null)
+        {
+            var result = new CheckAllObjectsResult();
+
+            try
+            {
                 var systemManager = vsInstance.GetSystemManager();
 
-                // Get PLC node
                 ITcSmTreeItem plcNode;
                 try
                 {
@@ -99,12 +123,10 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                // Iterate through PLC projects
                 int plcCount = 0;
                 foreach (ITcSmTreeItem plcProject in plcNode)
                 {
-                    // Skip if specific PLC requested and this isn't it
-                    if (!string.IsNullOrEmpty(plcName) && 
+                    if (!string.IsNullOrEmpty(plcName) &&
                         !plcProject.Name.Equals(plcName, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
@@ -115,16 +137,13 @@ namespace TcAutomation.Commands
 
                     try
                     {
-                        // Get the nested project (contains the actual PLC code)
                         ITcProjectRoot projectRoot = (ITcProjectRoot)plcProject;
                         ITcSmTreeItem nestedProject = projectRoot.NestedProject;
 
-                        // Cast to ITcPlcIECProject2 for CheckAllObjects
                         ITcPlcIECProject2 iecProject2 = nestedProject as ITcPlcIECProject2;
 
                         if (iecProject2 != null)
                         {
-                            // Call CheckAllObjects - this compiles all objects including unused ones
                             iecProject2.CheckAllObjects();
                             plcResult.Success = true;
                         }
@@ -148,16 +167,14 @@ namespace TcAutomation.Commands
                 if (plcCount == 0)
                 {
                     result.Success = false;
-                    result.ErrorMessage = string.IsNullOrEmpty(plcName) 
-                        ? "No PLC projects found" 
+                    result.ErrorMessage = string.IsNullOrEmpty(plcName)
+                        ? "No PLC projects found"
                         : $"PLC project '{plcName}' not found";
                     return result;
                 }
 
-                // Wait for error list to populate
                 System.Threading.Thread.Sleep(1000);
 
-                // Collect errors from Visual Studio Error List
                 try
                 {
                     var errorItems = vsInstance.GetErrorItems();
@@ -174,7 +191,6 @@ namespace TcAutomation.Commands
                             Project = item.Project ?? ""
                         };
 
-                        // Try to extract error code from description
                         if (!string.IsNullOrEmpty(errorItem.Description))
                         {
                             var match = System.Text.RegularExpressions.Regex.Match(
@@ -185,7 +201,6 @@ namespace TcAutomation.Commands
                             }
                         }
 
-                        // Categorize by severity
                         if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
                         {
                             result.Errors.Add(errorItem);
@@ -198,14 +213,12 @@ namespace TcAutomation.Commands
                 }
                 catch (Exception ex)
                 {
-                    // Error list access failed, but check might have succeeded
                     Console.Error.WriteLine($"Warning: Could not read error list: {ex.Message}");
                 }
 
                 result.ErrorCount = result.Errors.Count;
                 result.WarningCount = result.Warnings.Count;
 
-                // Determine overall success
                 bool allPlcsOk = result.PlcResults.TrueForAll(p => p.Success);
                 result.Success = allPlcsOk && result.ErrorCount == 0;
 
@@ -226,11 +239,6 @@ namespace TcAutomation.Commands
             {
                 result.Success = false;
                 result.ErrorMessage = ex.Message;
-            }
-            finally
-            {
-                vsInstance?.Close();
-                MessageFilter.Revoke();
             }
 
             return result;

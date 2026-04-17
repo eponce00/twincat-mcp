@@ -5,6 +5,7 @@ This MCP server exposes TwinCAT automation tools to AI assistants like GitHub Co
 It wraps the TcAutomation.exe CLI tool which provides access to the TwinCAT Automation Interface.
 
 Tools:
+- twincat_batch: Run an ordered sequence of TwinCAT operations against a single shared TcXaeShell (collapses VS startup cost across many steps)
 - twincat_build: Build a TwinCAT solution and return errors/warnings
 - twincat_get_info: Get information about a TwinCAT solution
 - twincat_clean: Clean a TwinCAT solution
@@ -34,6 +35,7 @@ Tools:
 import json
 import subprocess
 import os
+import tempfile
 import time
 from pathlib import Path
 from mcp.server import Server
@@ -65,6 +67,23 @@ CONFIRMATION_REQUIRED_TOOLS = [
 
 # Confirmation token format
 CONFIRM_TOKEN = "CONFIRM"
+
+# Low-level (C# CLI) batch step commands that count as dangerous when used
+# inside twincat_batch. If any step in a batch matches one of these, the batch
+# as a whole is treated as dangerous and requires armed mode.
+DANGEROUS_BATCH_COMMANDS = {
+    "activate",
+    "restart",
+    "set-state",
+    "write-var",
+}
+
+# Low-level batch step commands that also require an explicit confirm='CONFIRM'
+# at the batch level (same policy as twincat_activate / twincat_restart).
+CONFIRMATION_REQUIRED_BATCH_COMMANDS = {
+    "activate",
+    "restart",
+}
 
 # Global armed state
 _armed_state = {
@@ -386,6 +405,102 @@ async def list_tools() -> list[Tool]:
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_batch",
+            description=(
+                "Run an ordered sequence of TwinCAT operations against a SINGLE shared "
+                "Visual Studio / TcXaeShell instance. The shell is opened once up-front "
+                "(only if any step requires it) and closed after the last step, so you "
+                "only pay the ~40s-1m30s VS startup cost once instead of per call.\n\n"
+                "Use this whenever you want to chain 2+ shell-based tools "
+                "(e.g. set-target + set-boot-project + build + activate + restart). "
+                "Each step is a {id, command, args} object. Steps run sequentially and, "
+                "by default, the batch stops at the first failing step. Step results are "
+                "returned in order. ADS-only steps (get-state/set-state/read-var/write-var) "
+                "run directly without touching the shell.\n\n"
+                "Supported step commands:\n"
+                "  SHELL-based: build, info, clean, set-target, activate, restart, "
+                "list-plcs, set-boot-project, disable-io, set-variant, list-tasks, "
+                "configure-task, configure-rt, check-all-objects, static-analysis, "
+                "generate-library, get-error-list\n"
+                "  ADS-only:    get-state, set-state, read-var, write-var\n\n"
+                "NOT supported in batch: deploy, run-tcunit (use their dedicated tools).\n\n"
+                "Safety: If any step is a dangerous command (activate, restart, set-state, "
+                "write-var), armed mode is required. If any step is activate or restart, "
+                "confirm='CONFIRM' is also required at the batch level."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {
+                        "type": "string",
+                        "description": "Full path to the TwinCAT .sln file. Required if any step uses a shell-based command."
+                    },
+                    "tcVersion": {
+                        "type": "string",
+                        "description": "Force specific TwinCAT version (e.g., '3.1.4026.17'). Optional."
+                    },
+                    "stopOnError": {
+                        "type": "boolean",
+                        "description": "Stop the batch at the first failing step (default: true).",
+                        "default": True
+                    },
+                    "timeoutMinutes": {
+                        "type": "integer",
+                        "description": "Overall batch timeout in minutes (default: 15). Includes VS startup + all steps.",
+                        "default": 15
+                    },
+                    "steps": {
+                        "type": "array",
+                        "description": "Ordered list of steps to execute.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Optional human-friendly id for this step (appears in logs and results)."
+                                },
+                                "command": {
+                                    "type": "string",
+                                    "description": (
+                                        "The low-level command to run. One of: "
+                                        "build, info, clean, set-target, activate, restart, "
+                                        "list-plcs, set-boot-project, disable-io, set-variant, "
+                                        "list-tasks, configure-task, configure-rt, "
+                                        "check-all-objects, static-analysis, generate-library, "
+                                        "get-error-list, get-state, set-state, read-var, write-var"
+                                    )
+                                },
+                                "args": {
+                                    "type": "object",
+                                    "description": (
+                                        "Per-command arguments. Mirrors the arguments of the "
+                                        "corresponding twincat_* tool (amsNetId, plcName, taskName, "
+                                        "symbol, value, enable, autostart, checkAll, waitSeconds, "
+                                        "maxCpus, loadLimit, variantName, libraryLocation, skipBuild, "
+                                        "dryRun, includeErrors, includeWarnings, includeMessages, "
+                                        "port, state, clean, etc.). solutionPath and tcVersion are "
+                                        "inherited from the batch top level."
+                                    )
+                                }
+                            },
+                            "required": ["command"]
+                        },
+                        "minItems": 1
+                    },
+                    "confirm": {
+                        "type": "string",
+                        "description": "Safety confirmation. Must be 'CONFIRM' if any step is 'activate' or 'restart'."
+                    }
+                },
+                "required": ["steps"]
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False
             }
         ),
         Tool(
@@ -2070,6 +2185,227 @@ PLC Count: {result.get('PlcCount', 0)}
             output = f"🔪 Killed: {', '.join(killed)}\n\nYou can now retry the build."
         else:
             output = "✅ No stale TcXaeShell or devenv processes found."
+        
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+    
+    elif name == "twincat_batch":
+        solution_path = arguments.get("solutionPath", "") or ""
+        tc_version = arguments.get("tcVersion")
+        stop_on_error = arguments.get("stopOnError", True)
+        timeout_minutes = int(arguments.get("timeoutMinutes", 15))
+        steps = arguments.get("steps", []) or []
+        confirm = arguments.get("confirm", "")
+        
+        if not isinstance(steps, list) or len(steps) == 0:
+            return [TextContent(type="text", text="❌ twincat_batch requires a non-empty 'steps' list.")]
+        
+        # Validate each step and collect the set of commands used so we can do
+        # batch-aware safety checks.
+        step_commands: list[str] = []
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict):
+                return [TextContent(type="text", text=f"❌ Step #{i} is not an object.")]
+            cmd = (step.get("command") or "").strip().lower()
+            if not cmd:
+                return [TextContent(type="text", text=f"❌ Step #{i} is missing 'command'.")]
+            step_commands.append(cmd)
+        
+        # Batch-aware armed-mode check: if any step is dangerous, the whole
+        # batch must be armed.
+        dangerous_in_batch = sorted({c for c in step_commands if c in DANGEROUS_BATCH_COMMANDS})
+        if dangerous_in_batch and not is_armed():
+            return [TextContent(type="text", text=(
+                f"🔒 SAFETY: twincat_batch contains dangerous step(s): "
+                f"{', '.join(dangerous_in_batch)}.\n\n"
+                f"The server is currently in SAFE mode. To run this batch:\n"
+                f"1. Call 'twincat_arm_dangerous_operations' with a reason\n"
+                f"2. Then retry this batch within {ARMED_MODE_TTL} seconds\n\n"
+                f"This safety mechanism prevents accidental PLC modifications."
+            ))]
+        
+        # Batch-aware confirmation check: activate/restart inside a batch still
+        # need an explicit 'CONFIRM'.
+        confirm_required_in_batch = sorted({c for c in step_commands if c in CONFIRMATION_REQUIRED_BATCH_COMMANDS})
+        if confirm_required_in_batch and confirm != CONFIRM_TOKEN:
+            return [TextContent(type="text", text=(
+                f"⚠️ CONFIRMATION REQUIRED for twincat_batch\n\n"
+                f"This batch contains step(s): {', '.join(confirm_required_in_batch)} "
+                f"which will affect the target PLC.\n\n"
+                f"To proceed, add the parameter:\n"
+                f"  confirm: \"{CONFIRM_TOKEN}\"\n\n"
+                f"This ensures intentional execution of destructive operations."
+            ))]
+        
+        # Build the batch input JSON the C# BatchCommand expects.
+        batch_input = {
+            "stopOnError": bool(stop_on_error),
+            "steps": [
+                {
+                    "id": step.get("id"),
+                    "command": step.get("command"),
+                    "args": step.get("args", {}) or {}
+                }
+                for step in steps
+            ]
+        }
+        if solution_path:
+            batch_input["solutionPath"] = solution_path
+        if tc_version:
+            batch_input["tcVersion"] = tc_version
+        
+        # Write to a temp file (safer than stdin for larger batches and keeps
+        # the JSON easy to inspect on failure).
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", prefix="tc-batch-", delete=False, encoding="utf-8"
+        )
+        try:
+            json.dump(batch_input, tmp_file, indent=2)
+            tmp_file.flush()
+            tmp_file.close()
+            
+            result, progress_messages = run_tc_automation_with_progress(
+                "batch", ["--input", tmp_file.name], timeout_minutes
+            )
+        finally:
+            try:
+                os.unlink(tmp_file.name)
+            except Exception:
+                pass
+        
+        # Header
+        total_steps = result.get("totalSteps", len(steps))
+        completed = result.get("completedSteps", 0)
+        failed_index = result.get("failedStepIndex", -1)
+        vs_open_ms = result.get("vsOpenDurationMs", 0)
+        total_ms = result.get("totalDurationMs", 0)
+        overall_success = result.get("success", False)
+        
+        if overall_success:
+            header = f"✅ Batch completed: {completed}/{total_steps} step(s) succeeded"
+        else:
+            stopped_at = result.get("stoppedAt") or (
+                f"step{failed_index + 1}" if failed_index >= 0 else "unknown"
+            )
+            header = (
+                f"❌ Batch failed at step '{stopped_at}' "
+                f"({completed}/{total_steps} completed)"
+            )
+        
+        output = f"{header}\n\n"
+        if vs_open_ms:
+            output += f"🪟 Shell open:  {format_duration(vs_open_ms / 1000.0)}\n"
+        if total_ms:
+            output += f"⏱️ Batch total: {format_duration(total_ms / 1000.0)}\n"
+        
+        # Progress log
+        if progress_messages:
+            output += "\n📋 Execution Log:\n"
+            for msg in progress_messages:
+                output += f"  ▸ {msg}\n"
+        
+        # Per-step summary + detail
+        step_results = result.get("results", [])
+        if step_results:
+            output += "\n📦 Step Results:\n"
+            for sr in step_results:
+                icon = "✅" if sr.get("success") else "❌"
+                sid = sr.get("id") or f"step{(sr.get('index', 0)) + 1}"
+                cmd = sr.get("command", "")
+                dur = sr.get("durationMs", 0)
+                output += f"  {icon} [{sid}] {cmd}  ({format_duration(dur / 1000.0)})\n"
+                if not sr.get("success"):
+                    err = sr.get("error") or "(no error message)"
+                    output += f"      ⚠️ {err}\n"
+                
+                inner = sr.get("result")
+                # Surface interesting payload fields for common commands so the
+                # agent can act on them without another call.
+                #
+                # NB: BatchCommand re-serializes shell-step results with
+                # JsonNamingPolicy.CamelCase, but ADS steps are captured from
+                # the original stdout which is PascalCase. So we use case-
+                # insensitive lookups to handle both.
+                if isinstance(inner, dict):
+                    def _g(d: dict, *names, default=None):
+                        """Case-insensitive get; returns first match among names."""
+                        if not isinstance(d, dict):
+                            return default
+                        lowered = {k.lower(): k for k in d.keys()}
+                        for n in names:
+                            key = lowered.get(n.lower())
+                            if key is not None:
+                                return d[key]
+                        return default
+                    
+                    if cmd == "build":
+                        errs = _g(inner, "errors") or []
+                        warns = _g(inner, "warnings") or []
+                        if errs:
+                            output += f"      🔴 {len(errs)} error(s):\n"
+                            for e in errs[:5]:
+                                output += f"         - {_g(e,'fileName','file','')}:{_g(e,'line','')}: {_g(e,'description','message','')}\n"
+                            if len(errs) > 5:
+                                output += f"         ... and {len(errs) - 5} more\n"
+                        if warns:
+                            output += f"      🟡 {len(warns)} warning(s)\n"
+                    elif cmd == "info":
+                        output += (
+                            f"      TwinCAT: {_g(inner,'tcVersion', default='?')} | "
+                            f"Platform: {_g(inner,'targetPlatform', default='?')}\n"
+                        )
+                        for plc in _g(inner, "plcProjects") or []:
+                            output += f"        - {_g(plc,'name', default='?')} (port {_g(plc,'amsPort', default='?')})\n"
+                    elif cmd == "list-plcs":
+                        for plc in _g(inner, "plcProjects") or []:
+                            output += (
+                                f"        - {_g(plc,'name', default='?')} "
+                                f"(port {_g(plc,'amsPort', default='?')}, "
+                                f"boot={_g(plc,'bootProjectAutostart')})\n"
+                            )
+                    elif cmd == "list-tasks":
+                        for t in _g(inner, "tasks") or []:
+                            cycle_us = _g(t, "cycleTimeUs", default=0)
+                            output += (
+                                f"        - {_g(t,'name', default='?')}  "
+                                f"cycle={cycle_us}µs  "
+                                f"enabled={not _g(t,'disabled', default=True)}  "
+                                f"autostart={_g(t,'autoStart', default=False)}\n"
+                            )
+                    elif cmd == "get-state":
+                        output += (
+                            f"      State: {_g(inner,'adsState', default='?')}  "
+                            f"({_g(inner,'stateDescription', default='')})\n"
+                        )
+                    elif cmd == "read-var":
+                        output += (
+                            f"      {_g(inner,'dataType', default='?')}  "
+                            f"value=`{_g(inner,'value')}`\n"
+                        )
+                    elif cmd == "write-var":
+                        output += (
+                            f"      {_g(inner,'dataType', default='?')}  "
+                            f"prev=`{_g(inner,'previousValue')}`  "
+                            f"new=`{_g(inner,'newValue')}`\n"
+                        )
+                    elif cmd == "set-variant":
+                        output += (
+                            f"      variant: {_g(inner,'previousVariant') or '(default)'} "
+                            f"-> {_g(inner,'currentVariant') or '(default)'}\n"
+                        )
+                    elif cmd == "generate-library":
+                        out_path = _g(inner, "outputLibraryPath")
+                        if out_path:
+                            output += f"      output: {out_path}\n"
+        
+        # Top-level error from C# (e.g. couldn't open shell)
+        if not overall_success and result.get("errorMessage"):
+            output += f"\n💥 Error: {result['errorMessage']}\n"
+            err_msg = str(result.get("errorMessage", ""))
+            if "0x800706BE" in err_msg or "RPC" in err_msg or " COM" in err_msg:
+                output += (
+                    "\n💡 This looks like a stale TcXaeShell/devenv holding COM locks.\n"
+                    "   Run `twincat_kill_stale` and retry this batch.\n"
+                )
         
         return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
     

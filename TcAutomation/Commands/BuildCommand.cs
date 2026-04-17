@@ -16,9 +16,7 @@ namespace TcAutomation.Commands
         public static async Task<BuildResult> ExecuteAsync(string solutionPath, bool clean, string? tcVersion)
         {
             var result = new BuildResult();
-            var stopwatch = Stopwatch.StartNew();
 
-            // Validate input
             if (!File.Exists(solutionPath))
             {
                 result.Success = false;
@@ -30,10 +28,8 @@ namespace TcAutomation.Commands
 
             try
             {
-                // Register COM message filter
                 MessageFilter.Register();
 
-                // Find TwinCAT project
                 var tcProjectPath = TcFileUtilities.FindTwinCATProjectFile(solutionPath);
                 if (string.IsNullOrEmpty(tcProjectPath))
                 {
@@ -42,7 +38,6 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                // Get TwinCAT version
                 var projectTcVersion = TcFileUtilities.GetTcVersion(tcProjectPath);
                 if (string.IsNullOrEmpty(projectTcVersion))
                 {
@@ -51,27 +46,50 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                // Load Visual Studio
                 vsInstance = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersion);
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                // Clean if requested
+                result = ExecuteInSession(vsInstance, clean);
+            }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.ErrorMessage = $"Build failed: {ex.Message}";
+            }
+            finally
+            {
+                vsInstance?.Close();
+                MessageFilter.Revoke();
+            }
+
+            return await Task.FromResult(result);
+        }
+
+        /// <summary>
+        /// Build the already-loaded solution. Use this when VS is already open (batch mode).
+        /// Does NOT open or close VS and does NOT register/revoke the COM message filter.
+        /// </summary>
+        public static BuildResult ExecuteInSession(VisualStudioInstance vsInstance, bool clean)
+        {
+            var result = new BuildResult();
+            var stopwatch = Stopwatch.StartNew();
+
+            try
+            {
                 if (clean)
                 {
                     vsInstance.CleanSolution();
                 }
 
-                // Build
                 vsInstance.BuildSolution();
 
-                // Collect errors
                 var errorItems = vsInstance.GetErrorItems();
-                
+
                 for (int i = 1; i <= errorItems.Count; i++)
                 {
                     var item = errorItems.Item(i);
-                    
+
                     if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
                     {
                         result.Errors.Add(new BuildError
@@ -97,7 +115,7 @@ namespace TcAutomation.Commands
                 }
 
                 stopwatch.Stop();
-                
+
                 result.Success = result.Errors.Count == 0;
                 result.ErrorCount = result.Errors.Count;
                 result.WarningCount = result.Warnings.Count;
@@ -111,13 +129,8 @@ namespace TcAutomation.Commands
                 result.Success = false;
                 result.ErrorMessage = $"Build failed: {ex.Message}";
             }
-            finally
-            {
-                vsInstance?.Close();
-                MessageFilter.Revoke();
-            }
 
-            return await Task.FromResult(result);
+            return result;
         }
     }
 }
