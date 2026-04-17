@@ -331,28 +331,18 @@ namespace TcAutomation.Core
 
         private void LoadDevelopmentToolsEnvironment(string vsVersion)
         {
-            // Snapshot existing TcXaeShell/devenv PIDs so we can identify ours later
-            _preExistingPids = new HashSet<int>(
-                Process.GetProcessesByName("TcXaeShell").Select(p => p.Id)
-                .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id)));
-
-            // Kill any orphaned headless TcXaeShell processes from previous crashed runs
-            // (those with no main window title are headless zombies)
-            foreach (var proc in Process.GetProcessesByName("TcXaeShell"))
-            {
-                try
-                {
-                    if (string.IsNullOrEmpty(proc.MainWindowTitle))
-                    {
-                        Console.Error.WriteLine($"[DEBUG] Killing orphaned headless TcXaeShell (PID {proc.Id}, started {proc.StartTime})");
-                        proc.Kill();
-                        proc.WaitForExit(5000);
-                    }
-                }
-                catch { }
-            }
-
-            // Re-snapshot after cleanup
+            // Snapshot existing TcXaeShell/devenv PIDs so we can identify ours
+            // later via PID-diff. Every PID captured here belongs to someone
+            // else (user's IDE, another automation, etc.) and is OFF-LIMITS
+            // for the rest of this instance's lifetime.
+            //
+            // NOTE: we deliberately do NOT kill TcXaeShell instances with an
+            // empty MainWindowTitle here. That heuristic was unsafe — a
+            // legitimately user-opened IDE reports an empty title during
+            // startup, when a modal dialog (e.g. Static Routes) is active,
+            // or when minimized to tray. Orphan cleanup is now done
+            // precisely via SessionFile.ReapOrphans() using recorded PIDs
+            // + start-time fingerprints.
             _preExistingPids = new HashSet<int>(
                 Process.GetProcessesByName("TcXaeShell").Select(p => p.Id)
                 .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id)));

@@ -1742,10 +1742,11 @@ async def list_tools() -> list[Tool]:
             description=(
                 "SURGICAL cleanup of stale/orphaned TwinCAT shells. "
                 "Tears down this MCP server's own persistent shell host + DTE, "
-                "reaps orphaned hosts/DTEs from crashed MCP sessions (via session files), "
-                "and optionally kills HEADLESS TcXaeShell instances (no main window) "
-                "that are guaranteed to be automation-spawned. "
-                "NEVER kills TcXaeShell/devenv by image name — your open IDE is safe. "
+                "then reaps orphaned hosts/DTEs from crashed MCP sessions using "
+                "recorded session-file PIDs (verified by process start-time). "
+                "NEVER kills TcXaeShell/devenv by image name or window-title heuristic — "
+                "your open IDE is safe. Only PIDs explicitly recorded in our own "
+                "session files are ever touched. "
                 "Use when a build fails with RPC (0x800706BE) or COM errors."
             ),
             inputSchema={
@@ -2767,26 +2768,11 @@ PLC Count: {result.get('PlcCount', 0)}
         except Exception as e:
             output_parts.append(f"⚠️ Janitor sweep skipped: {e}")
 
-        # Headless-only fallback sweep: any TcXaeShell without a window title
-        # is almost certainly an automation-spawned instance that nothing
-        # owns anymore (user IDE windows always have a title).
-        try:
-            ps_script = (
-                "Get-Process -Name TcXaeShell -ErrorAction SilentlyContinue | "
-                "Where-Object { [string]::IsNullOrWhiteSpace($_.MainWindowTitle) } | "
-                "ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; $_.Id } catch {} }"
-            )
-            sweep = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_script],
-                capture_output=True, text=True, timeout=15,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            killed_pids = [l.strip() for l in (sweep.stdout or "").splitlines() if l.strip()]
-            if killed_pids:
-                output_parts.append(f"🧹 Killed headless TcXaeShell PIDs: {', '.join(killed_pids)}")
-        except Exception as e:
-            output_parts.append(f"⚠️ Headless sweep skipped: {e}")
-
+        # NOTE: No "headless sweep" by MainWindowTitle. That heuristic is
+        # unsafe — a user-opened TcXaeShell can legitimately report an empty
+        # title during startup or when a modal dialog is active, and we would
+        # kill their IDE. If reap-orphans couldn't identify it via a session
+        # file, it isn't ours.
         if not output_parts:
             output_parts.append("✅ Nothing to clean up. Your Visual Studio / TcXaeShell sessions were not touched.")
         else:
