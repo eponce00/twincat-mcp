@@ -93,17 +93,41 @@ def run_shell_step(
     results = batch_result.get("results") or []
     if results:
         first = results[0] if isinstance(results[0], dict) else {}
+        inner = first.get("result") if isinstance(first.get("result"), dict) else None
+
         if first.get("success"):
-            inner = first.get("result") or {}
-            return _ci_wrap(inner), progress
-        # Failure — synthesize an error-shaped result that works with
-        # both PascalCase and camelCase handler patterns.
+            return _ci_wrap(inner or {}), progress
+
+        # Failure. Prefer the step's own result payload — it carries the
+        # rich structured diagnostics the handlers know how to format
+        # (BuildResult.errors/warnings, CheckAllObjectsResult.errors,
+        # StaticAnalysisResult.errors, etc). C#'s BatchCommand writes
+        # `stepResult.error` as a short string derived from the payload,
+        # and `batch_result.errorMessage` falls back to the literal
+        # "Batch failed" when that short string is empty. Both are
+        # strictly less informative than the payload itself, so we only
+        # use them to *stamp* missing fields on the payload.
+        if inner is not None:
+            enriched = dict(inner)
+            if enriched.get("success") is not False and enriched.get("Success") is not False:
+                enriched["success"] = False
+            err_msg = (
+                enriched.get("errorMessage")
+                or enriched.get("ErrorMessage")
+                or enriched.get("error")
+                or first.get("error")
+                or batch_result.get("errorMessage")
+                or "Step failed"
+            )
+            enriched.setdefault("errorMessage", err_msg)
+            enriched.setdefault("error", err_msg)
+            return _ci_wrap(enriched), progress
+
+        # No payload at all — synthesize a minimal error-shaped dict.
         err_msg = first.get("error") or batch_result.get("errorMessage") or "Step failed"
         return _ci_wrap({
             "success": False,
-            "Success": False,
             "errorMessage": err_msg,
-            "ErrorMessage": err_msg,
             "error": err_msg,
         }), progress
 
@@ -111,8 +135,6 @@ def run_shell_step(
     err_msg = batch_result.get("errorMessage") or "Batch dispatch failed"
     return _ci_wrap({
         "success": False,
-        "Success": False,
         "errorMessage": err_msg,
-        "ErrorMessage": err_msg,
         "error": err_msg,
     }), progress

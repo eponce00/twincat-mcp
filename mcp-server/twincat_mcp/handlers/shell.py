@@ -42,14 +42,27 @@ async def handle_build(arguments: dict, tool_start_time: float) -> list[TextCont
             for w in result["warnings"]:
                 output += f"  - {w.get('fileName', '')}:{w.get('line', '')}: {w.get('description', '')}\n"
     else:
-        output = "❌ Build failed\n"
-        if result.get("errorMessage"):
-            error_msg = result['errorMessage']
+        # Prefer BuildResult.summary ("Build failed with N error(s) and M
+        # warning(s) in X.Ys") when present — it gives the counts
+        # up-front. Fall back to errorMessage for catastrophic failures
+        # (solution not found, RPC/COM error, etc.) where BuildCommand
+        # never reached the compile step.
+        summary = result.get("summary")
+        error_msg = result.get("errorMessage")
+        generic_fallbacks = {"Step failed", "Batch failed", "Batch dispatch failed"}
+
+        if summary:
+            output = f"❌ {summary}\n"
+        else:
+            output = "❌ Build failed\n"
+
+        if error_msg and error_msg not in generic_fallbacks:
             output += f"\nError: {error_msg}\n"
-            # Detect RPC/COM errors caused by stale TcXaeShell instances
+            # Detect RPC/COM errors caused by stale TcXaeShell instances.
             if "0x800706BE" in error_msg or "RPC" in error_msg or "COM" in error_msg:
                 output += "\n💡 This error is likely caused by a stale TcXaeShell/devenv process holding locks on the solution.\n"
                 output += "   Use the `twincat_kill_stale` tool to kill stale TcXaeShell/devenv processes, then retry the build.\n"
+
         if result.get("errors"):
             output += "\n🔴 Errors:\n"
             for e in result["errors"]:
