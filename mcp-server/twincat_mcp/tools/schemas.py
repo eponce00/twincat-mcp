@@ -914,5 +914,62 @@ def get_tool_schemas() -> list[Tool]:
                 "destructiveHint": False,
                 "idempotentHint": True
             }
+        ),
+        Tool(
+            name="twincat_set_default_target",
+            description=(
+                "Change (or clear) the PERSISTENT default PLC target used by every tool "
+                "that takes an `amsNetId` (tcunit, deploy, activate, restart, set-target, "
+                "get/set state, read/write var). Use this when the user says something like "
+                "'always target X from now on' or 'switch to the test rig': the value is "
+                "written to the MCP config file (%LOCALAPPDATA%\\twincat-mcp\\config.json) "
+                "and survives conversations and server restarts — so a later chat inherits "
+                "the same default without the user having to re-explain.\n\n"
+                "Modes:\n"
+                "  • pass `amsNetId` to set a new persistent default\n"
+                "  • pass `reset: true` to remove the persisted value and fall back to the "
+                "`TWINCAT_DEFAULT_AMS_NET_ID` env var or the hardcoded localhost default\n"
+                "  • pass neither to get a read-only status snapshot of what each source "
+                "currently says and which one is active\n\n"
+                "Per-call overrides still work: pass `amsNetId` explicitly to any tool to "
+                "use a different target for that single call. Not gated by armed mode — "
+                "writing config doesn't touch any PLC; destructive tools still have their "
+                "own arm + confirm gates."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": (
+                            "New persistent default AMS Net ID (e.g., '5.22.157.86.1.1'). "
+                            "Must be six dot-separated octets in 0-255. "
+                            "Omit together with `reset` to get a read-only status."
+                        )
+                    },
+                    "reset": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, remove the persisted default and fall back to env var / "
+                            "hardcoded fallback. Ignored when `amsNetId` is also provided."
+                        ),
+                        "default": False
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Optional short note saved alongside the value (e.g., "
+                            "'switched to the conveyor test rig'). Helps when inspecting "
+                            "the config file later."
+                        )
+                    }
+                },
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
         )
     ]

@@ -4,6 +4,7 @@ Safety / meta handlers:
   - twincat_kill_stale                 surgical cleanup of our own host + orphans
   - twincat_host_status                report persistent-host state (read-only)
   - twincat_list_routes                list ADS routes from StaticRoutes.xml
+  - twincat_set_default_target         change the persistent default PLC
 
 None of these go through `run_shell_step` — they're either pure Python,
 file reads, or direct subprocess calls against the CLI helpers.
@@ -18,6 +19,11 @@ from pathlib import Path
 from mcp.types import TextContent
 
 from ..cli import find_tc_automation_exe
+from ..defaults import (
+    clear_persistent_default,
+    get_default_status,
+    set_persistent_default,
+)
 from ..formatting import add_timing_to_output
 from ..host import HOST_DISABLED, drop_shell_host, get_shell_host_if_alive
 from ..safety import arm_dangerous_operations, disarm_dangerous_operations
@@ -235,3 +241,91 @@ async def handle_list_routes(arguments: dict, tool_start_time: float) -> list[Te
         output = f"❌ Failed to parse routes file: {str(e)}"
 
     return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+
+@register("twincat_set_default_target")
+async def handle_set_default_target(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    """
+    Change (or clear) the persistent default AMS Net ID.
+
+    The agent uses this when the user says "always target X from now on"
+    — the value is written to the MCP config file under
+    `%LOCALAPPDATA%\\twincat-mcp\\config.json` and survives across
+    conversations and server restarts, so a later conversation inherits
+    the new default without the user having to re-explain the setup.
+
+    Two modes:
+      - `amsNetId`: persist the given value as the new default
+      - `reset: true`: remove the persisted value; the module then
+        falls back to `TWINCAT_DEFAULT_AMS_NET_ID` env var, or
+        hardcoded `127.0.0.1.1.1` if that isn't set either
+
+    Not gated by armed mode — writing a config file doesn't touch any
+    PLC. The destructive consequences (deploy/activate/etc) only kick
+    in when a destructive tool is later invoked against that default,
+    and those tools have their own arm + confirm gates.
+    """
+    reset = bool(arguments.get("reset", False))
+    ams_net_id = (arguments.get("amsNetId") or "").strip()
+    reason = arguments.get("reason")
+
+    if not reset and not ams_net_id:
+        # Read-only fallback: if the agent calls with neither, show the
+        # current status so it can decide what to do next. Matches the
+        # "no side effect without an argument" principle.
+        status = get_default_status()
+        output = _format_status(status, header="📍 Current default target PLC")
+        return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+    try:
+        if reset:
+            result = clear_persistent_default()
+            if not result["hadPersistedValue"]:
+                output = (
+                    f"ℹ️ No persisted default was set — nothing to clear.\n\n"
+                    f"Effective default is still **{result['newValue']}** "
+                    f"(source: {result['newSource']})."
+                )
+            else:
+                output = (
+                    f"🧹 Cleared persisted default.\n\n"
+                    f"  Previous: `{result['previousValue']}` (source: {result['previousSource']})\n"
+                    f"  Now: **`{result['newValue']}`** (source: {result['newSource']})\n\n"
+                    f"Config file: {result['configFile']}"
+                )
+        else:
+            result = set_persistent_default(ams_net_id, reason=reason)
+            output = (
+                f"✅ Default target PLC updated.\n\n"
+                f"  Previous: `{result['previousValue']}` (source: {result['previousSource']})\n"
+                f"  Now: **`{result['newValue']}`** (source: config file)\n"
+            )
+            if reason:
+                output += f"  Reason: {reason}\n"
+            output += (
+                f"\nPersisted to: {result['configFile']}\n"
+                f"This new default applies to every tool that takes an `amsNetId` "
+                f"and will survive into future conversations and server restarts. "
+                f"The agent can still override per-call by passing `amsNetId` "
+                f"explicitly."
+            )
+    except ValueError as e:
+        output = f"❌ {e}"
+
+    return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+
+def _format_status(status: dict, header: str) -> str:
+    """Human-readable rendering of `get_default_status()`."""
+    out = (
+        f"{header}\n\n"
+        f"  Effective: **`{status['effective']}`** (source: {status['source']})\n\n"
+        f"Sources (highest precedence first):\n"
+        f"  1. Config file : `{status['configValue'] or '(unset)'}`  "
+        f"→ {status['configFile']}\n"
+        f"  2. {status['envVar']} : `{status['envValue'] or '(unset)'}`\n"
+        f"  3. Hardcoded fallback : `{status['fallback']}`\n\n"
+        f"Change with `twincat_set_default_target({{amsNetId: \"...\"}})` "
+        f"or clear with `twincat_set_default_target({{reset: true}})`."
+    )
+    return out

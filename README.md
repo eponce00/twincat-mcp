@@ -69,6 +69,14 @@ Restart the client and enable the server.
 
 Every tool that takes an `amsNetId` (TcUnit, deploy, activate, restart, get/set state, read/write var, set-target) falls back to a configurable default when the agent doesn't pass one. Out of the box that default is `127.0.0.1.1.1` (local runtime), which preserves the old behaviour.
 
+The default is resolved in this precedence order (highest first):
+
+1. **Persistent config file** — `%LOCALAPPDATA%\twincat-mcp\config.json`. Written by the agent via the `twincat_set_default_target` tool (see below).
+2. **`TWINCAT_DEFAULT_AMS_NET_ID` env var** — set in the MCP client's server config; never changes unless you edit the client config.
+3. **Hardcoded fallback** — `127.0.0.1.1.1`.
+
+### One-time setup via env var (stable across installs)
+
 Point it at your test rig by setting `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP client's server config:
 
 **Cursor (`~/.cursor/mcp.json`):**
@@ -86,6 +94,10 @@ Point it at your test rig by setting `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP cli
   }
 }
 ```
+
+### On-the-fly changes via the agent
+
+Tell the agent something like "always target the conveyor rig from now on" and it will call `twincat_set_default_target` with the new AMS Net ID. The value is written to `%LOCALAPPDATA%\twincat-mcp\config.json` and survives into future conversations — a fresh chat inherits the same default without you re-explaining the setup. To go back, ask the agent to reset it (it'll call the tool with `reset: true`, which removes the persisted value and falls back to your env var / the hardcoded default).
 
 The effective default is baked into every tool's schema description, so the agent sees it on `list_tools` and stops pestering you about which PLC to target. Agents can still override per-call by passing `amsNetId` explicitly. Safety gates resolve against the effective target too — if your default is remote, `twincat_run_tcunit` still requires armed mode.
 
@@ -191,6 +203,7 @@ Example: full "set target, build, activate, restart" flow in one shell open:
 | `twincat_run_tcunit`               | Full TcUnit workflow: build, configure test task, set boot, optional I/O disable, activate, restart, poll, report. Armed when remote. |
 | `twincat_kill_stale`               | Surgical cleanup: kill our own shell host + DTE and reap session-file orphans. Only touches PIDs recorded in our session files.       |
 | `twincat_host_status`              | Show persistent shell host state (PID, DTE PID, loaded solution, uptime). Read-only.                                                  |
+| `twincat_set_default_target`       | Change (or clear) the persistent default AMS Net ID. Survives conversations and server restarts. See "Default target PLC" above.      |
 
 
 ### `twincat_run_tcunit` parameters
