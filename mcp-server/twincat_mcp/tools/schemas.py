@@ -146,7 +146,28 @@ def get_tool_schemas() -> list[Tool]:
         ),
         Tool(
             name="twincat_build",
-            description="Build a TwinCAT solution and return any compile errors or warnings. Use this to validate TwinCAT/PLC code changes.",
+            description=(
+                "Build a TwinCAT solution and return any compile errors or "
+                "warnings. Use this to validate TwinCAT/PLC code changes.\n\n"
+                "Response shape:\n"
+                "  success=True  →  Top line 'Build succeeded with N "
+                "warning(s)'. Warnings listed as "
+                "'<fileName>:<line>: <description>' (one per line).\n"
+                "  success=False →  Top line 'Build failed with N error(s) "
+                "and M warning(s)'. Errors and warnings in separate "
+                "'🔴 Errors:' / '⚠️ Warnings:' blocks, each line formatted "
+                "'<fileName>:<line>: <description>'. Catastrophic failures "
+                "(solution missing, stale TcXaeShell lock, RPC/COM error) "
+                "add an 'Error: <message>' section, and RPC failures "
+                "nudge the agent toward `twincat_kill_stale`.\n\n"
+                "Safety-critical warnings to watch for:\n"
+                "  • C0297 — 'Possible Stack Overflow' — the compiler "
+                "estimates the task stack usage exceeds the configured "
+                "stack size. This is a precursor to a runtime OS crash on "
+                "activation; if you see it, DO NOT activate without "
+                "increasing the task stack first (or you'll take the "
+                "target's Windows down and lose the ADS connection).\n"
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -464,6 +485,169 @@ def get_tool_schemas() -> list[Tool]:
             }
         ),
         # Phase 4: ADS Communication Tools
+        Tool(
+            name="twincat_list_symbols",
+            description=(
+                "Enumerate PLC symbols on a target over ADS. No solution "
+                "required — reads the symbol table straight from the "
+                "running runtime. Use this when `twincat_read_var` returns "
+                "`DeviceSymbolNotFound (0x710)` and you need to see what's "
+                "actually loaded, or to discover paths under a known "
+                "prefix (e.g. a TcUnit test FB's Status.State chain).\n\n"
+                "Filtering happens server-side so you don't pay JSON "
+                "serialization on hundreds of irrelevant symbols:\n"
+                "  • prefix='MAIN.'                → top-level globals\n"
+                "  • contains='fbStateMachine'      → find by FB name\n"
+                "  • prefix='MAIN.', contains='Status' → both\n\n"
+                "Requires the runtime in Run or Stop. If the target is "
+                "rebooting (typical right after activate), the handler "
+                "surfaces that explicitly and nudges you to "
+                "`twincat_ping_target`."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "AMS port (default: 851 for PLC runtime 1)",
+                        "default": 851
+                    },
+                    "prefix": {
+                        "type": "string",
+                        "description": "Case-insensitive prefix on the full symbol path (e.g., 'MAIN.')"
+                    },
+                    "contains": {
+                        "type": "string",
+                        "description": "Case-insensitive substring anywhere in the symbol path"
+                    },
+                    "max": {
+                        "type": "integer",
+                        "description": "Cap on returned entries (default: 200). TotalMatched is reported separately so you can widen if needed.",
+                        "default": 200
+                    },
+                    "includeTypes": {
+                        "type": "boolean",
+                        "description": "Include type name + size per symbol (default: false; bump when you need the schema to write or cast)",
+                        "default": False
+                    }
+                },
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_read_plc_log",
+            description=(
+                "Tail the TwinCAT event log on a target over ADS (port 110, "
+                "TcEventLogger). Listens for `waitSeconds` and returns "
+                "every message/alarm emitted during that window — use this "
+                "when you need runtime logs and can't go through "
+                "`twincat_get_error_list` (no solution loaded, wrong "
+                "solution loaded, or target rebooted after a crash).\n\n"
+                "Captures:\n"
+                "  • AdsLogStr() output from PLC code\n"
+                "  • _Raise / TcEventLogger.Raise events\n"
+                "  • TwinCAT system messages (PLC state changes, licence "
+                "diagnostics, ADS router events, etc.)\n\n"
+                "Tips:\n"
+                "  • This is a LISTEN window, not a history dump — past "
+                "events aren't retrieved. If you want history, call this "
+                "BEFORE triggering the operation you expect to log.\n"
+                "  • Pair with a `contains` filter to ignore library-reload "
+                "noise (e.g., `contains='FAILED TEST'`).\n"
+                "  • For remote targets the local machine needs the "
+                "TcEventLogger COM proxy (bundled with TC3 XAE/XAR)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
+                    },
+                    "waitSeconds": {
+                        "type": "integer",
+                        "description": "Seconds to listen for new log events (default: 5). Reaches back only over this window, not historical.",
+                        "default": 5
+                    },
+                    "contains": {
+                        "type": "string",
+                        "description": "Case-insensitive substring filter on the message body"
+                    },
+                    "max": {
+                        "type": "integer",
+                        "description": "Cap on returned events (default: 200)",
+                        "default": 200
+                    }
+                },
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
+        Tool(
+            name="twincat_ping_target",
+            description=(
+                "Classify the reachability of a TwinCAT target over ADS. "
+                "Unlike every other tool, this has an explicit per-probe "
+                "timeout (default 2.5s each, two probes = ~5s worst case), "
+                "so it NEVER hangs — use it as the first call after any "
+                "'connection closed' or timeout error from another tool "
+                "to tell what actually went wrong.\n\n"
+                "Classifications:\n"
+                "  • reachable     → OS and runtime are up, runtime is in "
+                "Run. Safe to retry the failed call.\n"
+                "  • rebooting     → OS is up (system service answers) but "
+                "the PLC runtime is stopped, starting, or recovering. "
+                "Typical after `twincat_activate` or `twincat_restart`, or "
+                "after a stack-overflow crash brought the runtime down "
+                "without crashing Windows. Retry in a few seconds.\n"
+                "  • unreachable   → AMS system service (port 10000) does "
+                "not answer. Target is powered off, network cable pulled, "
+                "firewall is blocking, or (after a stack-overflow crash) "
+                "Windows itself went down. Do NOT retry immediately — "
+                "check the physical target.\n"
+                "  • routeMissing  → Local AMS router has no route to the "
+                "target. Setup issue; no retry will help until the route "
+                "is configured in TwinCAT System Manager.\n"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "amsNetId": {
+                        "type": "string",
+                        "description": f"Target AMS Net ID. {_AMS_NET_ID_DESC}"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "PLC runtime AMS port (default: 851). Only the runtime probe uses this; the system-service probe always uses 10000.",
+                        "default": 851
+                    },
+                    "timeoutMs": {
+                        "type": "integer",
+                        "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 × timeoutMs.",
+                        "default": 2500
+                    }
+                },
+                "required": []
+            },
+            annotations={
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True
+            }
+        ),
         Tool(
             name="twincat_get_state",
             description="Get the TwinCAT runtime state via direct ADS connection. Does NOT require Visual Studio - connects directly to the PLC. Returns: Run, Stop, Config, Error, etc.",
@@ -783,7 +967,24 @@ def get_tool_schemas() -> list[Tool]:
         ),
         Tool(
             name="twincat_get_error_list",
-            description="Get contents of Visual Studio Error List window. Returns errors, warnings, and messages (including ADS logs from running PLC). Useful for viewing runtime messages, diagnostics, or any output that appears in the VS Error List.",
+            description=(
+                "Read the Visual Studio Error List window — this is where "
+                "AdsLogStr() output, TcUnit per-test messages ('FAILED TEST "
+                "...', 'Test suite ID=...'), and runtime _Raise messages "
+                "land, alongside build errors/warnings. Data source: VS's "
+                "in-memory error list (same buffer the IDE shows), which "
+                "can roll off older items under heavy load — if you need a "
+                "persistent stream, pair this with a live session or use "
+                "twincat_read_plc_log (ADS logger, target-side).\n\n"
+                "Common usage:\n"
+                "  • contains='FAILED TEST'    → just TcUnit failures\n"
+                "  • contains='E_SM_Fault'     → just your error topic\n"
+                "  • includeErrors=false, includeWarnings=false, "
+                "contains='...' → runtime ADS messages only\n\n"
+                "Default waitSeconds is 2s so async ADS messages have time "
+                "to surface. Bump higher (e.g. 5-10s) right after a restart "
+                "or an operation you expect to emit logs."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -797,7 +998,7 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "includeMessages": {
                         "type": "boolean",
-                        "description": "Include messages (ADS logs, etc.). Default: true",
+                        "description": "Include messages (ADS logs, TcUnit output, etc.). Default: true",
                         "default": True
                     },
                     "includeWarnings": {
@@ -812,8 +1013,21 @@ def get_tool_schemas() -> list[Tool]:
                     },
                     "waitSeconds": {
                         "type": "integer",
-                        "description": "Wait N seconds before reading (for async messages). Default: 0",
-                        "default": 0
+                        "description": (
+                            "Wait N seconds before reading so async ADS "
+                            "messages have time to arrive. Default: 2."
+                        ),
+                        "default": 2
+                    },
+                    "contains": {
+                        "type": "string",
+                        "description": (
+                            "Case-insensitive substring filter applied to "
+                            "each item's description. Use this to cut "
+                            "through library-reload noise — e.g. "
+                            "'FAILED TEST', 'E_SM_Fault', 'stack'. Omit "
+                            "to get everything (may be hundreds of items)."
+                        )
                     }
                 },
                 "required": ["solutionPath"]
@@ -826,7 +1040,26 @@ def get_tool_schemas() -> list[Tool]:
         ),
         Tool(
             name="twincat_run_tcunit",
-            description="Run TcUnit tests on a TwinCAT PLC project and return results. Handles full test workflow: build, configure task, set boot project, optionally disable I/O, activate, restart, and poll for results. Returns test counts (passed/failed) and individual test results.",
+            description=(
+                "Run TcUnit tests on a TwinCAT PLC project and return "
+                "results. Handles the full test workflow: build, configure "
+                "task, set boot project, optionally disable I/O, activate, "
+                "restart, and poll for results.\n\n"
+                "Returns: test counts (passed/failed/total/suites), "
+                "duration, AND a structured `failures` array with one "
+                "entry per failed test — each entry has suite, test, "
+                "expected, actual, message. No need to scavenge the error "
+                "list afterwards for per-test detail; it's already here.\n\n"
+                "Post-run caveats:\n"
+                "  • While the test task owns the runtime, the symbol "
+                "table may not match your normal (non-test) project. If "
+                "you try `twincat_read_var` on a non-test symbol and get "
+                "`DeviceSymbolNotFound (0x710)`, use `twincat_list_symbols` "
+                "with a prefix to see what's actually loaded.\n"
+                "  • Runtime reboots into the test configuration during "
+                "the run. To get back to the normal config, re-activate "
+                "the non-test configuration afterwards."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {

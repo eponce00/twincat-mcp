@@ -14,6 +14,7 @@
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
     <LangVersion>8.0</LangVersion>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
   
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
@@ -90,6 +91,9 @@
     <PackageReference Include="Beckhoff.TwinCAT.Ads">
       <Version>6.1.203</Version>
     </PackageReference>
+    <PackageReference Include="Beckhoff.TwinCAT.TcEventLoggerAdsProxy.Net">
+      <Version>2.9.3</Version>
+    </PackageReference>
   </ItemGroup>
   
   <ItemGroup>
@@ -126,6 +130,9 @@
     <Compile Include="Commands\RunTcUnitCommand.cs" />
     <Compile Include="Commands\BatchCommand.cs" />
     <Compile Include="Commands\HostCommand.cs" />
+    <Compile Include="Commands\PingTargetCommand.cs" />
+    <Compile Include="Commands\ListSymbolsCommand.cs" />
+    <Compile Include="Commands\ReadPlcLogCommand.cs" />
     <Compile Include="Models\BuildResult.cs" />
     <Compile Include="Models\ProjectInfo.cs" />
   </ItemGroup>

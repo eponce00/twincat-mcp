@@ -36,8 +36,46 @@ async def handle_build(arguments: dict, tool_start_time: float) -> list[TextCont
         timeout_minutes=10,
     )
 
+    def _stack_warnings(items: list) -> list:
+        """Pick out stack-exhaustion warnings so they can be flagged
+        before the agent cheerfully hits activate and crashes the OS."""
+        flagged = []
+        for item in items or []:
+            desc = item.get("description", "") or ""
+            code = item.get("code", "") or ""
+            blob = f"{code} {desc}".lower()
+            if (
+                "c0297" in blob
+                or "stack overflow" in blob
+                or "exceeds" in blob and "stack" in blob
+            ):
+                flagged.append(item)
+        return flagged
+
     if result.get("success"):
         output = f"✅ {result.get('summary', 'Build succeeded')}\n"
+
+        # Stack warnings are surfaced BEFORE the generic warning block
+        # because they're a runtime-crash precursor on activation, not a
+        # cosmetic issue. The user has lost a PLC to this at least once.
+        stack = _stack_warnings(result.get("warnings") or [])
+        if stack:
+            output += (
+                "\n🛑 STACK OVERFLOW WARNING — DO NOT activate this "
+                "configuration as-is:\n"
+            )
+            for w in stack:
+                output += (
+                    f"  - {w.get('fileName', '')}:{w.get('line', '')}: "
+                    f"{w.get('description', '')}\n"
+                )
+            output += (
+                "   Activating with a C0297/stack-exhaustion warning "
+                "typically crashes the target's Windows OS. Increase the "
+                "task stack size (System → Real-Time → Settings → task "
+                "Stack Size) before retrying.\n"
+            )
+
         if result.get("warnings"):
             output += "\n⚠️ Warnings:\n"
             for w in result["warnings"]:
@@ -63,6 +101,23 @@ async def handle_build(arguments: dict, tool_start_time: float) -> list[TextCont
             if "0x800706BE" in error_msg or "RPC" in error_msg or "COM" in error_msg:
                 output += "\n💡 This error is likely caused by a stale TcXaeShell/devenv process holding locks on the solution.\n"
                 output += "   Use the `twincat_kill_stale` tool to kill stale TcXaeShell/devenv processes, then retry the build.\n"
+
+        stack = _stack_warnings(result.get("warnings") or [])
+        if stack:
+            output += (
+                "\n🛑 STACK OVERFLOW WARNING — DO NOT activate this "
+                "configuration as-is:\n"
+            )
+            for w in stack:
+                output += (
+                    f"  - {w.get('fileName', '')}:{w.get('line', '')}: "
+                    f"{w.get('description', '')}\n"
+                )
+            output += (
+                "   Activating with a C0297/stack-exhaustion warning "
+                "typically crashes the target's Windows OS. Increase the "
+                "task stack size before retrying.\n"
+            )
 
         if result.get("errors"):
             output += "\n🔴 Errors:\n"
@@ -565,14 +620,21 @@ async def handle_get_error_list(arguments: dict, tool_start_time: float) -> list
     include_messages = arguments.get("includeMessages", True)
     include_warnings = arguments.get("includeWarnings", True)
     include_errors = arguments.get("includeErrors", True)
-    wait_seconds = arguments.get("waitSeconds", 0)
+    # Bumped from 0 to 2s — async ADS messages (TcUnit output, _Raise
+    # messages, AdsLogStr calls) almost never land in the error list in
+    # <0ms. 0 was a footgun default; 2s captures the common case and is
+    # still snappy enough that the agent doesn't notice.
+    wait_seconds = arguments.get("waitSeconds", 2)
+    contains = arguments.get("contains")
 
-    step_args = {
+    step_args: dict = {
         "includeMessages": bool(include_messages),
         "includeWarnings": bool(include_warnings),
         "includeErrors": bool(include_errors),
         "waitSeconds": int(wait_seconds),
     }
+    if contains:
+        step_args["contains"] = str(contains)
     result, _ = run_shell_step(
         "get-error-list", step_args,
         solution_path=solution_path, tc_version=tc_version,

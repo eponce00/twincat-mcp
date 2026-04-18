@@ -41,7 +41,8 @@ namespace TcAutomation.Commands
             bool includeMessages = true,
             bool includeWarnings = true,
             bool includeErrors = true,
-            int waitSeconds = 0)
+            int waitSeconds = 0,
+            string? contains = null)
         {
             var result = new ErrorListResult();
 
@@ -83,7 +84,7 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                result = ExecuteInSession(vsInstance, includeMessages, includeWarnings, includeErrors, waitSeconds);
+                result = ExecuteInSession(vsInstance, includeMessages, includeWarnings, includeErrors, waitSeconds, contains);
             }
             catch (Exception ex)
             {
@@ -107,7 +108,8 @@ namespace TcAutomation.Commands
             bool includeMessages = true,
             bool includeWarnings = true,
             bool includeErrors = true,
-            int waitSeconds = 0)
+            int waitSeconds = 0,
+            string? contains = null)
         {
             var result = new ErrorListResult();
 
@@ -120,6 +122,14 @@ namespace TcAutomation.Commands
 
                 var errorItems = vsInstance.GetErrorItems();
 
+                // Case-insensitive substring filter when `contains` is set.
+                // Kept client-side of the MCP boundary so the agent doesn't
+                // pay the JSON-serialize cost for hundreds of noise
+                // messages when it only cares about "FAILED TEST" or
+                // "E_SM_Fault".
+                bool hasFilter = !string.IsNullOrEmpty(contains);
+                string filterLower = hasFilter ? contains!.ToLowerInvariant() : "";
+
                 for (int i = 1; i <= errorItems.Count; i++)
                 {
                     var item = errorItems.Item(i);
@@ -130,33 +140,40 @@ namespace TcAutomation.Commands
                     {
                         level = "Error";
                         include = includeErrors;
-                        if (include) result.ErrorCount++;
                     }
                     else if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium)
                     {
                         level = "Warning";
                         include = includeWarnings;
-                        if (include) result.WarningCount++;
                     }
                     else
                     {
                         level = "Message";
                         include = includeMessages;
-                        if (include) result.MessageCount++;
                     }
 
-                    if (include)
+                    if (!include) continue;
+
+                    string description = item.Description ?? "";
+                    if (hasFilter
+                        && !description.ToLowerInvariant().Contains(filterLower))
                     {
-                        result.Items.Add(new ErrorListItem
-                        {
-                            Level = level,
-                            Description = item.Description ?? "",
-                            FileName = item.FileName ?? "",
-                            Line = item.Line,
-                            Column = item.Column,
-                            Project = item.Project ?? ""
-                        });
+                        continue;
                     }
+
+                    if (level == "Error") result.ErrorCount++;
+                    else if (level == "Warning") result.WarningCount++;
+                    else result.MessageCount++;
+
+                    result.Items.Add(new ErrorListItem
+                    {
+                        Level = level,
+                        Description = description,
+                        FileName = item.FileName ?? "",
+                        Line = item.Line,
+                        Column = item.Column,
+                        Project = item.Project ?? ""
+                    });
                 }
 
                 result.TotalCount = result.Items.Count;

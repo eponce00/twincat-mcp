@@ -3,7 +3,9 @@ Safety / arming layer for destructive tools.
 
 Dangerous tools (activate, restart, deploy, set_state, write_var) require
 the server to be "armed" before they run. Arming auto-expires after
-`ARMED_MODE_TTL` seconds.
+`ARMED_MODE_TTL` seconds of inactivity — every successful armed-tool
+call resets the countdown, so an active session is effectively
+unbounded while an idle one disarms itself.
 
 The most destructive subset (activate, restart, deploy) additionally
 require an explicit `confirm: "CONFIRM"` argument on each call.
@@ -22,8 +24,16 @@ from .defaults import is_local_target, resolve_ams_net_id
 # Configuration
 # -----------------------------------------------------------------------------
 
-# Armed mode TTL in seconds (default: 5 minutes).
-ARMED_MODE_TTL = int(os.environ.get("TWINCAT_ARMED_TTL", 300))
+# Armed mode TTL in seconds (default: 15 minutes).
+#
+# Bumped from 300s — a legitimate arm → build → activate → run-tcunit →
+# read-error-list sequence on a remote rig can blow past 4-5 minutes
+# when the shell is cold or the PLC is slow to restart. Re-arming in the
+# middle of that chain forced the agent to explain itself to the user a
+# second time; 900s gives enough headroom for the common case. The TTL
+# is also refreshed on every successful armed-operation call (see
+# `refresh_armed_ttl`), so an active session keeps extending itself.
+ARMED_MODE_TTL = int(os.environ.get("TWINCAT_ARMED_TTL", 900))
 
 # Tools that require armed mode.
 DANGEROUS_TOOLS = [
@@ -130,6 +140,20 @@ def disarm_dangerous_operations() -> dict:
     return {"armed": False}
 
 
+def refresh_armed_ttl() -> None:
+    """
+    Reset the armed-mode countdown to `ARMED_MODE_TTL`. Called from
+    `check_armed_for_tool` whenever a dangerous (or conditionally
+    dangerous) tool passes the arm check — so an active multi-step
+    sequence (arm → build → activate → tcunit → read-error-list) can
+    run indefinitely without re-arming, while an idle session still
+    disarms itself after `ARMED_MODE_TTL` seconds of no activity.
+    """
+    if not _armed_state["armed"]:
+        return
+    _armed_state["armed_at"] = time.time()
+
+
 def check_armed_for_tool(tool_name: str, arguments: dict | None = None) -> tuple[bool, str]:
     """
     Check if a tool is allowed to run. Returns (allowed, message).
@@ -139,6 +163,9 @@ def check_armed_for_tool(tool_name: str, arguments: dict | None = None) -> tuple
     remote PLC — the effective target is resolved via `resolve_ams_net_id`,
     so if `TWINCAT_DEFAULT_AMS_NET_ID` points at a remote rig and the
     agent didn't pass one, arming is still required.
+
+    When an armed operation passes this check, the TTL is refreshed so
+    a legitimate multi-step sequence doesn't time out mid-flow.
     """
     if tool_name not in DANGEROUS_TOOLS:
         # Special case: twincat_run_tcunit requires armed mode for remote
@@ -159,6 +186,9 @@ def check_armed_for_tool(tool_name: str, arguments: dict | None = None) -> tuple
                         f"2. Then retry this operation within {ARMED_MODE_TTL} seconds\n\n"
                         f"This safety mechanism prevents accidental PLC modifications."
                     )
+                # Armed, remote target: refresh so the next step has the
+                # full TTL window ahead of it.
+                refresh_armed_ttl()
         return True, ""
 
     if not is_armed():
@@ -170,6 +200,9 @@ def check_armed_for_tool(tool_name: str, arguments: dict | None = None) -> tuple
             f"This safety mechanism prevents accidental PLC modifications."
         )
 
+    # Passed the arm check — sliding-window refresh so an active
+    # multi-step sequence never drops arming underneath itself.
+    refresh_armed_ttl()
     return True, f"⚠️ Armed mode active (reason: {_armed_state['reason']})"
 
 

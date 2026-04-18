@@ -101,16 +101,58 @@ async def handle_run_tcunit(arguments: dict, tool_start_time: float) -> list[Tex
         if duration:
             output += f"  • Duration: {duration:.1f}s\n"
 
+        # Prefer the structured failures list when the C# side has been
+        # updated; fall back to the legacy flat-string list for older hosts.
+        failures = result.get("failures", [])
         failed_details = result.get("failedTestDetails", [])
-        if failed_details:
+        test_messages = result.get("testMessages", [])
+
+        if failures:
+            output += f"\n🔴 Failed Tests ({len(failures)}):\n"
+            for f in failures:
+                suite = f.get("suite", "")
+                test = f.get("test", "")
+                expected = f.get("expected", "")
+                actual = f.get("actual", "")
+                message = f.get("message", "")
+                header = f"{suite}.{test}" if suite else test
+                output += f"  • {header}\n"
+                output += f"      EXP: {expected}\n"
+                output += f"      ACT: {actual}\n"
+                if message:
+                    output += f"      MSG: {message}\n"
+        elif failed_details:
             output += f"\n🔴 Failed Tests ({len(failed_details)}):\n"
             for detail in failed_details:
                 output += f"  • {detail}\n"
         elif failed > 0:
-            # We know there are failures but didn't capture details.
-            output += f"\n🔴 {failed} test(s) failed - check TcUnit output for details\n"
+            # Summary says tests failed but we captured no per-test details.
+            # Dump the raw TcUnit message log as a fallback so the agent has
+            # SOMETHING to work with instead of having to go scavenge the
+            # error list through a second tool call. Truncate aggressively
+            # — this path should be rare.
+            output += f"\n🔴 {failed} test(s) failed — structured details unavailable.\n"
+            if test_messages:
+                output += (
+                    "   Raw TcUnit log (may include passed-test noise):\n"
+                )
+                interesting = [
+                    m for m in test_messages
+                    if "FAIL" in m.upper()
+                    or "EXP:" in m
+                    or "ACT:" in m
+                ]
+                sample = interesting[:20] if interesting else test_messages[-20:]
+                for m in sample:
+                    output += f"     {m}\n"
+                if len(interesting) > 20:
+                    output += f"     ... and {len(interesting) - 20} more\n"
+            else:
+                output += (
+                    "   Check the VS Error List via twincat_get_error_list "
+                    "with filter='FAILED TEST'.\n"
+                )
 
-        test_messages = result.get("testMessages", [])
         if test_messages and failed == 0:
             output += f"\n✅ All {total_tests} tests passed (detailed log available with {len(test_messages)} messages)\n"
     else:

@@ -36,7 +36,8 @@ namespace TcAutomation.Core
         /// </summary>
         public static readonly HashSet<string> AdsCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "get-state", "set-state", "read-var", "write-var"
+            "get-state", "set-state", "read-var", "write-var",
+            "ping-target", "list-symbols", "read-plc-log"
         };
 
         public static bool IsShellCommand(string command)
@@ -180,7 +181,10 @@ namespace TcAutomation.Core
                         bool includeWarnings = GetBool(argsElement, "includeWarnings", hasArgs) ?? true;
                         bool includeErrors = GetBool(argsElement, "includeErrors", hasArgs) ?? true;
                         int waitSeconds = GetInt(argsElement, "waitSeconds", hasArgs) ?? 0;
-                        return GetErrorListCommand.ExecuteInSession(vsInstance, includeMessages, includeWarnings, includeErrors, waitSeconds);
+                        string? contains = GetString(argsElement, "contains", hasArgs);
+                        return GetErrorListCommand.ExecuteInSession(
+                            vsInstance, includeMessages, includeWarnings,
+                            includeErrors, waitSeconds, contains);
                     }
                     case "deploy":
                     {
@@ -246,6 +250,36 @@ namespace TcAutomation.Core
                         string value = GetString(argsElement, "value", hasArgs)
                             ?? throw new ArgumentException("write-var requires args.value");
                         return ExecuteAdsStep(() => WriteVariableCommand.Execute(amsNetId, port, symbol, value));
+                    }
+                    case "ping-target":
+                    {
+                        string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
+                            ?? throw new ArgumentException("ping-target requires args.amsNetId");
+                        int port = GetInt(argsElement, "port", hasArgs) ?? 851;
+                        int timeoutMs = GetInt(argsElement, "timeoutMs", hasArgs) ?? 2500;
+                        return ExecuteAdsStep(() => PingTargetCommand.Execute(amsNetId, port, timeoutMs));
+                    }
+                    case "list-symbols":
+                    {
+                        string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
+                            ?? throw new ArgumentException("list-symbols requires args.amsNetId");
+                        int port = GetInt(argsElement, "port", hasArgs) ?? 851;
+                        string? prefix = GetString(argsElement, "prefix", hasArgs);
+                        string? contains = GetString(argsElement, "contains", hasArgs);
+                        int max = GetInt(argsElement, "max", hasArgs) ?? 200;
+                        bool includeTypes = GetBool(argsElement, "includeTypes", hasArgs) ?? false;
+                        return ExecuteAdsStep(() => ListSymbolsCommand.Execute(
+                            amsNetId, port, prefix, contains, max, includeTypes));
+                    }
+                    case "read-plc-log":
+                    {
+                        string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
+                            ?? throw new ArgumentException("read-plc-log requires args.amsNetId");
+                        int waitSeconds = GetInt(argsElement, "waitSeconds", hasArgs) ?? 5;
+                        string? contains = GetString(argsElement, "contains", hasArgs);
+                        int max = GetInt(argsElement, "max", hasArgs) ?? 200;
+                        return ExecuteAdsStep(() => ReadPlcLogCommand.Execute(
+                            amsNetId, waitSeconds, contains, max));
                     }
                 }
             }

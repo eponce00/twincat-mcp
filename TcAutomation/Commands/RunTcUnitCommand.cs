@@ -27,6 +27,16 @@ namespace TcAutomation.Commands
     /// </summary>
     public static class RunTcUnitCommand
     {
+        public class TcUnitFailure
+        {
+            public string Suite { get; set; } = "";
+            public string Test { get; set; } = "";
+            public string Expected { get; set; } = "";
+            public string Actual { get; set; } = "";
+            public string Message { get; set; } = "";
+            public string RawLine { get; set; } = "";
+        }
+
         public class TcUnitResult
         {
             public bool Success { get; set; }
@@ -38,7 +48,12 @@ namespace TcAutomation.Commands
             public double Duration { get; set; }
             public bool AllTestsPassed { get; set; }
             public List<string> TestMessages { get; set; } = new List<string>();
+            // Legacy: flat strings, kept for backwards compat with older clients.
             public List<string> FailedTestDetails { get; set; } = new List<string>();
+            // Preferred: structured per-failure records parsed from the
+            // `FAILED TEST 'Suite@Test', EXP: .., ACT: .., MSG: ..` lines
+            // TcUnit emits via AdsLogStr.
+            public List<TcUnitFailure> Failures { get; set; } = new List<TcUnitFailure>();
             public string Summary { get; set; } = "";
         }
 
@@ -487,37 +502,17 @@ namespace TcAutomation.Commands
                             }
                         }
 
-                        // Capture failed test with full context (suite.test: details)
-                        // TcUnit format: FAILED TEST 'Suite@TestName', EXP: expected, ACT: actual, MSG: message
-                        if (tcUnitMsg.Contains("FAILED TEST"))
-                        {
-                            // Extract the failure details directly from the message
-                            // Format: FAILED TEST 'MAIN.fbTests@TestMethod', EXP: value, ACT: value, MSG: message
-                            string failDetail = tcUnitMsg;
-                            
-                            // Clean up - remove "FAILED TEST " prefix for cleaner output
-                            if (failDetail.StartsWith("FAILED TEST "))
-                            {
-                                failDetail = failDetail.Substring(12).Trim();
-                                // Remove surrounding quotes if present
-                                if (failDetail.StartsWith("'"))
-                                {
-                                    int endQuote = failDetail.IndexOf("'", 1);
-                                    if (endQuote > 0)
-                                    {
-                                        string testName = failDetail.Substring(1, endQuote - 1);
-                                        string remainder = failDetail.Substring(endQuote + 1).TrimStart(',', ' ');
-                                        // Replace @ with . for readability
-                                        testName = testName.Replace("@", ".");
-                                        failDetail = $"{testName}: {remainder}";
-                                    }
-                                }
-                            }
-                            
-                            if (!result.FailedTestDetails.Contains(failDetail))
-                                result.FailedTestDetails.Add(failDetail);
-                        }
                     }
+
+                    // Third pass: capture FAILED TEST lines UNCONDITIONALLY.
+                    // Rationale: TcUnit emits per-failure messages via
+                    // AdsLogStr, but the taskName-based filter in passes 1/2
+                    // is fragile — if the configured task name doesn't
+                    // exactly match what TwinCAT puts in the ADS message
+                    // prefix, every FAILED TEST line silently vanishes.
+                    // The "FAILED TEST '" marker is distinctive enough to
+                    // match directly against the raw description, so we do.
+                    CollectFailedTestDetails(errorItems, result);
 
                     // Progress update every few polls
                     if (pollCount % 2 == 0)
@@ -543,8 +538,27 @@ namespace TcAutomation.Commands
                     if (testSuites >= 0 && tests >= 0 && passed >= 0 && failed >= 0)
                     {
                         Progress("poll", "TcUnit results received!");
-                        // Wait for any remaining detailed messages (test names, failures, etc.)
+                        // Wait for any trailing FAILED TEST lines that may
+                        // not have hit the error list yet. TcUnit emits the
+                        // summary line BEFORE all per-test messages have
+                        // propagated through VS — without this rescan we
+                        // would break out with Failures empty even though
+                        // failed > 0.
                         Thread.Sleep(10000);
+                        var finalItems = vsInstance.GetErrorItems();
+                        CollectFailedTestDetails(finalItems, result);
+                        // Also refresh the raw TcUnit message log so the
+                        // caller can eyeball the stream if parsing ever
+                        // misses something.
+                        for (int i = 1; i <= finalItems.Count; i++)
+                        {
+                            var item = finalItems.Item(i);
+                            string desc = item.Description ?? "";
+                            if (!IsTcUnitAdsMessage(desc, taskName)) continue;
+                            string msg = ExtractTcUnitMessage(desc, taskName);
+                            if (!result.TestMessages.Contains(msg))
+                                result.TestMessages.Add(msg);
+                        }
                         break;
                     }
                 }
@@ -739,6 +753,136 @@ namespace TcAutomation.Commands
             }
             catch { }
             return 0;
+        }
+
+        /// <summary>
+        /// Scan every error-list item for `FAILED TEST 'Suite@Test', EXP: ...
+        /// ACT: ..., MSG: ...` lines and populate `result.Failures` and the
+        /// legacy `result.FailedTestDetails` string list.
+        ///
+        /// Deliberately does NOT gate on `IsTcUnitAdsMessage` / taskName —
+        /// the `FAILED TEST '` substring is distinctive enough that any
+        /// other producer would be a genuine name collision, and the
+        /// previous task-name-gated path silently dropped per-failure
+        /// messages whenever the configured taskName didn't exactly match
+        /// what TwinCAT wrote into the ADS message prefix.
+        /// </summary>
+        private static void CollectFailedTestDetails(
+            ErrorItems errorItems, TcUnitResult result)
+        {
+            for (int i = 1; i <= errorItems.Count; i++)
+            {
+                string desc = "";
+                try { desc = errorItems.Item(i).Description ?? ""; }
+                catch { continue; }
+
+                int start = desc.IndexOf("FAILED TEST ");
+                if (start < 0) continue;
+
+                string rawLine = desc.Substring(start).Trim();
+                var failure = ParseFailedTestLine(rawLine);
+                if (failure == null) continue;
+
+                // Dedup by Suite.Test + Message — same test failing twice
+                // in the same run is rare but possible (e.g. same name in
+                // two suites); keep them both but don't double-count a
+                // line we've already parsed this poll.
+                bool alreadySeen = false;
+                foreach (var existing in result.Failures)
+                {
+                    if (existing.RawLine == failure.RawLine)
+                    {
+                        alreadySeen = true;
+                        break;
+                    }
+                }
+                if (alreadySeen) continue;
+
+                result.Failures.Add(failure);
+
+                // Keep the legacy flat-string list populated for clients
+                // that haven't migrated to the structured field yet.
+                string testPath = string.IsNullOrEmpty(failure.Suite)
+                    ? failure.Test
+                    : $"{failure.Suite}.{failure.Test}";
+                string flat = $"{testPath}: EXP={failure.Expected}, ACT={failure.Actual}";
+                if (!string.IsNullOrEmpty(failure.Message))
+                    flat += $", MSG={failure.Message}";
+                if (!result.FailedTestDetails.Contains(flat))
+                    result.FailedTestDetails.Add(flat);
+            }
+        }
+
+        /// <summary>
+        /// Parse a single FAILED TEST line. Returns null on malformed input.
+        /// Input shape (TcUnit convention):
+        ///   FAILED TEST 'MAIN.fbStateMachine_Test@AbortFromRunningEntersAborting',
+        ///       EXP: 5000, ACT: 0, MSG: Entering ABORTING must...
+        /// </summary>
+        private static TcUnitFailure? ParseFailedTestLine(string line)
+        {
+            try
+            {
+                if (!line.StartsWith("FAILED TEST ")) return null;
+
+                // Strip prefix + locate the quoted 'Suite@Test' token.
+                string rest = line.Substring("FAILED TEST ".Length).TrimStart();
+                if (!rest.StartsWith("'")) return null;
+
+                int closeQuote = rest.IndexOf('\'', 1);
+                if (closeQuote < 0) return null;
+
+                string fullTestId = rest.Substring(1, closeQuote - 1);
+                string tail = rest.Substring(closeQuote + 1).TrimStart(',', ' ');
+
+                string suite = "";
+                string test = fullTestId;
+                int at = fullTestId.IndexOf('@');
+                if (at > 0)
+                {
+                    suite = fullTestId.Substring(0, at);
+                    test = fullTestId.Substring(at + 1);
+                }
+
+                string expected = ExtractField(tail, "EXP:", new[] { ", ACT:", ", MSG:" });
+                string actual = ExtractField(tail, "ACT:", new[] { ", MSG:", ", EXP:" });
+                string message = ExtractField(tail, "MSG:", Array.Empty<string>());
+
+                return new TcUnitFailure
+                {
+                    Suite = suite,
+                    Test = test,
+                    Expected = expected,
+                    Actual = actual,
+                    Message = message,
+                    RawLine = line
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Pull the value for `key` from a comma-delimited "k1: v1, k2: v2"
+        /// tail, stopping at the next known key delimiter. Trivial parser;
+        /// intentionally lenient about whitespace and field ordering.
+        /// </summary>
+        private static string ExtractField(string tail, string key, string[] stopMarkers)
+        {
+            int idx = tail.IndexOf(key);
+            if (idx < 0) return "";
+
+            int valueStart = idx + key.Length;
+            int end = tail.Length;
+            foreach (var stop in stopMarkers)
+            {
+                int stopIdx = tail.IndexOf(stop, valueStart);
+                if (stopIdx >= 0 && stopIdx < end)
+                    end = stopIdx;
+            }
+            return tail.Substring(valueStart, end - valueStart).Trim();
         }
 
         /// <summary>

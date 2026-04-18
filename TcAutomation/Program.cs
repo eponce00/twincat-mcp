@@ -295,6 +295,91 @@ namespace TcAutomation
                 GetStateCommand.Execute(amsNetId, port);
             }, getStateAmsOpt, getStatePortOpt);
 
+            rootCommand.AddCommand(getStateCommand);
+
+            // === PING-TARGET COMMAND (ADS) ===
+            var pingTargetCommand = new Command("ping-target", "Ping a TwinCAT target over ADS and classify reachability (reachable/rebooting/unreachable/routeMissing)");
+            var pingAmsOpt = CreateAmsNetIdOption(required: true);
+            var pingRtPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "PLC runtime AMS port (default: 851)",
+                getDefaultValue: () => 851);
+            var pingTimeoutOpt = new Option<int>(
+                aliases: new[] { "--timeout" },
+                description: "Per-probe timeout in milliseconds (default: 2500)",
+                getDefaultValue: () => 2500);
+            pingTargetCommand.AddOption(pingAmsOpt);
+            pingTargetCommand.AddOption(pingRtPortOpt);
+            pingTargetCommand.AddOption(pingTimeoutOpt);
+
+            pingTargetCommand.SetHandler((string amsNetId, int port, int timeout) =>
+            {
+                PingTargetCommand.Execute(amsNetId, port, timeout);
+            }, pingAmsOpt, pingRtPortOpt, pingTimeoutOpt);
+
+            rootCommand.AddCommand(pingTargetCommand);
+
+            // === LIST-SYMBOLS COMMAND (ADS) ===
+            var listSymbolsCommand = new Command("list-symbols", "Enumerate PLC symbols on the target via ADS (no VS required)");
+            var lsAmsOpt = CreateAmsNetIdOption(required: true);
+            var lsPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "AMS port (default: 851 for PLC runtime 1)",
+                getDefaultValue: () => 851);
+            var lsPrefixOpt = new Option<string?>(
+                aliases: new[] { "--prefix" },
+                description: "Case-insensitive prefix filter on the full symbol path (e.g., 'MAIN.')");
+            var lsContainsOpt = new Option<string?>(
+                aliases: new[] { "--contains" },
+                description: "Case-insensitive substring filter");
+            var lsMaxOpt = new Option<int>(
+                aliases: new[] { "--max" },
+                description: "Cap on returned entries (default: 200; the total match count is still reported)",
+                getDefaultValue: () => 200);
+            var lsTypesOpt = new Option<bool>(
+                aliases: new[] { "--types" },
+                description: "Include type name and ADS index/offset per symbol",
+                getDefaultValue: () => false);
+            listSymbolsCommand.AddOption(lsAmsOpt);
+            listSymbolsCommand.AddOption(lsPortOpt);
+            listSymbolsCommand.AddOption(lsPrefixOpt);
+            listSymbolsCommand.AddOption(lsContainsOpt);
+            listSymbolsCommand.AddOption(lsMaxOpt);
+            listSymbolsCommand.AddOption(lsTypesOpt);
+
+            listSymbolsCommand.SetHandler((string amsNetId, int port, string? prefix, string? contains, int max, bool types) =>
+            {
+                ListSymbolsCommand.Execute(amsNetId, port, prefix, contains, max, types);
+            }, lsAmsOpt, lsPortOpt, lsPrefixOpt, lsContainsOpt, lsMaxOpt, lsTypesOpt);
+
+            rootCommand.AddCommand(listSymbolsCommand);
+
+            // === READ-PLC-LOG COMMAND (ADS) ===
+            var readPlcLogCommand = new Command("read-plc-log", "Tail the TwinCAT event log on a target over ADS (no VS required)");
+            var rplAmsOpt = CreateAmsNetIdOption(required: true);
+            var rplWaitOpt = new Option<int>(
+                aliases: new[] { "--wait" },
+                description: "Seconds to listen for new log events (default: 5)",
+                getDefaultValue: () => 5);
+            var rplContainsOpt = new Option<string?>(
+                aliases: new[] { "--contains" },
+                description: "Case-insensitive substring filter on the message body");
+            var rplMaxOpt = new Option<int>(
+                aliases: new[] { "--max" },
+                description: "Cap on returned events (default: 200)",
+                getDefaultValue: () => 200);
+            readPlcLogCommand.AddOption(rplAmsOpt);
+            readPlcLogCommand.AddOption(rplWaitOpt);
+            readPlcLogCommand.AddOption(rplContainsOpt);
+            readPlcLogCommand.AddOption(rplMaxOpt);
+
+            readPlcLogCommand.SetHandler((string amsNetId, int wait, string? contains, int max) =>
+            {
+                ReadPlcLogCommand.Execute(amsNetId, wait, contains, max);
+            }, rplAmsOpt, rplWaitOpt, rplContainsOpt, rplMaxOpt);
+
+            rootCommand.AddCommand(readPlcLogCommand);
+
             // === READ-VAR COMMAND (ADS) ===
             var readVarCommand = new Command("read-var", "Read a PLC variable via ADS (no VS required)");
             var readVarAmsOpt = CreateAmsNetIdOption(required: true);
@@ -418,7 +503,8 @@ namespace TcAutomation
             }, setStateAmsOpt, setStatePortOpt, setStateTargetOpt);
 
             // === ADD NEW COMMANDS TO ROOT ===
-            rootCommand.AddCommand(getStateCommand);
+            // NOTE: getStateCommand and pingTargetCommand are registered
+            // at their definition site above, not here.
             rootCommand.AddCommand(setStateCommand);
             rootCommand.AddCommand(readVarCommand);
             rootCommand.AddCommand(writeVarCommand);
@@ -524,18 +610,22 @@ namespace TcAutomation
                 aliases: new[] { "--wait" },
                 description: "Wait N seconds before reading (for async messages)",
                 getDefaultValue: () => 0);
+            var gelContainsOpt = new Option<string?>(
+                aliases: new[] { "--contains" },
+                description: "Case-insensitive substring filter on the item Description");
             getErrorListCommand.AddOption(gelSolutionOpt);
             getErrorListCommand.AddOption(gelTcVersionOpt);
             getErrorListCommand.AddOption(gelMessagesOpt);
             getErrorListCommand.AddOption(gelWarningsOpt);
             getErrorListCommand.AddOption(gelErrorsOpt);
             getErrorListCommand.AddOption(gelWaitOpt);
-            
-            getErrorListCommand.SetHandler(async (string solution, string? tcVersion, bool messages, bool warnings, bool errors, int wait) =>
+            getErrorListCommand.AddOption(gelContainsOpt);
+
+            getErrorListCommand.SetHandler(async (string solution, string? tcVersion, bool messages, bool warnings, bool errors, int wait, string? contains) =>
             {
-                var result = await GetErrorListCommand.ExecuteAsync(solution, tcVersion, messages, warnings, errors, wait);
+                var result = await GetErrorListCommand.ExecuteAsync(solution, tcVersion, messages, warnings, errors, wait, contains);
                 Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
-            }, gelSolutionOpt, gelTcVersionOpt, gelMessagesOpt, gelWarningsOpt, gelErrorsOpt, gelWaitOpt);
+            }, gelSolutionOpt, gelTcVersionOpt, gelMessagesOpt, gelWarningsOpt, gelErrorsOpt, gelWaitOpt, gelContainsOpt);
             
             rootCommand.AddCommand(getErrorListCommand);
 
