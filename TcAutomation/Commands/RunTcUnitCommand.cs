@@ -162,7 +162,7 @@ namespace TcAutomation.Commands
             void Progress(string step, string message) => ProgressStatic(step, message);
 
             AdsClient? adsClient = null;
-            bool dialogWatchdogStarted = false;
+            int? dialogWatchdogPid = null;
 
             try
             {
@@ -171,8 +171,20 @@ namespace TcAutomation.Commands
                 // is cheap and idempotent so we repeat to be safe.
                 try { vsInstance.CloseAllDocuments(); } catch { }
 
-                DialogWatchdog.Start();
-                dialogWatchdogStarted = true;
+                // Register this DTE with the dialog-dismisser so modals
+                // (AdsError popup on activation, "file changed outside"
+                // prompts, etc.) auto-close. Scoped to our PID so the user's
+                // own IDE is never touched.
+                //
+                // In the persistent-host path this is usually already running
+                // (VisualStudioInstance.ConfigureDte starts it for the DTE's
+                // whole lifetime); Start is ref-counted so this Start/Stop
+                // pair is safe and nests correctly.
+                if (vsInstance.DteProcessId.HasValue && vsInstance.DteProcessId.Value > 0)
+                {
+                    DialogWatchdog.Start(vsInstance.DteProcessId.Value);
+                    dialogWatchdogPid = vsInstance.DteProcessId.Value;
+                }
 
                 var sysManager = vsInstance.GetSystemManager();
 
@@ -577,9 +589,9 @@ namespace TcAutomation.Commands
             }
             finally
             {
-                if (dialogWatchdogStarted)
+                if (dialogWatchdogPid.HasValue)
                 {
-                    try { DialogWatchdog.Stop(); } catch { }
+                    try { DialogWatchdog.Stop(dialogWatchdogPid.Value); } catch { }
                 }
                 try { adsClient?.Disconnect(); } catch { }
                 try { adsClient?.Dispose(); } catch { }

@@ -43,6 +43,12 @@ namespace TcAutomation.Core
         private Thread? _visibilityWatchdog;
         private volatile bool _watchdogShouldStop;
 
+        // Tracks whether we've registered this DTE's PID with the static
+        // DialogWatchdog. We need to know so Close() can Stop the exact
+        // PID we Start'd (and not blow away a Stop call that already ran
+        // from some other teardown path).
+        private int? _dialogWatchdogPid;
+
         /// <summary>
         /// The Windows PID of the TcXaeShell/devenv process we launched.
         /// Populated after Load() via PID-diff against the pre-existing snapshot.
@@ -315,6 +321,15 @@ namespace TcAutomation.Core
             // calling MainWindow on a dying COM object.
             StopVisibilityWatchdog();
 
+            // Deregister from the dialog-dismisser before the PID becomes
+            // reused by the OS. Stop is idempotent / ref-counted, so
+            // double-Stop (e.g. from Dispose) is safe.
+            if (_dialogWatchdogPid.HasValue)
+            {
+                try { DialogWatchdog.Stop(_dialogWatchdogPid.Value); } catch { }
+                _dialogWatchdogPid = null;
+            }
+
             if (_dte != null)
             {
                 // Restore any user preferences we tweaked at startup BEFORE
@@ -483,6 +498,31 @@ namespace TcAutomation.Core
             // done. If anything above somehow unhid the window (race with UI
             // thread), the watchdog will re-hide on its first tick.
             StartVisibilityWatchdog();
+
+            // Start the dialog-dismisser, scoped to OUR spawned DTE PID so
+            // it cannot touch dialogs in the user's own IDE or any other
+            // shell on the box. This is what silences the project-reload
+            // prompt the user sees when they (or another AI) edit TwinCAT
+            // project files while our headless shell is alive.
+            //
+            // AutoloadExternalChanges (set above) handles DOCUMENT reloads
+            // silently, but project-level reload is a separate modal with
+            // no DTE setting that disables it — the only reliable silencer
+            // is to identify the dialog by its body text and click Reload
+            // programmatically. The watchdog does exactly that.
+            if (DteProcessId.HasValue && DteProcessId.Value > 0)
+            {
+                DialogWatchdog.Start(DteProcessId.Value);
+                _dialogWatchdogPid = DteProcessId.Value;
+                Console.Error.WriteLine(
+                    $"[DEBUG] DialogWatchdog registered for DTE PID {DteProcessId.Value}");
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "[DEBUG] DialogWatchdog NOT started: DteProcessId unknown. " +
+                    "Modal-reload dialogs will not be auto-dismissed for this session.");
+            }
         }
 
         /// <summary>
