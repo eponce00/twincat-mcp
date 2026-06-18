@@ -258,7 +258,7 @@ async def handle_list_plcs(arguments: dict, tool_start_time: float) -> list[Text
     )
 
     if result.get("ErrorMessage"):
-        output = f"❌ Error: {result['ErrorMessage']}"
+        output = f"❌ Error: {result.get('ErrorMessage')}"
     else:
         output = f"""📋 PLC Projects in Solution
 Solution: {result.get('SolutionPath', 'Unknown')}

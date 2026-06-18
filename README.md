@@ -16,7 +16,7 @@ Unofficial. Not affiliated with Beckhoff.
 | Software       | Version                                                   |
 | -------------- | --------------------------------------------------------- |
 | Windows        | 10 or 11                                                  |
-| Visual Studio  | 2019 or 2022 with the ".NET desktop development" workload |
+| Visual Studio  | 2019, 2022, or newer with MSBuild and the ".NET desktop development" workload |
 | .NET Framework | 4.7.2 Developer Pack                                      |
 | TwinCAT XAE    | 3.1.4024 or newer                                         |
 | Python         | 3.10 or newer, on PATH                                    |

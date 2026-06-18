@@ -13,6 +13,9 @@ Write-Host "Checking prerequisites..." -ForegroundColor Yellow
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
     $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+    if (-not $vsPath) {
+        $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath
+    }
     if ($vsPath) {
         $msbuild = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
         if (Test-Path $msbuild) {
@@ -23,12 +26,12 @@ if (Test-Path $vswhere) {
         }
     } else {
         Write-Host "❌ Visual Studio with MSBuild not found" -ForegroundColor Red
-        Write-Host "   Install Visual Studio 2022 with '.NET desktop development' workload" -ForegroundColor Gray
+        Write-Host "   Install Visual Studio 2022 (or newer) with '.NET desktop development' workload" -ForegroundColor Gray
         exit 1
     }
 } else {
     Write-Host "❌ Visual Studio Installer not found" -ForegroundColor Red
-    Write-Host "   Install Visual Studio 2022 Community (free)" -ForegroundColor Gray
+    Write-Host "   Install Visual Studio 2022 Community (free) or newer" -ForegroundColor Gray
     exit 1
 }
 

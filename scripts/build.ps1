@@ -18,8 +18,11 @@ if (-not (Test-Path $vswhere)) {
 
 $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
 if (-not $vsPath) {
+    $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath
+}
+if (-not $vsPath) {
     Write-Host "❌ Visual Studio with MSBuild not found." -ForegroundColor Red
-    Write-Host "   Install Visual Studio 2022 with '.NET desktop development' workload." -ForegroundColor Gray
+    Write-Host "   Install Visual Studio 2022 (or newer) with '.NET desktop development' workload." -ForegroundColor Gray
     exit 1
 }
 

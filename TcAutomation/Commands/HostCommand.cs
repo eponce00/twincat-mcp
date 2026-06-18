@@ -51,6 +51,7 @@ namespace TcAutomation.Commands
         private static readonly CancellationTokenSource ShutdownCts = new CancellationTokenSource();
         private static VisualStudioInstance? _vsInstance;
         private static SessionFile? _sessionFile;
+        private static string? _loadedTcVersion;
         private static bool _messageFilterRegistered;
         private static int _callsServed;
         private static readonly DateTime _startedUtc = DateTime.UtcNow;
@@ -271,6 +272,9 @@ namespace TcAutomation.Commands
                 EmitError(requestId, "Could not determine TwinCAT version from project", sw);
                 return;
             }
+            string effectiveTcVersion = string.IsNullOrEmpty(tcVersionOverride)
+                ? projectTcVersion
+                : tcVersionOverride;
 
             bool openedFresh = false;
             bool reloaded = false;
@@ -287,9 +291,11 @@ namespace TcAutomation.Commands
                 openedFresh = true;
                 EmitProgress($"host: shell ready ({openSw.Elapsed.TotalSeconds:F1}s)");
 
-                UpdateSessionFileWithDte(solutionPath, tcVersionOverride);
+                _loadedTcVersion = effectiveTcVersion;
+                UpdateSessionFileWithDte(solutionPath, effectiveTcVersion);
             }
-            else if (!PathsEqual(_vsInstance.SolutionFilePath, solutionPath))
+            else if (!PathsEqual(_vsInstance.SolutionFilePath, solutionPath)
+                || !string.Equals(_loadedTcVersion, effectiveTcVersion, StringComparison.OrdinalIgnoreCase))
             {
                 EmitProgress($"host: switching solution -> {Path.GetFileName(solutionPath)} ...");
                 var reloadSw = Stopwatch.StartNew();
@@ -299,7 +305,12 @@ namespace TcAutomation.Commands
                 reloaded = true;
                 EmitProgress($"host: solution reloaded ({reloadSw.Elapsed.TotalSeconds:F1}s)");
 
-                UpdateSessionFileWithDte(solutionPath, tcVersionOverride);
+                _loadedTcVersion = effectiveTcVersion;
+                UpdateSessionFileWithDte(solutionPath, effectiveTcVersion);
+            }
+            else
+            {
+                _loadedTcVersion = effectiveTcVersion;
             }
 
             EmitOk(requestId, new
@@ -308,7 +319,7 @@ namespace TcAutomation.Commands
                 openedFresh,
                 reloaded,
                 solutionPath,
-                tcVersion = projectTcVersion,
+                tcVersion = effectiveTcVersion,
                 dtePid = _vsInstance?.DteProcessId
             }, sw);
         }
@@ -338,7 +349,7 @@ namespace TcAutomation.Commands
             }
 
             string solutionPath = _vsInstance?.SolutionFilePath ?? string.Empty;
-            string? tcVersion = null;
+            string? tcVersion = _loadedTcVersion;
 
             bool isShell = StepDispatcher.IsShellCommand(command);
             bool isAds = StepDispatcher.IsAdsCommand(command);
