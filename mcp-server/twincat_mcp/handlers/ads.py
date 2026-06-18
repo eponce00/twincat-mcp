@@ -317,3 +317,121 @@ async def handle_write_var(arguments: dict, tool_start_time: float) -> list[Text
         output = f"❌ Failed to write '{symbol}': {result.get('ErrorMessage', 'Unknown error')}"
 
     return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+
+@register("twincat_read_var_list")
+async def handle_read_var_list(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
+    symbols: list = arguments.get("symbols", [])
+    port = arguments.get("port", 851)
+
+    # StepDispatcher expects a comma-separated string for the symbols arg
+    result, _ = run_shell_step(
+        "read-var-list", {
+            "amsNetId": ams_net_id,
+            "symbols": ",".join(str(s) for s in symbols),
+            "port": port,
+        },
+        timeout_minutes=1,
+    )
+
+    if result.get("Success"):
+        readings = result.get("Results", {})
+        output = f"✅ Batch Read: {len(readings)} variables on {ams_net_id}:{port}\n\n"
+        for sym, data in readings.items():
+            if isinstance(data, dict) and data.get("Success"):
+                output += f"  `{sym}` = **{data.get('Value')}** ({data.get('DataType', '?')})\n"
+            else:
+                err = data.get("ErrorMessage", "failed") if isinstance(data, dict) else "failed"
+                output += f"  `{sym}` ❌ {err}\n"
+    else:
+        output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
+
+    return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+
+@register("twincat_write_var_list")
+async def handle_write_var_list(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    import json as _json
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
+    variables: dict = arguments.get("variables", {})
+    port = arguments.get("port", 851)
+
+    result, _ = run_shell_step(
+        "write-var-list", {
+            "amsNetId": ams_net_id,
+            "variables": _json.dumps(variables),
+            "port": port,
+        },
+        timeout_minutes=1,
+    )
+
+    if result.get("Success"):
+        writes = result.get("Results", {})
+        output = f"✅ Batch Write: {len(writes)} variables on {ams_net_id}:{port}\n\n"
+        for sym, data in writes.items():
+            if isinstance(data, dict) and data.get("Success"):
+                output += f"  `{sym}`: {data.get('PreviousValue')} → **{data.get('NewValue')}**\n"
+            else:
+                err = data.get("ErrorMessage", "failed") if isinstance(data, dict) else "failed"
+                output += f"  `{sym}` ❌ {err}\n"
+        if result.get("Warning"):
+            output += f"\n⚠️ {result.get('Warning')}"
+    else:
+        output = f"❌ Failed: {result.get('ErrorMessage', 'Unknown error')}"
+
+    return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+
+@register("twincat_ads_record")
+async def handle_ads_record(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    import json as _json
+    import os
+    from datetime import datetime
+    from ..cli import find_tc_automation_exe, run_tc_automation_with_progress
+
+    ams_net_id = resolve_ams_net_id(arguments.get("amsNetId"))
+    port = arguments.get("port", 851)
+    variables: list = arguments.get("variables", [])
+    sample_time_ms = arguments.get("sampleTimeMs", 10)
+    duration_sec = arguments.get("durationSec", 0)
+    output_path = arguments.get("outputPath") or os.path.join(
+        os.environ.get("TEMP", "/tmp"),
+        f"ads_record_{datetime.now():%Y%m%d_%H%M%S}.csv"
+    )
+    start_trigger = arguments.get("startTrigger")
+    stop_trigger = arguments.get("stopTrigger")
+    max_time_sec = arguments.get("maxTimeSec", 60)
+
+    args = [
+        "--amsnetid", ams_net_id,
+        "--port", str(port),
+        "--variables", ",".join(variables),
+        "--sampletime", str(sample_time_ms),
+        "--duration", str(duration_sec),
+        "--output", output_path,
+        "--max-time", str(max_time_sec),
+    ]
+    if start_trigger:
+        args.extend(["--start-trigger", start_trigger])
+    if stop_trigger:
+        args.extend(["--stop-trigger", stop_trigger])
+
+    # Use generous timeout: duration + max_time + 30s buffer
+    timeout_minutes = int((max(duration_sec, 0) + max(max_time_sec, 0) + 30) / 60) + 1
+    result, _ = run_tc_automation_with_progress("ads-record", args, timeout_minutes)
+
+    if result.get("success"):
+        csv_path = result.get("outputPath", output_path)
+        sample_count = result.get("samplesCollected", result.get("sampleCount", "?"))
+        actual_duration = result.get("durationSeconds", duration_sec)
+        output = f"✅ ADS Recording Complete\n\n"
+        output += f"📡 Target: {ams_net_id}:{port}\n"
+        output += f"📊 Variables: {', '.join(variables)}\n"
+        output += f"⏱ Duration: {actual_duration:.1f}s at {sample_time_ms}ms intervals\n"
+        output += f"📈 Samples: {sample_count}\n"
+        output += f"💾 Output: `{csv_path}`"
+    else:
+        output = f"❌ ADS recording failed: {result.get('errorMessage', 'Unknown error')}"
+
+    return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]

@@ -425,6 +425,47 @@ namespace TcAutomation
                 WriteVariableCommand.Execute(amsNetId, port, symbol, value);
             }, writeVarAmsOpt, writeVarPortOpt, writeVarSymbolOpt, writeVarValueOpt);
 
+            // === READ-VAR-LIST COMMAND (ADS) ===
+            var readVarListCommand = new Command("read-var-list", "Read multiple PLC variables via ADS in a single call");
+            var readVarListAmsOpt = CreateAmsNetIdOption(required: true);
+            var readVarListPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "ADS port (default: 851)",
+                getDefaultValue: () => 851);
+            var readVarListSymbolsOpt = new Option<string>(
+                aliases: new[] { "--symbols" },
+                description: "Comma-separated list of symbol paths (max 500)");
+            readVarListSymbolsOpt.IsRequired = true;
+            readVarListCommand.AddOption(readVarListAmsOpt);
+            readVarListCommand.AddOption(readVarListPortOpt);
+            readVarListCommand.AddOption(readVarListSymbolsOpt);
+
+            readVarListCommand.SetHandler((string amsNetId, int port, string symbols) =>
+            {
+                var symbolArray = symbols.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                ReadVariableListCommand.Execute(amsNetId, port, symbolArray);
+            }, readVarListAmsOpt, readVarListPortOpt, readVarListSymbolsOpt);
+
+            // === WRITE-VAR-LIST COMMAND (ADS) ===
+            var writeVarListCommand = new Command("write-var-list", "Write multiple PLC variables via ADS in a single call");
+            var writeVarListAmsOpt = CreateAmsNetIdOption(required: true);
+            var writeVarListPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "ADS port (default: 851)",
+                getDefaultValue: () => 851);
+            var writeVarListVarsOpt = new Option<string>(
+                aliases: new[] { "--variables" },
+                description: "JSON object of symbol:value pairs");
+            writeVarListVarsOpt.IsRequired = true;
+            writeVarListCommand.AddOption(writeVarListAmsOpt);
+            writeVarListCommand.AddOption(writeVarListPortOpt);
+            writeVarListCommand.AddOption(writeVarListVarsOpt);
+
+            writeVarListCommand.SetHandler((string amsNetId, int port, string variables) =>
+            {
+                WriteVariableListCommand.Execute(amsNetId, port, variables);
+            }, writeVarListAmsOpt, writeVarListPortOpt, writeVarListVarsOpt);
+
             // === LIST-TASKS COMMAND ===
             var listTasksCommand = new Command("list-tasks", "List all real-time tasks in a TwinCAT solution");
             var listTasksSolutionOpt = CreateSolutionOption();
@@ -508,6 +549,8 @@ namespace TcAutomation
             rootCommand.AddCommand(setStateCommand);
             rootCommand.AddCommand(readVarCommand);
             rootCommand.AddCommand(writeVarCommand);
+            rootCommand.AddCommand(readVarListCommand);
+            rootCommand.AddCommand(writeVarListCommand);
             rootCommand.AddCommand(listTasksCommand);
             rootCommand.AddCommand(configureTaskCommand);
             rootCommand.AddCommand(configureRtCommand);
@@ -671,6 +714,187 @@ namespace TcAutomation
             }, tcuSolutionOpt, tcuTcVersionOpt, tcuAmsNetIdOpt, tcuTaskOpt, tcuPlcOpt, tcuTimeoutOpt, tcuDisableIoOpt, tcuSkipBuildOpt);
             
             rootCommand.AddCommand(runTcUnitCommand);
+
+            // === ADS-RECORD COMMAND (no Scope Server needed) ===
+            var adsRecordCommand = new Command("ads-record", "Record PLC variables via ADS notifications and export to CSV (no TE13xx license required)");
+            var adsRecordAmsOpt = new Option<string>(
+                aliases: new[] { "--amsnetid", "-a" },
+                description: "AMS Net ID of the target PLC");
+            adsRecordAmsOpt.IsRequired = true;
+            var adsRecordPortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "ADS port number (default: 851)",
+                getDefaultValue: () => 851);
+            var adsRecordVarsOpt = new Option<string>(
+                aliases: new[] { "--variables" },
+                description: "Comma-separated list of PLC variable paths to record");
+            adsRecordVarsOpt.IsRequired = true;
+            var adsRecordSampleOpt = new Option<int>(
+                aliases: new[] { "--sampletime" },
+                description: "Sample interval in milliseconds (default: 10)",
+                getDefaultValue: () => 10);
+            var adsRecordDurationOpt = new Option<double>(
+                aliases: new[] { "--duration" },
+                description: "Recording duration in seconds (0 = use max-time only)",
+                getDefaultValue: () => 0);
+            var adsRecordOutputOpt = new Option<string?>(
+                aliases: new[] { "--output", "-o" },
+                description: "Path to save the CSV output file (auto-generated if omitted)");
+            var adsRecordStartTriggerOpt = new Option<string?>(
+                aliases: new[] { "--start-trigger" },
+                description: "Start trigger condition, e.g. 'MAIN.bRunning == 1'");
+            var adsRecordStopTriggerOpt = new Option<string?>(
+                aliases: new[] { "--stop-trigger" },
+                description: "Stop trigger condition, e.g. 'MAIN.bDone == 1'");
+            var adsRecordMaxTimeOpt = new Option<double>(
+                aliases: new[] { "--max-time" },
+                description: "Max seconds to wait for start trigger (and fallback cap). Default: 60",
+                getDefaultValue: () => 60);
+
+            adsRecordCommand.AddOption(adsRecordAmsOpt);
+            adsRecordCommand.AddOption(adsRecordPortOpt);
+            adsRecordCommand.AddOption(adsRecordVarsOpt);
+            adsRecordCommand.AddOption(adsRecordSampleOpt);
+            adsRecordCommand.AddOption(adsRecordDurationOpt);
+            adsRecordCommand.AddOption(adsRecordOutputOpt);
+            adsRecordCommand.AddOption(adsRecordStartTriggerOpt);
+            adsRecordCommand.AddOption(adsRecordStopTriggerOpt);
+            adsRecordCommand.AddOption(adsRecordMaxTimeOpt);
+
+            adsRecordCommand.SetHandler((System.CommandLine.Invocation.InvocationContext ctx) =>
+            {
+                var amsNetId = ctx.ParseResult.GetValueForOption(adsRecordAmsOpt)!;
+                var port = ctx.ParseResult.GetValueForOption(adsRecordPortOpt);
+                var variables = ctx.ParseResult.GetValueForOption(adsRecordVarsOpt)!;
+                var sampleTime = ctx.ParseResult.GetValueForOption(adsRecordSampleOpt);
+                var duration = ctx.ParseResult.GetValueForOption(adsRecordDurationOpt);
+                var output = ctx.ParseResult.GetValueForOption(adsRecordOutputOpt);
+                var startTrigger = ctx.ParseResult.GetValueForOption(adsRecordStartTriggerOpt);
+                var stopTrigger = ctx.ParseResult.GetValueForOption(adsRecordStopTriggerOpt);
+                var maxTime = ctx.ParseResult.GetValueForOption(adsRecordMaxTimeOpt);
+
+                var varArray = variables.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                string outputPath = output ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ads_record_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+                var result = AdsRecordCommand.Execute(amsNetId, port, varArray, sampleTime, duration, outputPath, startTrigger, stopTrigger, maxTime);
+                Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            });
+
+            rootCommand.AddCommand(adsRecordCommand);
+
+#if SCOPE_AVAILABLE
+            // === SCOPE-CREATE COMMAND ===
+            var scopeCreateCommand = new Command("scope-create", "Create a TwinCAT Scope configuration (.tcscopex) for recording PLC variables");
+            var scopeCreateAmsOpt = new Option<string>(
+                aliases: new[] { "--amsnetid", "-a" },
+                description: "AMS Net ID of the target PLC");
+            scopeCreateAmsOpt.IsRequired = true;
+            var scopeCreatePortOpt = new Option<int>(
+                aliases: new[] { "--port", "-p" },
+                description: "ADS port number (default: 851)",
+                getDefaultValue: () => 851);
+            var scopeCreateVarsOpt = new Option<string>(
+                aliases: new[] { "--variables" },
+                description: "Comma-separated list of PLC variable paths to record");
+            scopeCreateVarsOpt.IsRequired = true;
+            var scopeCreateSampleOpt = new Option<int>(
+                aliases: new[] { "--sampletime" },
+                description: "Sample interval in milliseconds (default: 10)",
+                getDefaultValue: () => 10);
+            var scopeCreateRecordOpt = new Option<double?>(
+                aliases: new[] { "--recordtime" },
+                description: "Optional max recording duration in seconds");
+            var scopeCreateOutputOpt = new Option<string>(
+                aliases: new[] { "--output", "-o" },
+                description: "Path to save the .tcscopex file");
+            var scopeCreateChartOpt = new Option<string>(
+                aliases: new[] { "--chartname" },
+                description: "Display name for the chart (default: 'MCP Trace')",
+                getDefaultValue: () => "MCP Trace");
+
+            scopeCreateCommand.AddOption(scopeCreateAmsOpt);
+            scopeCreateCommand.AddOption(scopeCreatePortOpt);
+            scopeCreateCommand.AddOption(scopeCreateVarsOpt);
+            scopeCreateCommand.AddOption(scopeCreateSampleOpt);
+            scopeCreateCommand.AddOption(scopeCreateRecordOpt);
+            scopeCreateCommand.AddOption(scopeCreateOutputOpt);
+            scopeCreateCommand.AddOption(scopeCreateChartOpt);
+
+            scopeCreateCommand.SetHandler((string amsNetId, int port, string variables, int sampleTime, double? recordTime, string output, string chartName) =>
+            {
+                var varArray = variables.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                ScopeCreateCommand.Execute(amsNetId, port, varArray, sampleTime, recordTime, output, chartName);
+            }, scopeCreateAmsOpt, scopeCreatePortOpt, scopeCreateVarsOpt, scopeCreateSampleOpt, scopeCreateRecordOpt, scopeCreateOutputOpt, scopeCreateChartOpt);
+
+            rootCommand.AddCommand(scopeCreateCommand);
+
+            // === SCOPE-SESSION COMMAND ===
+            var scopeSessionCommand = new Command("scope-session", "Start a persistent scope session (reads JSON commands from stdin)");
+            scopeSessionCommand.SetHandler(() =>
+            {
+                ScopeSessionCommand.Execute();
+            });
+            rootCommand.AddCommand(scopeSessionCommand);
+
+            // === SCOPE-EXPORT COMMAND ===
+            var scopeExportCommand = new Command("scope-export", "Export .svdx/.tcscopex data to CSV");
+            var scopeExportInputOpt = new Option<string>(
+                aliases: new[] { "--input", "-i" },
+                description: "Path to the .svdx or .tcscopex file to export");
+            scopeExportInputOpt.IsRequired = true;
+            var scopeExportOutputOpt = new Option<string>(
+                aliases: new[] { "--output", "-o" },
+                description: "Path for the output file");
+            var scopeExportFormatOpt = new Option<string>(
+                aliases: new[] { "--format", "-f" },
+                description: "Export format (csv, tdms)",
+                getDefaultValue: () => "csv");
+
+            scopeExportCommand.AddOption(scopeExportInputOpt);
+            scopeExportCommand.AddOption(scopeExportOutputOpt);
+            scopeExportCommand.AddOption(scopeExportFormatOpt);
+
+            scopeExportCommand.SetHandler((string input, string output, string format) =>
+            {
+                ScopeExportCommand.Execute(input, output, format);
+            }, scopeExportInputOpt, scopeExportOutputOpt, scopeExportFormatOpt);
+
+            rootCommand.AddCommand(scopeExportCommand);
+#else
+            var scopeUnavailableMessage =
+                "TwinCAT Scope tools are not available in this build. " +
+                "Rebuild TcAutomation with /p:EnableScope=true and install TwinCAT Scope components.";
+            Action writeScopeUnavailable = () =>
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    state = "Unavailable",
+                    errorMessage = scopeUnavailableMessage
+                }, JsonOptions));
+            };
+
+            var scopeCreateCommand = new Command("scope-create", "TwinCAT Scope tools are unavailable in this build");
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--amsnetid", "-a" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<int?>(new[] { "--port", "-p" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--variables" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<int?>(new[] { "--sampletime" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<double?>(new[] { "--recordtime" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--output", "-o" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--chartname" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.SetHandler(writeScopeUnavailable);
+            rootCommand.AddCommand(scopeCreateCommand);
+
+            var scopeSessionCommand = new Command("scope-session", "TwinCAT Scope tools are unavailable in this build");
+            scopeSessionCommand.SetHandler(writeScopeUnavailable);
+            rootCommand.AddCommand(scopeSessionCommand);
+
+            var scopeExportCommand = new Command("scope-export", "TwinCAT Scope tools are unavailable in this build");
+            scopeExportCommand.AddOption(new Option<string?>(new[] { "--input", "-i" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeExportCommand.AddOption(new Option<string?>(new[] { "--output", "-o" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeExportCommand.AddOption(new Option<string?>(new[] { "--format", "-f" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeExportCommand.SetHandler(writeScopeUnavailable);
+            rootCommand.AddCommand(scopeExportCommand);
+#endif
 
             // === BATCH COMMAND ===
             // Runs an ordered list of steps against a single shared Visual Studio

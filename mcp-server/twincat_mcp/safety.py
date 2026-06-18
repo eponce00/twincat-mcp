@@ -42,6 +42,8 @@ DANGEROUS_TOOLS = [
     "twincat_deploy",
     "twincat_set_state",
     "twincat_write_var",
+    "twincat_write_var_list",
+    "twincat_scope_start_record",
 ]
 
 # Tools that additionally require `confirm: "CONFIRM"` on every call.
@@ -61,6 +63,7 @@ DANGEROUS_BATCH_COMMANDS = {
     "restart",
     "set-state",
     "write-var",
+    "write-var-list",
 }
 
 # Low-level batch step commands that also require an explicit

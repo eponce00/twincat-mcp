@@ -112,7 +112,7 @@ Arm dangerous operations to deploy the hotfix.
 Armed mode auto-expires after 5 minutes (override with `TWINCAT_ARMED_TTL` seconds). You can also disarm manually by calling `twincat_arm_dangerous_operations` with `disarm: true`.
 
 Tools that require armed mode:
-`twincat_activate`, `twincat_restart`, `twincat_deploy`, `twincat_set_state`, `twincat_write_var`, and `twincat_run_tcunit` against a remote target.
+`twincat_activate`, `twincat_restart`, `twincat_deploy`, `twincat_set_state`, `twincat_write_var`, `twincat_write_var_list`, `twincat_scope_start_record`, and `twincat_run_tcunit` against a remote target.
 
 The three most destructive tools (`twincat_activate`, `twincat_restart`, `twincat_deploy`) also require `confirm: "CONFIRM"` as an explicit second step.
 
@@ -204,6 +204,14 @@ Example: full "set target, build, activate, restart" flow in one shell open:
 | `twincat_kill_stale`               | Surgical cleanup: kill our own shell host + DTE and reap session-file orphans. Only touches PIDs recorded in our session files.       |
 | `twincat_host_status`              | Show persistent shell host state (PID, DTE PID, loaded solution, uptime). Read-only.                                                  |
 | `twincat_set_default_target`       | Change (or clear) the persistent default AMS Net ID. Survives conversations and server restarts. See "Default target PLC" above.      |
+| `twincat_read_var_list`            | Read multiple PLC variables in one batch ADS call. Much faster than looping `twincat_read_var`.                                       |
+| `twincat_write_var_list`           | Write multiple PLC variables in one batch ADS call. Armed.                                                                            |
+| `twincat_ads_record`               | Record PLC variables via ADS notifications to CSV. **No TE13xx license needed.** Preferred for data capture.                         |
+| `twincat_scope_create_config`      | Create a `.tcscopex` Scope config file (requires TE13xx installed).                                                                   |
+| `twincat_scope_start_record`       | Start a Scope Server recording. Requires TE13xx + armed mode.                                                                         |
+| `twincat_scope_stop_record`        | Stop recording and export CSV. Requires TE13xx.                                                                                       |
+| `twincat_scope_get_status`         | Get Scope Server recording status. Requires TE13xx.                                                                                   |
+| `twincat_scope_export`             | Export `.svdx` scope data to CSV via TC3ScopeExportTool.                                                                              |
 
 
 ### `twincat_run_tcunit` parameters

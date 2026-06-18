@@ -37,7 +37,8 @@ namespace TcAutomation.Core
         public static readonly HashSet<string> AdsCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "get-state", "set-state", "read-var", "write-var",
-            "ping-target", "list-symbols", "read-plc-log"
+            "ping-target", "list-symbols", "read-plc-log",
+            "read-var-list", "write-var-list"
         };
 
         public static bool IsShellCommand(string command)
@@ -280,6 +281,25 @@ namespace TcAutomation.Core
                         int max = GetInt(argsElement, "max", hasArgs) ?? 200;
                         return ExecuteAdsStep(() => ReadPlcLogCommand.Execute(
                             amsNetId, waitSeconds, contains, max));
+                    }
+                    case "read-var-list":
+                    {
+                        string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
+                            ?? throw new ArgumentException("read-var-list requires args.amsNetId");
+                        int port = GetInt(argsElement, "port", hasArgs) ?? 851;
+                        string symbolsCsv = GetString(argsElement, "symbols", hasArgs)
+                            ?? throw new ArgumentException("read-var-list requires args.symbols");
+                        string[] symbols = symbolsCsv.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                        return ExecuteAdsStep(() => ReadVariableListCommand.Execute(amsNetId, port, symbols));
+                    }
+                    case "write-var-list":
+                    {
+                        string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
+                            ?? throw new ArgumentException("write-var-list requires args.amsNetId");
+                        int port = GetInt(argsElement, "port", hasArgs) ?? 851;
+                        string variablesJson = GetString(argsElement, "variables", hasArgs)
+                            ?? throw new ArgumentException("write-var-list requires args.variables");
+                        return ExecuteAdsStep(() => WriteVariableListCommand.Execute(amsNetId, port, variablesJson));
                     }
                 }
             }
