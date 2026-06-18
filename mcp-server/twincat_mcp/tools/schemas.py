@@ -59,17 +59,19 @@ def get_tool_schemas() -> list[Tool]:
                 "(e.g. set-target + set-boot-project + build + activate + restart). "
                 "Each step is a {id, command, args} object. Steps run sequentially and, "
                 "by default, the batch stops at the first failing step. Step results are "
-                "returned in order. ADS-only steps (get-state/set-state/read-var/write-var) "
+                "returned in order. ADS-only steps (get-state/set-state/read-var/write-var/"
+                "read-var-list/write-var-list) "
                 "run directly without touching the shell.\n\n"
                 "Supported step commands:\n"
                 "  SHELL-based: build, info, clean, set-target, activate, restart, "
                 "list-plcs, set-boot-project, disable-io, set-variant, list-tasks, "
                 "configure-task, configure-rt, check-all-objects, static-analysis, "
                 "generate-library, get-error-list\n"
-                "  ADS-only:    get-state, set-state, read-var, write-var\n\n"
+                "  ADS-only:    get-state, set-state, read-var, write-var, "
+                "read-var-list, write-var-list\n\n"
                 "NOT supported in batch: deploy, run-tcunit (use their dedicated tools).\n\n"
                 "Safety: If any step is a dangerous command (activate, restart, set-state, "
-                "write-var), armed mode is required. If any step is activate or restart, "
+                "write-var, write-var-list), armed mode is required. If any step is activate or restart, "
                 "confirm='CONFIRM' is also required at the batch level."
             ),
             inputSchema={
@@ -111,7 +113,8 @@ def get_tool_schemas() -> list[Tool]:
                                         "list-plcs, set-boot-project, disable-io, set-variant, "
                                         "list-tasks, configure-task, configure-rt, "
                                         "check-all-objects, static-analysis, generate-library, "
-                                        "get-error-list, get-state, set-state, read-var, write-var"
+                                        "get-error-list, get-state, set-state, read-var, write-var, "
+                                        "read-var-list, write-var-list"
                                     )
                                 },
                                 "args": {
@@ -1353,7 +1356,7 @@ def get_tool_schemas() -> list[Tool]:
                 "Create a TwinCAT Scope configuration (.tcscopex) for recording PLC variables. "
                 "Specify the target PLC, variables to record, and sample rate. "
                 "Returns a config file path. For actual recording, prefer twincat_ads_record (no license needed). "
-                "Requires TE13xx Scope View installed on this machine."
+                "Requires TE13xx Scope View installed on this machine and TcAutomation built with EnableScope=true."
             ),
             inputSchema={
                 "type": "object",
@@ -1403,6 +1406,7 @@ def get_tool_schemas() -> list[Tool]:
             description=(
                 "Start a TwinCAT Scope Server recording using a .tcscopex configuration. "
                 "REQUIRES TE13xx Scope Server license — will fail without it. "
+                "Requires TcAutomation built with EnableScope=true. "
                 "Prefer twincat_ads_record instead (no license needed). "
                 "This is a DANGEROUS operation — requires armed mode."
             ),
@@ -1426,7 +1430,7 @@ def get_tool_schemas() -> list[Tool]:
             name="twincat_scope_stop_record",
             description=(
                 "Stop an active TwinCAT Scope Server recording and export the data. "
-                "Requires TE13xx Scope Server license. "
+                "Requires TE13xx Scope Server license and TcAutomation built with EnableScope=true. "
                 "Returns the path to a CSV file."
             ),
             inputSchema={
@@ -1455,7 +1459,7 @@ def get_tool_schemas() -> list[Tool]:
             name="twincat_scope_get_status",
             description=(
                 "Get the current TwinCAT Scope Server recording status. "
-                "Requires TE13xx Scope Server license. "
+                "Requires TE13xx Scope Server license and TcAutomation built with EnableScope=true. "
                 "Returns whether a recording is active, elapsed time, and sample count."
             ),
             inputSchema={
@@ -1473,7 +1477,8 @@ def get_tool_schemas() -> list[Tool]:
             name="twincat_scope_export",
             description=(
                 "Export a TwinCAT Scope data file (.svdx) to CSV or other readable format. "
-                "Uses TC3ScopeExportTool.exe. Useful for converting traces recorded outside the MCP."
+                "Uses TC3ScopeExportTool.exe. Requires TcAutomation built with EnableScope=true. "
+                "Useful for converting traces recorded outside the MCP."
             ),
             inputSchema={
                 "type": "object",

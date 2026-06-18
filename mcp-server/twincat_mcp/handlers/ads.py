@@ -423,7 +423,7 @@ async def handle_ads_record(arguments: dict, tool_start_time: float) -> list[Tex
 
     if result.get("success"):
         csv_path = result.get("outputPath", output_path)
-        sample_count = result.get("sampleCount", "?")
+        sample_count = result.get("samplesCollected", result.get("sampleCount", "?"))
         actual_duration = result.get("durationSeconds", duration_sec)
         output = f"✅ ADS Recording Complete\n\n"
         output += f"📡 Target: {ams_net_id}:{port}\n"

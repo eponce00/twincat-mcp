@@ -859,6 +859,41 @@ namespace TcAutomation
             }, scopeExportInputOpt, scopeExportOutputOpt, scopeExportFormatOpt);
 
             rootCommand.AddCommand(scopeExportCommand);
+#else
+            var scopeUnavailableMessage =
+                "TwinCAT Scope tools are not available in this build. " +
+                "Rebuild TcAutomation with /p:EnableScope=true and install TwinCAT Scope components.";
+            Action writeScopeUnavailable = () =>
+            {
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    state = "Unavailable",
+                    errorMessage = scopeUnavailableMessage
+                }, JsonOptions));
+            };
+
+            var scopeCreateCommand = new Command("scope-create", "TwinCAT Scope tools are unavailable in this build");
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--amsnetid", "-a" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<int?>(new[] { "--port", "-p" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--variables" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<int?>(new[] { "--sampletime" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<double?>(new[] { "--recordtime" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--output", "-o" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.AddOption(new Option<string?>(new[] { "--chartname" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeCreateCommand.SetHandler(writeScopeUnavailable);
+            rootCommand.AddCommand(scopeCreateCommand);
+
+            var scopeSessionCommand = new Command("scope-session", "TwinCAT Scope tools are unavailable in this build");
+            scopeSessionCommand.SetHandler(writeScopeUnavailable);
+            rootCommand.AddCommand(scopeSessionCommand);
+
+            var scopeExportCommand = new Command("scope-export", "TwinCAT Scope tools are unavailable in this build");
+            scopeExportCommand.AddOption(new Option<string?>(new[] { "--input", "-i" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeExportCommand.AddOption(new Option<string?>(new[] { "--output", "-o" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeExportCommand.AddOption(new Option<string?>(new[] { "--format", "-f" }, "Ignored; Scope tools are unavailable in this build"));
+            scopeExportCommand.SetHandler(writeScopeUnavailable);
+            rootCommand.AddCommand(scopeExportCommand);
 #endif
 
             // === BATCH COMMAND ===

@@ -63,6 +63,7 @@ DANGEROUS_BATCH_COMMANDS = {
     "restart",
     "set-state",
     "write-var",
+    "write-var-list",
 }
 
 # Low-level batch step commands that also require an explicit

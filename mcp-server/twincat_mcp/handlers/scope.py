@@ -35,7 +35,7 @@ class ScopeSession:
 
     def __init__(self):
         self.process: subprocess.Popen | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _start(self):
         exe_path = find_tc_automation_exe()
@@ -191,11 +191,11 @@ async def handle_scope_stop_record(arguments: dict, tool_start_time: float) -> l
             timeout_seconds=60,
         )
         if resp.get("success"):
-            csv_path = resp.get("outputPath", output_path)
+            csv_path = resp.get("dataPath") or resp.get("outputPath") or output_path
             output = f"⏹ Scope Recording Stopped\n\n"
             output += f"💾 Data saved to: `{csv_path}`\n"
-            output += f"📊 Duration: {resp.get('durationSeconds', '?')}s\n"
-            output += f"📈 Samples: {resp.get('sampleCount', '?')}"
+            output += f"📊 Duration: {resp.get('elapsedSeconds', '?')}s\n"
+            output += f"📈 Samples: {resp.get('samplesCollected', '?')}"
         else:
             error = resp.get("errorMessage", "Unknown error")
             output = f"❌ Failed to stop scope recording: {error}"
@@ -215,13 +215,13 @@ async def handle_scope_get_status(arguments: dict, tool_start_time: float) -> li
     try:
         resp = _scope_session.send_command({"command": "status"})
         if resp.get("success"):
-            is_recording = resp.get("isRecording", False)
+            state = resp.get("state", "Unknown")
+            is_recording = state.lower() == "record"
             emoji = "🔴" if is_recording else "⚪"
             output = f"{emoji} Scope Status\n\n"
-            output += f"Recording: {'Active' if is_recording else 'Stopped'}\n"
-            if is_recording:
-                output += f"⏱ Elapsed: {resp.get('elapsedSeconds', '?')}s\n"
-                output += f"📈 Samples: {resp.get('sampleCount', '?')}"
+            output += f"State: {state}\n"
+            output += f"⏱ Elapsed: {resp.get('elapsedSeconds', '?')}s\n"
+            output += f"📊 Channels: {resp.get('channelCount', '?')}"
         else:
             output = f"❌ {resp.get('errorMessage', 'Unknown error')}"
     except Exception as e:
