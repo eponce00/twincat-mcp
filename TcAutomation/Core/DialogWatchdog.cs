@@ -38,6 +38,9 @@ namespace TcAutomation.Core
     ///     -> click "Reload All" or "Ignore"
     /// - "Target system reports a fatal error" (AdsError popup from activation)
     ///     -> click "OK" (the failure is already returned via the ADS exception)
+    /// - "Device '<name>' needs sync master"
+    ///     -> click "OK" (the warning is also surfaced by TwinCAT; the modal
+    ///        otherwise blocks hidden shell automation)
     /// </summary>
     public static class DialogWatchdog
     {
@@ -242,6 +245,25 @@ namespace TcAutomation.Core
                     {
                         Console.Error.WriteLine(
                             "[DialogWatchdog] ... no known Reload/Yes button found; leaving dialog");
+                    }
+                    return true;
+                }
+
+                // TwinCAT can show this non-fatal configuration warning while
+                // opening/building a project with an EtherCAT device that has
+                // no linked task variable. In a visible IDE the user clicks OK;
+                // in headless automation it blocks the STA thread and later COM
+                // calls look like RPC_E_CALL_REJECTED / "callee rejected".
+                if (HasChildText(hWnd, "needs sync master")
+                    || HasChildText(hWnd, "at least one variable linked to a task variable"))
+                {
+                    Console.Error.WriteLine(
+                        "[DialogWatchdog] Auto-dismissing TwinCAT sync-master warning " +
+                        $"(pid={winPid}, title='{t}')");
+                    if (!ClickButton(hWnd, "OK"))
+                    {
+                        Console.Error.WriteLine(
+                            "[DialogWatchdog] ... no OK button found; leaving dialog");
                     }
                     return true;
                 }

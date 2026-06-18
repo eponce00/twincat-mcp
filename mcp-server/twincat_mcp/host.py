@@ -58,16 +58,29 @@ class _CIDict(dict):
     paths with this lets every existing formatter keep working unchanged.
     """
 
-    def get(self, key, default=None):
-        if key in self:
-            return super().__getitem__(key)
+    def _resolve_key(self, key):
+        if dict.__contains__(self, key):
+            return key
         try:
             low = {k.lower(): k for k in self.keys() if isinstance(k, str)}
             real = low.get(key.lower()) if isinstance(key, str) else None
         except Exception:
             real = None
+        return real
+
+    def __contains__(self, key):
+        return self._resolve_key(key) is not None
+
+    def __getitem__(self, key):
+        real = self._resolve_key(key)
         if real is not None:
-            return super().__getitem__(real)
+            return dict.__getitem__(self, real)
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        real = self._resolve_key(key)
+        if real is not None:
+            return dict.__getitem__(self, real)
         return default
 
 

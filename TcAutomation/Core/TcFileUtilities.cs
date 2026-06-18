@@ -10,10 +10,14 @@ namespace TcAutomation.Core
     public static class TcFileUtilities
     {
         /// <summary>
-        /// Find the TwinCAT project file (.tsproj) referenced in a Visual Studio solution.
+        /// Find the TwinCAT project file (.tsproj or .tspproj) referenced in a Visual Studio solution.
+        /// Supports both project GUIDs:
+        ///   B1E792BE — classic TwinCAT XAE project (.tsproj, full hardware+PLC)
+        ///   DFBE7525 — TwinCAT XAE Shell / library project (.tspproj, PLC-only)
+        /// Both use identical TcSmProject XML internally.
         /// </summary>
         /// <param name="solutionFilePath">Path to the .sln file</param>
-        /// <returns>Full path to .tsproj file, or empty string if not found</returns>
+        /// <returns>Full path to .tsproj/.tspproj file, or empty string if not found</returns>
         public static string FindTwinCATProjectFile(string solutionFilePath)
         {
             if (!File.Exists(solutionFilePath))
@@ -21,9 +25,11 @@ namespace TcAutomation.Core
 
             string? tcProjectFile = null;
 
-            // TwinCAT project GUID: {B1E792BE-AA5F-4E3C-8C82-674BF9C0715B}
-            var pattern = @"Project\(""\{B1E792BE-AA5F-4E3C-8C82-674BF9C0715B\}""\)\s*=\s*""[^""]*"",\s*""(?<tsproj>[^""]+\.tsproj)""";
-            
+            // Match either TwinCAT project GUID:
+            //   B1E792BE — classic XAE project (.tsproj)
+            //   DFBE7525 — XAE Shell / library project (.tspproj)
+            var pattern = @"Project\(""\{(?:B1E792BE-AA5F-4E3C-8C82-674BF9C0715B|DFBE7525-6864-4E62-8B2E-D530D69D9D96)\}""\)\s*=\s*""[^""]*"",\s*""(?<tsproj>[^""]+\.tspp?roj)""";
+
             foreach (var line in File.ReadLines(solutionFilePath))
             {
                 var match = Regex.Match(line, pattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
