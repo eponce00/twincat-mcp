@@ -4,13 +4,28 @@
 
 <h1 align="center">TwinCAT MCP Server</h1>
 
-Build, deploy, and poke at TwinCAT PLCs from any MCP-aware AI client.
+<p align="center">Build, deploy, test, and inspect TwinCAT PLCs through MCP.</p>
 
----
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"/></a>
+  <img src="https://img.shields.io/badge/platform-Windows-0078d4" alt="Platform: Windows"/>
+  <img src="https://img.shields.io/badge/protocol-MCP-555555" alt="Protocol: MCP"/>
+</p>
+
+<p align="center">
+  <a href="#install">Installation</a> · <a href="#tools">Tools</a> · <a href="#safety">Safety</a> · <a href="#troubleshooting">Troubleshooting</a> · <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
 ## What it does
 
-An MCP server that wraps the TwinCAT Automation Interface and ADS so an AI assistant (VS Code + Copilot, Cursor, Claude Desktop, etc.) can do your PLC work for you: build a solution, read compile errors, flip I/O, deploy to a target, run TcUnit, read and write symbols, and so on.
+An MCP server that exposes the TwinCAT Automation Interface and ADS to compatible AI clients. Build solutions, inspect compiler errors, deploy configurations, run TcUnit tests, and read or write PLC symbols from your development workflow.
+
+| Workflow | Capabilities |
+| --- | --- |
+| Build and inspect | Compile solutions, check objects, inspect errors, export libraries. |
+| Deploy and configure | Select targets, activate configurations, manage runtime and task settings. |
+| Read and record | Read symbols, batch ADS operations, capture variable data to CSV. |
+| Test and automate | Run TcUnit, batch commands, reuse a persistent TwinCAT shell host. |
 
 Unofficial. Not affiliated with Beckhoff.
 
@@ -30,7 +45,7 @@ Unofficial. Not affiliated with Beckhoff.
 ## Install
 
 ```powershell
-git clone https://github.com/eponce92/twincat-mcp.git
+git clone https://github.com/eponce00/twincat-mcp.git
 cd twincat-mcp
 .\setup.bat
 ```
@@ -103,11 +118,11 @@ Point it at your test rig by setting `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP cli
 
 Tell the agent something like "always target the conveyor rig from now on" and it will call `twincat_set_default_target` with the new AMS Net ID. The value is written to `%LOCALAPPDATA%\twincat-mcp\config.json` and survives into future conversations — a fresh chat inherits the same default without you re-explaining the setup. To go back, ask the agent to reset it (it'll call the tool with `reset: true`, which removes the persisted value and falls back to your env var / the hardcoded default).
 
-The effective default is baked into every tool's schema description, so the agent sees it on `list_tools` and stops pestering you about which PLC to target. Agents can still override per-call by passing `amsNetId` explicitly. Safety gates resolve against the effective target too — if your default is remote, `twincat_run_tcunit` still requires armed mode.
+The effective default appears in each tool's schema description. Agents can override it per call by passing `amsNetId` explicitly. Safety gates use the effective target too: if the default is remote, `twincat_run_tcunit` requires armed mode.
 
 ## Safety
 
-The server starts in SAFE mode. Anything that can touch a running machine is blocked until you arm it:
+The server starts in SAFE mode. The operations listed below require explicit arming:
 
 ```
 Arm dangerous operations to deploy the hotfix.
@@ -120,7 +135,12 @@ Tools that require armed mode:
 
 The three most destructive tools (`twincat_activate`, `twincat_restart`, `twincat_deploy`) also require `confirm: "CONFIRM"` as an explicit second step.
 
-## Persistent shell host (new)
+## Persistent shell host
+
+Shell-based tools reuse a single TwinCAT shell for the MCP session, avoiding repeated startup and solution loading. ADS-only tools communicate directly with the runtime.
+
+<details>
+<summary>Host lifecycle, cleanup, and configuration</summary>
 
 Every TwinCAT call that needs the Automation Interface pays a 25s–90s startup cost because TcXaeShell has to spin up, load the solution, and talk to COM. Historically that was paid **per call**.
 
@@ -140,6 +160,8 @@ Robustness is layered so phantom TcXaeShell processes can't accumulate:
 5. **`twincat_host_status`** – read-only tool that reports whether the host is running, its PID, its DTE PID, the loaded solution, and uptime.
 
 Disable the host (fall back to per-call CLI) by setting `TWINCAT_DISABLE_HOST=1` in the server's environment.
+
+</details>
 
 ## Batching operations
 
@@ -246,12 +268,20 @@ Run TcUnit tests on my project
 
 **Server does not start.** In VS Code: `Ctrl+Shift+P` > `MCP: List Servers` > Start and Trust. In Cursor: Settings > MCP & Integrations > enable the server.
 
-`**MSB4803: ResolveComReference not supported`.** You built with `dotnet build` instead of MSBuild. Run `.\setup.bat` or `.\scripts\build.ps1`.
+**`MSB4803: ResolveComReference not supported`.** You built with `dotnet build` instead of MSBuild. Run `.\setup.bat` or `.\scripts\build.ps1`.
 
 **TwinCAT or Visual Studio not found.** Force the version in the prompt: `Build my project with TwinCAT version 3.1.4026.17`.
 
 **ADS connection failed.** Check the AMS Net ID, confirm the route exists in the TwinCAT router, and that port 48898 is open through the firewall.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, and issue-reporting guidance. Include the tool name, sanitized arguments, and relevant logs when reporting an issue.
+
+## Related project
+
+[TcForge](https://github.com/eponce00/TcForge) provides reusable TwinCAT 3 function blocks for sequencing, I/O, pneumatics, and alarms. The MCP server also works with other TwinCAT projects.
+
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [LICENSE](LICENSE).
