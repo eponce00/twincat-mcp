@@ -1,4 +1,8 @@
-# TwinCAT MCP Server
+<p align="center">
+  <img src="img/banner.png" alt="TwinCAT MCP Server" width="800"/>
+</p>
+
+<h1 align="center">TwinCAT MCP Server</h1>
 
 Build, deploy, and poke at TwinCAT PLCs from any MCP-aware AI client.
 
