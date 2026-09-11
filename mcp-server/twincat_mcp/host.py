@@ -1,34 +1,12 @@
-"""
-Persistent shell host subsystem.
+"""Owned persistent TwinCAT worker with serialized COM dispatch.
 
-Talks to a long-lived `TcAutomation.exe host` subprocess that owns ONE
-TcXaeShell / Visual Studio DTE for the MCP server's entire lifetime.
-Per-call shell startup (~25-90s) is paid once per server session instead
-of per tool call. Combined with the C# parent-death watchdog +
-session-file janitor, phantom TcXaeShell processes are impossible even
-across hard crashes.
-
-The host is lazily spawned on the first shell-needing tool call and
-torn down via atexit on a clean Python exit (plus defensively by the
-host's own parent-death watchdog on crash).
-
-Exports:
-  - HOST_DISABLED          environment flag (TWINCAT_DISABLE_HOST=1)
-  - HostError              exception type for host failures
-  - ShellHost              the subprocess-management class
-  - _CIDict, _ci_wrap      case-insensitive dict helpers
-  - get_shell_host()       lazy singleton accessor
-  - get_shell_host_if_alive()  non-starting accessor used by status/kill tools
-  - drop_shell_host()      clear the singleton without starting a new one
-  - shutdown_shell_host()  graceful shutdown (idempotent, used by atexit)
+Engine contexts own its lifetime; native parent-death cleanup covers crashes.
 """
 
-import atexit
 import json
 import os
 import queue
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -39,7 +17,7 @@ from .cli import find_tc_automation_exe
 # Environment knobs
 # -----------------------------------------------------------------------------
 
-# Set TWINCAT_DISABLE_HOST=1 to force every call through the legacy per-call
+# Set TWINCAT_DISABLE_HOST=1 to disable automation dispatch. No fallback or replay.
 # CLI path (useful for isolating host-related issues).
 HOST_DISABLED = os.environ.get("TWINCAT_DISABLE_HOST", "").strip() in ("1", "true", "yes")
 
@@ -47,6 +25,7 @@ HOST_DISABLED = os.environ.get("TWINCAT_DISABLE_HOST", "").strip() in ("1", "tru
 # -----------------------------------------------------------------------------
 # Case-insensitive dict helpers
 # -----------------------------------------------------------------------------
+
 
 class _CIDict(dict):
     """
@@ -97,6 +76,7 @@ def _ci_wrap(obj):
 # Exception
 # -----------------------------------------------------------------------------
 
+
 class HostError(Exception):
     """Raised when the persistent shell host cannot be used (start failed,
     crashed mid-call, or returned malformed data). Callers should fall back
@@ -106,6 +86,7 @@ class HostError(Exception):
 # -----------------------------------------------------------------------------
 # ShellHost
 # -----------------------------------------------------------------------------
+
 
 def _paths_equal(a: str, b: str) -> bool:
     try:
@@ -128,7 +109,7 @@ class ShellHost:
     Lifecycle:
       - First `ensure_solution()` / `call()` lazily starts the subprocess.
       - `shutdown()` sends the graceful shutdown request and waits.
-      - atexit + signal handlers trigger shutdown on a clean exit.
+      - The application lifespan triggers shutdown on a clean exit.
       - On a hard crash, the host's own parent-death watchdog takes over.
     """
 
@@ -138,7 +119,7 @@ class ShellHost:
     def __init__(self, exe_path: Path):
         self._exe_path = exe_path
         self._proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._stdout_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._responses: "queue.Queue[dict]" = queue.Queue()
@@ -161,8 +142,9 @@ class ShellHost:
             self._ensure_started()
         return self._call_raw("status", None, timeout=10)
 
-    def ensure_solution(self, solution_path: str, tc_version: str | None,
-                        timeout: float = 120.0) -> dict:
+    def ensure_solution(
+        self, solution_path: str, tc_version: str | None, timeout: float = 120.0
+    ) -> dict:
         """
         Ensure the host has the given solution loaded. Lazily starts the
         host and/or reloads a different solution.
@@ -191,62 +173,90 @@ class ShellHost:
             self._current_tc_version = tc_version
             return res
 
-    def execute_step(self, command: str, step_args: dict,
-                     solution_path: str | None, tc_version: str | None,
-                     timeout: float = 600.0) -> tuple[dict, list[str]]:
+    def execute_step(
+        self,
+        command: str,
+        step_args: dict,
+        solution_path: str | None,
+        tc_version: str | None,
+        timeout: float = 600.0,
+    ) -> tuple[dict, list[str]]:
         """
         Run a single StepDispatcher command in the host's DTE.
         Returns (inner_result_dict, progress_messages).
         """
-        if HOST_DISABLED:
-            raise HostError("host disabled via TWINCAT_DISABLE_HOST")
-
-        if command in {"online-change", "edit-plc-source"} and (
-            not self.is_alive() or not solution_path or not self._current_solution
-            or not _paths_equal(self._current_solution, solution_path)
-            or (tc_version or None) != (self._current_tc_version or None)
-        ):
-            return {"success": False, "dispatched": False, "runtimeVerified": False,
-                    "errorMessage": "This operation requires the existing matching host session; no session was opened or replaced"}, []
-
-        # Only shell commands need a loaded solution; ADS commands don't.
-        shell_commands = {
-            "build", "info", "clean", "set-target", "activate", "restart", "online-change",
-            "matching-login", "read-plc-source", "edit-plc-source",
-            "list-plcs", "set-boot-project", "disable-io", "set-variant",
-            "list-tasks", "configure-task", "configure-rt",
-            "check-all-objects", "static-analysis", "generate-library",
-            "get-error-list",
-            "deploy", "run-tcunit",
-        }
-        if command in shell_commands:
-            if not solution_path:
-                raise HostError(f"{command} requires a solution path")
-            self.ensure_solution(solution_path, tc_version, timeout=120.0)
-
         with self._lock:
-            if not self.is_alive():
-                self._start_locked()
+            if HOST_DISABLED:
+                raise HostError("host disabled via TWINCAT_DISABLE_HOST")
 
-            # Drain per-call progress buffer so we only attribute new lines
-            # to THIS call. Progress lines that arrived between calls get
-            # discarded (they would belong to the previous one).
-            with self._progress_lock:
-                self._progress.clear()
+            if command in {"online-change", "edit-plc-source"} and (
+                not self.is_alive()
+                or not solution_path
+                or not self._current_solution
+                or not _paths_equal(self._current_solution, solution_path)
+                or (tc_version or None) != (self._current_tc_version or None)
+            ):
+                return {
+                    "success": False,
+                    "dispatched": False,
+                    "runtimeVerified": False,
+                    "errorMessage": "This operation requires the existing matching host session; no session was opened or replaced",
+                }, []
 
-            params = {"command": command, "args": step_args or {}}
-            resp = self._call_raw_locked("execute-step", params, timeout=timeout)
+            # Only shell commands need a loaded solution; ADS commands don't.
+            shell_commands = {
+                "build",
+                "info",
+                "clean",
+                "set-target",
+                "activate",
+                "restart",
+                "online-change",
+                "matching-login",
+                "read-plc-source",
+                "edit-plc-source",
+                "list-plcs",
+                "set-boot-project",
+                "disable-io",
+                "set-variant",
+                "list-tasks",
+                "configure-task",
+                "configure-rt",
+                "check-all-objects",
+                "static-analysis",
+                "generate-library",
+                "get-error-list",
+                "deploy",
+                "run-tcunit",
+            }
+            if command in shell_commands:
+                if not solution_path:
+                    raise HostError(f"{command} requires a solution path")
+                self.ensure_solution(solution_path, tc_version, timeout=120.0)
 
-            # HandleExecuteStep wraps: {command, result: <inner>}
-            # We want the inner command result.
-            inner = resp.get("result") if isinstance(resp, dict) else None
-            if inner is None:
-                inner = resp
+            with self._lock:
+                if not self.is_alive():
+                    self._start_locked()
 
-            with self._progress_lock:
-                progress = list(self._progress)
+                # Drain per-call progress buffer so we only attribute new lines
+                # to THIS call. Progress lines that arrived between calls get
+                # discarded (they would belong to the previous one).
+                with self._progress_lock:
+                    self._progress.clear()
 
-            return inner, progress
+                params = {"command": command, "args": step_args or {}}
+                resp = self._call_raw_locked("execute-step", params, timeout=timeout)
+
+                # HandleExecuteStep wraps: {command, result: <inner>}
+                # We want the inner command result.
+                inner = resp.get("result") if isinstance(resp, dict) else None
+                if inner is None:
+                    inner = resp
+
+                with self._progress_lock:
+                    progress = list(self._progress)
+
+                return inner, progress
 
     def shutdown(self, timeout: float = 8.0):
         """Politely ask the host to shut down; force-kill if it won't."""
@@ -296,14 +306,16 @@ class ShellHost:
             )
         except Exception as e:
             self._proc = None
-            raise HostError(f"failed to spawn host: {e}")
+            raise HostError(f"failed to spawn host: {e}") from e
 
         # Kick off stream drainers before any other interaction; otherwise
         # the pipe buffers can fill and deadlock on long runs.
         self._stdout_thread = threading.Thread(
-            target=self._stdout_loop, name="ShellHostStdout", daemon=True)
+            target=self._stdout_loop, name="ShellHostStdout", daemon=True
+        )
         self._stderr_thread = threading.Thread(
-            target=self._stderr_loop, name="ShellHostStderr", daemon=True)
+            target=self._stderr_loop, name="ShellHostStderr", daemon=True
+        )
         self._stdout_thread.start()
         self._stderr_thread.start()
 
@@ -317,8 +329,10 @@ class ShellHost:
                 return
             time.sleep(0.05)
 
-        try: self._proc.kill()
-        except Exception: pass
+        try:
+            self._proc.kill()
+        except Exception:
+            pass
         raise HostError("timed out waiting for host 'ready' line")
 
     def _cleanup_locked(self):
@@ -329,8 +343,10 @@ class ShellHost:
         self._current_solution = None
         self._current_tc_version = None
         while not self._responses.empty():
-            try: self._responses.get_nowait()
-            except Exception: break
+            try:
+                self._responses.get_nowait()
+            except Exception:
+                break
 
     def _next_id(self) -> int:
         self._request_id += 1
@@ -348,7 +364,7 @@ class ShellHost:
             self._proc.stdin.write(line + "\n")  # type: ignore
             self._proc.stdin.flush()  # type: ignore
         except (BrokenPipeError, OSError) as e:
-            raise HostError(f"failed to write to host stdin: {e}")
+            raise HostError(f"failed to write to host stdin: {e}") from e
         return req_id
 
     def _call_raw(self, method: str, params: dict | None, timeout: float) -> dict:
@@ -366,7 +382,7 @@ class ShellHost:
                 msg = self._responses.get(timeout=min(remaining, 0.5))
             except queue.Empty:
                 if not self.is_alive():
-                    raise HostError(self._last_error or "host exited during call")
+                    raise HostError(self._last_error or "host exited during call") from None
                 continue
 
             if not isinstance(msg, dict):
@@ -377,8 +393,11 @@ class ShellHost:
 
             if msg.get("ok"):
                 return msg.get("result", {})
-            elif (method == "execute-step" and isinstance(msg.get("result"), dict)
-                  and msg.get("command") == (params or {}).get("command")):
+            elif (
+                method == "execute-step"
+                and isinstance(msg.get("result"), dict)
+                and msg.get("command") == (params or {}).get("command")
+            ):
                 # A delivered command rejection is not a broken host connection.
                 # Preserve the receipt, including whether any mutation started;
                 # otherwise callers may replay a rejected command via CLI.
@@ -417,7 +436,7 @@ class ShellHost:
                 if not line:
                     continue
                 if line.startswith("[PROGRESS]"):
-                    clean = line[len("[PROGRESS]"):].strip()
+                    clean = line[len("[PROGRESS]") :].strip()
                     with self._progress_lock:
                         self._progress.append(clean)
                 else:
@@ -476,7 +495,7 @@ def drop_shell_host() -> None:
 
 
 def shutdown_shell_host() -> None:
-    """Tear down the persistent host. Idempotent; safe to call from atexit."""
+    """Tear down the persistent host. Idempotent."""
     global _shell_host
     host = _shell_host
     if host is None:
@@ -491,4 +510,4 @@ def shutdown_shell_host() -> None:
 # Register cleanup for graceful Python exits. Hard crashes are handled by
 # the host's parent-death watchdog + session-file janitor (see
 # Core/SessionFile.cs on the C# side).
-atexit.register(shutdown_shell_host)
+# Engine.close owns bounded shutdown; parent-death watchdog handles interrupted native work.

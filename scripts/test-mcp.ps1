@@ -1,17 +1,6 @@
-# Test MCP Server with Inspector
-# Usage: .\scripts\test-mcp.ps1
-
 $ErrorActionPreference = "Stop"
-
-Write-Host "Starting MCP Inspector..." -ForegroundColor Cyan
-Write-Host "This will open a web UI to test the MCP server tools." -ForegroundColor Yellow
-Write-Host ""
-
-Push-Location "$PSScriptRoot\.."
-
-try {
-    npx @modelcontextprotocol/inspector -- python mcp-server/server.py
-}
-finally {
-    Pop-Location
-}
+$root = (Resolve-Path "$PSScriptRoot/..").Path
+$pythonPath = Join-Path $root ".venv/Scripts/python.exe"
+if (-not (Test-Path -LiteralPath $pythonPath)) { throw "Run setup.ps1 first." }
+npx @modelcontextprotocol/inspector -- $pythonPath "$root/mcp-server/server.py"
+exit $LASTEXITCODE

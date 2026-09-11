@@ -1,112 +1,168 @@
-"""
-TwinCAT MCP Server
+"""TwinCAT MCP v2: discover operations, inspect contracts, execute durable jobs."""
 
-This MCP server exposes TwinCAT automation tools to AI assistants like GitHub Copilot.
-It wraps the TcAutomation.exe CLI tool which provides access to the TwinCAT Automation Interface.
+import asyncio
+import json
+from contextlib import asynccontextmanager
 
-Tools:
-- twincat_batch: Run an ordered sequence of TwinCAT operations against a single shared TcXaeShell (collapses VS startup cost across many steps)
-- twincat_build: Build a TwinCAT solution and return errors/warnings
-- twincat_get_info: Get information about a TwinCAT solution
-- twincat_clean: Clean a TwinCAT solution
-- twincat_set_target: Set target AMS Net ID
-- twincat_activate: Activate configuration on target PLC
-- twincat_restart: Restart TwinCAT runtime on target
-- twincat_deploy: Full deployment workflow
-- twincat_list_plcs: List all PLC projects in a solution
-- twincat_set_boot_project: Configure boot project settings
-- twincat_disable_io: Disable/enable I/O devices
-- twincat_set_variant: Get or set TwinCAT project variant
-- twincat_get_state: Get TwinCAT runtime state via ADS
-- twincat_set_state: Set TwinCAT runtime state (Run/Stop/Config) via ADS
-- twincat_read_var: Read a PLC variable via ADS
-- twincat_write_var: Write a PLC variable via ADS
-- twincat_list_tasks: List real-time tasks
-- twincat_configure_task: Configure task (enable/autostart)
-- twincat_configure_rt: Configure real-time CPU settings
-- twincat_check_all_objects: Check all PLC objects including unused ones
-- twincat_static_analysis: Run static code analysis (requires TE1200)
-- twincat_generate_library: Export a PLC project as a TwinCAT .library artifact
-- twincat_list_routes: List available ADS routes (PLCs)
-- twincat_get_error_list: Get VS Error List contents (errors, warnings, messages)
-- twincat_run_tcunit: Run TcUnit tests and return results
-"""
-
-import time
-
+from jsonschema import Draft202012Validator
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent
+from mcp.types import CallToolResult, ListToolsResult, Tool
 
-# Modular internals. Everything under `twincat_mcp/` was extracted out of
-# this file in a pure refactor — behavior is unchanged. See
-# `twincat_mcp/__init__.py` for the package layout.
-#
-# This file is now a thin entry point:
-#   - `list_tools`  advertises schemas from `twincat_mcp.tools.schemas`
-#   - `call_tool`   runs the safety gates, then dispatches to a registered
-#                   handler in `twincat_mcp.handlers.*`.
-# Importing `twincat_mcp.handlers` is what populates `HANDLERS` (each
-# submodule registers its tools at import time).
-from twincat_mcp.handlers import HANDLERS
-from twincat_mcp.safety import check_armed_for_tool, check_confirmation
-from twincat_mcp.tools.schemas import get_tool_schemas
+from twincat_mcp.catalog import schema
+from twincat_mcp.engine import VERSION, Engine
+from twincat_mcp.errors import OperationError
 
-# Initialize MCP server.
-server = Server("twincat-mcp")
+OUTPUT_SCHEMA = {"type": "object"}
+TOOLS = [
+    Tool(
+        name="twincat_search",
+        description="Find TwinCAT operations and workflows by task. Returns compact summaries; browse with an empty query. Use describe for contracts.",
+        input_schema=schema(
+            {
+                "query": {"type": "string", "maxLength": 1000, "default": ""},
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "context",
+                        "engineering",
+                        "runtime",
+                        "scope",
+                        "workflow",
+                        "safety",
+                        "system",
+                        "job",
+                    ],
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+                "offset": {"type": "integer", "minimum": 0, "default": 0},
+            }
+        ),
+        output_schema=OUTPUT_SCHEMA,
+        annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    ),
+    Tool(
+        name="twincat_describe",
+        description="Read full input schemas, prerequisites and examples for up to five operation IDs found by search.",
+        input_schema=schema(
+            {
+                "operations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 5,
+                }
+            },
+            ("operations",),
+        ),
+        output_schema=OUTPUT_SCHEMA,
+        annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False},
+    ),
+    Tool(
+        name="twincat_execute",
+        description="Execute a catalog operation with schema-validated arguments. May modify PLCs/projects. Work is queued; provide a unique requestKey and reuse it unchanged after response loss. Poll job.get/read job.result. context.open establishes engineering scope; safety.grant authorizes named operations after host user approval.",
+        input_schema=schema(
+            {
+                "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+                "arguments": {"type": "object"},
+                "requestKey": {"type": "string", "minLength": 8, "maxLength": 128},
+                "waitSeconds": {"type": "number", "minimum": 0, "maximum": 2, "default": 1},
+            },
+            ("operation", "arguments"),
+        ),
+        output_schema=OUTPUT_SCHEMA,
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+    ),
+]
+TOOL_MAP = {t.name: t for t in TOOLS}
 
 
+def result(payload, error=False):
+    return CallToolResult(
+        content=[{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
+        structured_content=payload,
+        is_error=error,
+    )
 
-@server.list_tools()
-async def list_tools() -> list:
-    """Advertise available TwinCAT tools (schemas live in twincat_mcp.tools.schemas)."""
-    return get_tool_schemas()
+
+def create_server(engine_factory=Engine):
+    @asynccontextmanager
+    async def lifespan(_server):
+        engine = engine_factory()
+        try:
+            yield engine
+        finally:
+            await asyncio.to_thread(engine.close)
+
+    async def list_tools(ctx, params):
+        if params and params.cursor:
+            from mcp import MCPError
+
+            raise MCPError(-32602, "Tool list fits on one page.")
+        return ListToolsResult(tools=TOOLS, ttl_ms=3600000, cache_scope="public")
+
+    async def call_tool(ctx, params):
+        try:
+            if params.name not in TOOL_MAP:
+                from mcp import MCPError
+
+                raise MCPError(-32602, "Unknown tool.")
+            args = params.arguments or {}
+            errors = list(
+                Draft202012Validator(TOOL_MAP[params.name].input_schema).iter_errors(args)
+            )
+            if errors:
+                raise OperationError("invalid_arguments", errors[0].message)
+            engine = ctx.lifespan_context
+            if params.name == "twincat_search":
+                return result(engine.catalog.search(**args))
+            if params.name == "twincat_describe":
+                return result(engine.catalog.describe(args["operations"]))
+            receipt = await asyncio.to_thread(
+                engine.execute, args["operation"], args["arguments"], args.get("requestKey")
+            )
+            if "jobHandle" in receipt and args["operation"] not in {
+                "job.get",
+                "job.result",
+                "job.cancel",
+            }:
+                deadline = asyncio.get_running_loop().time() + args.get("waitSeconds", 1)
+                while (
+                    receipt["state"] in {"queued", "running"}
+                    and asyncio.get_running_loop().time() < deadline
+                ):
+                    await asyncio.sleep(0.05)
+                    receipt = engine.jobs.get(receipt["jobHandle"])
+            error = (
+                receipt.get("state") in {"failed", "outcome_unknown", "cancelled"}
+                or receipt.get("success") is False
+            )
+            return result(receipt, error)
+        except OperationError as exc:
+            return result(dict(success=False, code=exc.code, message=str(exc)), True)
+
+    return Server(
+        "twincat-mcp",
+        version=VERSION,
+        instructions="Search by task, describe selected IDs, then execute. Prefer workflow.deploy, workflow.test, workflow.sequence and workflow.wait_state for repeated procedures. All submitted operations require requestKey. Retain returned context, grant, recording and job handles explicitly.",
+        lifespan=lifespan,
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    """
-    Dispatch an MCP tool call to its registered handler.
-
-    The flow is:
-      1) Special-case `twincat_arm_dangerous_operations` — it toggles the
-         gate itself, so it runs *before* the gate.
-      2) Run the armed-mode gate for dangerous tools (write/deploy/etc).
-      3) Run the confirmation gate for highly destructive tools.
-      4) Look up the handler in `HANDLERS` and await it.
-      5) Unknown tools fall through to a clear error message.
-    """
-
-    arm_handler = HANDLERS.get("twincat_arm_dangerous_operations")
-    if name == "twincat_arm_dangerous_operations" and arm_handler is not None:
-        return await arm_handler(arguments, time.time())
-
-    allowed, message = check_armed_for_tool(name, arguments)
-    if not allowed:
-        return [TextContent(type="text", text=message)]
-
-    confirmed, conf_message = check_confirmation(name, arguments)
-    if not confirmed:
-        return [TextContent(type="text", text=conf_message)]
-
-    handler = HANDLERS.get(name)
-    if handler is None:
-        return [TextContent(type="text", text=f"Unknown tool: {name}")]
-
-    tool_start_time = time.time()
-    return await handler(arguments, tool_start_time)
+server = create_server()
 
 
 async def main():
-    """Run the MCP server."""
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
-        )
+    async with stdio_server() as (read, write):
+        await server.run(read, write, server.create_initialization_options())
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())

@@ -1,290 +1,216 @@
-<p align="center">
-  <img src="img/banner.png" alt="TwinCAT MCP Server" width="800"/>
-</p>
+# TwinCAT MCP Server v2
 
-<h1 align="center">TwinCAT MCP Server</h1>
+TwinCAT engineering, runtime diagnostics and workflows through three MCP tools.
+The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 
-<p align="center">Build, deploy, test, and inspect TwinCAT PLCs through MCP.</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"/></a>
-  <img src="https://img.shields.io/badge/platform-Windows-0078d4" alt="Platform: Windows"/>
-  <img src="https://img.shields.io/badge/protocol-MCP-555555" alt="Protocol: MCP"/>
-</p>
-
-<p align="center">
-  <a href="#install">Installation</a> · <a href="#tools">Tools</a> · <a href="#safety">Safety</a> · <a href="#troubleshooting">Troubleshooting</a> · <a href="CONTRIBUTING.md">Contributing</a>
-</p>
-
-## What it does
-
-An MCP server that exposes the TwinCAT Automation Interface and ADS to compatible AI clients. Build solutions, inspect compiler errors, deploy configurations, run TcUnit tests, and read or write PLC symbols from your development workflow.
-
-| Workflow | Capabilities |
+| Public tool | Purpose |
 | --- | --- |
-| Build and inspect | Compile solutions, check objects, inspect errors, export libraries. |
-| Deploy and configure | Select targets, activate configurations, manage runtime and task settings. |
-| Read and record | Read symbols, batch ADS operations, capture variable data to CSV. |
-| Test and automate | Run TcUnit, batch commands, reuse a persistent TwinCAT shell host. |
+| `twincat_search` | Find relevant operations and workflows; browse categories without loading every schema. |
+| `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
+| `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-[Online Change](docs/online-change.md) applies a delta in an already logged-in
-session and verifies runtime counters, with no download fallback or automatic retry.
+The catalog contains 51 operations. Individual operations are **not separate MCP tools**.
+Search does not dynamically register tools or change `tools/list`. The public execute
+tool is conservatively annotated as potentially destructive; operation-specific
+authorization is enforced by the server.
 
-Unofficial. Not affiliated with Beckhoff.
-
-## Prerequisites
-
-
-| Software       | Version                                                   |
-| -------------- | --------------------------------------------------------- |
-| Windows        | 10 or 11                                                  |
-| Visual Studio  | 2019, 2022, or newer with MSBuild and the ".NET desktop development" workload |
-| .NET Framework | 4.7.2 Developer Pack                                      |
-| TwinCAT XAE    | 3.1.4024 or newer                                         |
-| Python         | 3.10 or newer, on PATH                                    |
-| MCP client     | VS Code + Copilot, Cursor, Claude Desktop, etc.           |
-
+The application version is **2.0.0**. See the [release notes](CHANGELOG.md) for
+breaking changes and upgrade instructions. The supported interface consists of
+the three public tools and the [operation catalog](docs/operations.md).
 
 ## Install
 
-```powershell
-git clone https://github.com/eponce00/twincat-mcp.git
-cd twincat-mcp
-.\setup.bat
-```
-
-`setup.bat` checks prerequisites, builds `TcAutomation.exe`, installs the Python deps, and registers the server with VS Code.
-
-### Manual registration
-
-If the script fails or you want a different client:
+Requires Windows, Python 3.10+, TwinCAT XAE, Visual Studio MSBuild and the .NET
+Framework 4.7.2 targeting pack. Optional Scope operations require TE13xx and an
+automation worker built with Scope support. ADS recording does not require TE13xx.
 
 ```powershell
-.\scripts\build.ps1
-pip install -r mcp-server/requirements.txt
+.\scripts\setup.ps1
+.\scripts\install-mcp.ps1
 ```
 
-Then point your MCP client at `mcp-server/server.py`.
+Setup creates `.venv`, installs pinned direct dependencies, and builds
+`TcAutomation/bin/Release-v2/TcAutomation.exe` with MSBuild. Reload the MCP server
+through the client after installation.
 
-**VS Code (global):**
-
-```powershell
-code --add-mcp '{"name":"twincat-automation","type":"stdio","command":"python","args":["C:/path/to/twincat-mcp/mcp-server/server.py"]}'
-```
-
-**Cursor (global)** add to `~/.cursor/mcp.json`:
+For any stdio MCP client, use absolute paths:
 
 ```json
 {
-  "mcpServers": {
-    "twincat-automation": {
-      "command": "python",
-      "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"]
-    }
-  }
+  "command": "C:/path/to/twincat-mcp/.venv/Scripts/python.exe",
+  "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"]
 }
 ```
 
-Restart the client and enable the server.
+Use `install-mcp.ps1 -Workspace` to merge the entry into the current workspace's
+VS Code configuration. Other server entries are preserved.
 
-## Default target PLC
+## Discover and execute
 
-Every tool that takes an `amsNetId` (TcUnit, deploy, activate, restart, get/set state, read/write var, set-target) falls back to a configurable default when the agent doesn't pass one. Out of the box that default is `127.0.0.1.1.1` (local runtime), which preserves the old behaviour.
+Call `twincat_search`:
 
-The default is resolved in this precedence order (highest first):
+```json
+{"query": "read PLC variables"}
+```
 
-1. **Persistent config file** — `%LOCALAPPDATA%\twincat-mcp\config.json`. Written by the agent via the `twincat_set_default_target` tool (see below).
-2. **`TWINCAT_DEFAULT_AMS_NET_ID` env var** — set in the MCP client's server config; never changes unless you edit the client config.
-3. **Hardcoded fallback** — `127.0.0.1.1.1`.
+Call `twincat_describe`:
 
-### One-time setup via env var (stable across installs)
+```json
+{"operations": ["runtime.read_var_list"]}
+```
 
-Point it at your test rig by setting `TWINCAT_DEFAULT_AMS_NET_ID` in the MCP client's server config:
-
-**Cursor (`~/.cursor/mcp.json`):**
+Call `twincat_execute`:
 
 ```json
 {
-  "mcpServers": {
-    "twincat-automation": {
-      "command": "python",
-      "args": ["C:/path/to/twincat-mcp/mcp-server/server.py"],
-      "env": {
-        "TWINCAT_DEFAULT_AMS_NET_ID": "5.22.157.86.1.1"
-      }
-    }
-  }
+  "operation": "runtime.read_var_list",
+  "arguments": {
+    "amsNetId": "1.2.3.4.1.1",
+    "port": 851,
+    "symbols": ["MAIN.bRunning", "MAIN.nCount"]
+  },
+  "requestKey": "9454a153-481b-49ea-b749-cf1799ae7139"
 }
 ```
 
-### On-the-fly changes via the agent
+The response contains a `jobHandle`, status and bounded progress. By default execute
+waits up to one second for completion; `waitSeconds` can be 0–2. Small final
+results are included inline. For unfinished work, call execute with:
 
-Tell the agent something like "always target the conveyor rig from now on" and it will call `twincat_set_default_target` with the new AMS Net ID. The value is written to `%LOCALAPPDATA%\twincat-mcp\config.json` and survives into future conversations — a fresh chat inherits the same default without you re-explaining the setup. To go back, ask the agent to reset it (it'll call the tool with `reset: true`, which removes the persisted value and falls back to your env var / the hardcoded default).
-
-The effective default appears in each tool's schema description. Agents can override it per call by passing `amsNetId` explicitly. Safety gates use the effective target too: if the default is remote, `twincat_run_tcunit` requires armed mode.
-
-## Safety
-
-The server starts in SAFE mode. The operations listed below require explicit arming:
-
-```
-Arm dangerous operations to deploy the hotfix.
+```json
+{"operation": "job.get", "arguments": {"jobHandle": "<returned handle>"}}
 ```
 
-Armed mode auto-expires after 5 minutes (override with `TWINCAT_ARMED_TTL` seconds). You can also disarm manually by calling `twincat_arm_dangerous_operations` with `disarm: true`.
+Large results remain in the receipt store. Read `job.result` using `offset` and
+`limit`; concatenate its JSON text pages. The default page is 8,000 characters,
+with a 16,000-character maximum. No full schema catalog or unlimited log stream
+is sent to the model.
 
-Tools that require armed mode:
-`twincat_activate`, `twincat_restart`, `twincat_deploy`, `twincat_set_state`, `twincat_write_var`, `twincat_write_var_list`, `twincat_scope_start_record`, and `twincat_run_tcunit` against a remote target.
+Supply a **new UUID requestKey for each submitted operation**.
+`system.status`, `context.status`, `safety.revoke`, `job.get`, `job.result` and
+`job.cancel` return immediately and do not require a request key. After a lost
+response, resend exactly the same operation, arguments and key: the original
+receipt is returned without executing again. A key with different arguments is
+rejected. Intentional repeats require new keys. The receipt store retains keys
+across restarts; deleting the database ends that protection.
 
-The three most destructive tools (`twincat_activate`, `twincat_restart`, `twincat_deploy`) also require `confirm: "CONFIRM"` as an explicit second step.
+## Engineering contexts and grants
 
-## Persistent shell host
-
-Shell-based tools reuse a single TwinCAT shell for the MCP session, avoiding repeated startup and solution loading. ADS-only tools communicate directly with the runtime.
-
-<details>
-<summary>Host lifecycle, cleanup, and configuration</summary>
-
-Every TwinCAT call that needs the Automation Interface pays a 25s–90s startup cost because TcXaeShell has to spin up, load the solution, and talk to COM. Historically that was paid **per call**.
-
-Now the MCP server lazily spawns a long-lived C# "host" process (`TcAutomation.exe host`) that owns **one** TcXaeShell instance for the entire MCP session. All shell-based tools route through this host:
-
-- First shell-needing call in a session: ~30s (open TcXaeShell + load solution).
-- Every subsequent call: **~0.1-1s** (≈30x speedup observed locally).
-- Switching solutions: the host reloads in place instead of restarting TcXaeShell.
-- The host is shut down gracefully when the MCP server exits.
-
-Robustness is layered so phantom TcXaeShell processes can't accumulate:
-
-1. **Parent-death watchdog** – a thread inside the host uses `WaitForSingleObject` on the MCP server's PID. If the MCP server dies for any reason (clean exit, crash, OOM, Task Manager), the host tears down TcXaeShell and exits (verified in testing: host + DTE gone within ~3s).
-2. **Session file** – `%LOCALAPPDATA%\twincat-mcp\session-<mcpPid>.json` records MCP/host/DTE PIDs and their start-times.
-3. **Janitor (`TcAutomation.exe reap-orphans`)** – scans session files on startup and explicit invocation; kills any host/DTE whose recorded start-time still matches (never touches reused PIDs).
-4. **`twincat_kill_stale` is now surgical** – shuts down our own host + DTE and runs the janitor. The old "kill TcXaeShell with an empty window title" heuristic has been removed: a legitimately user-opened IDE reports an empty title during startup or when a modal dialog (e.g. Static Routes) is active, so that heuristic was not safe. Only PIDs recorded in our own session files are ever touched.
-5. **`twincat_host_status`** – read-only tool that reports whether the host is running, its PID, its DTE PID, the loaded solution, and uptime.
-
-Disable the host (fall back to per-call CLI) by setting `TWINCAT_DISABLE_HOST=1` in the server's environment.
-
-</details>
-
-## Batching operations
-
-`twincat_batch` predates the persistent host and is still useful for deterministic "open shell, run N steps, close shell" pipelines (for example when you explicitly want `activate` + `restart` to happen back-to-back without ever closing the shell in between). It opens the shell **once**, runs all your steps, and closes **once** (independent of the persistent host). ADS-only steps (`get-state`, `set-state`, `read-var`, `write-var`) don't touch the shell at all and are dispatched directly.
-
-Each step is `{id?, command, args}`. `solutionPath` and `tcVersion` are set once at the batch top level and inherited by every step. By default the batch stops at the first failing step.
-
-Supported step commands:
-
-- **Shell-based:** `build`, `info`, `clean`, `set-target`, `activate`, `restart`, `list-plcs`, `set-boot-project`, `disable-io`, `set-variant`, `list-tasks`, `configure-task`, `configure-rt`, `check-all-objects`, `static-analysis`, `generate-library`, `get-error-list`
-- **ADS-only:** `get-state`, `set-state`, `read-var`, `write-var`
-- **Not batchable:** `deploy`, `run-tcunit` (use their dedicated tools)
-
-Safety inside a batch:
-
-- If any step is `activate`, `restart`, `set-state`, or `write-var`, the whole batch requires armed mode.
-- If any step is `activate` or `restart`, the batch also requires `confirm: "CONFIRM"` at the top level.
-
-Example: full "set target, build, activate, restart" flow in one shell open:
+Engineering operations use an explicit `contextHandle`. Open one with:
 
 ```json
 {
-  "solutionPath": "C:/Projects/MyMachine/Solution.sln",
-  "confirm": "CONFIRM",
-  "steps": [
-    { "id": "target", "command": "set-target",       "args": { "amsNetId": "5.22.157.86.1.1" } },
-    { "id": "boot",   "command": "set-boot-project", "args": { "autostart": true, "generate": true } },
-    { "id": "build",  "command": "build",            "args": { "clean": true } },
-    { "id": "act",    "command": "activate",         "args": { "amsNetId": "5.22.157.86.1.1" } },
-    { "id": "rst",    "command": "restart",          "args": { "amsNetId": "5.22.157.86.1.1" } }
-  ]
+  "operation": "context.open",
+  "arguments": {
+    "solutionPath": "C:/Projects/Machine/Machine.sln",
+    "amsNetId": "1.2.3.4.1.1",
+    "plcName": "PLC"
+  },
+  "requestKey": "<new UUID>"
 }
 ```
 
-## Tools
+Its completed job result returns the handle. The solution, PLC, target and optional
+`tcVersion` are fixed for that context. One engineering context owns the persistent
+shell per server process. A second context is rejected until the owner closes the
+first with `context.close`. Worker loss invalidates the context. Handles from a
+previous server process expire; no implicit replacement login is attempted.
 
+Build with `engineering.build` and `{"contextHandle":"...","clean":false}`.
+Use `clean:false` when preserving compile information for online change.
+[Online-change workflow](docs/online-change.md) documents the retained-state requirements.
 
-| Tool                               | What it does                                                                                                                          |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `twincat_arm_dangerous_operations` | Toggle SAFE/ARMED mode.                                                                                                               |
-| `twincat_batch`                    | Run an ordered list of operations against a single shared TcXaeShell. Opens the shell once, runs all steps, closes once.              |
-| `twincat_build`                    | Build a solution, return errors and warnings with file paths and line numbers.                                                        |
-| `twincat_check_all_objects`        | Compile every object including unreferenced ones. Catches bugs a normal build skips.                                                  |
-| `twincat_static_analysis`          | Static analysis via TE1200 (license required).                                                                                        |
-| `twincat_clean`                    | Remove build artifacts.                                                                                                               |
-| `twincat_get_info`                 | TwinCAT version, VS version, PLCs in the solution.                                                                                    |
-| `twincat_generate_library`         | Export a PLC project as a `.library` file. Existing output is renamed to `*.backup_yyyyMMdd_HHmmss.library`.                          |
-| `twincat_set_target`               | Set the target AMS Net ID.                                                                                                            |
-| `twincat_activate`                 | Activate configuration on the target. Armed + confirm.                                                                                |
-| `twincat_restart`                  | Restart TwinCAT runtime. Armed + confirm.                                                                                             |
-| `twincat_deploy`                   | Build, activate, restart. Armed + confirm.                                                                                            |
-| `twincat_list_routes`              | List ADS routes from the local router.                                                                                                |
-| `twincat_get_state`                | Runtime state (Run/Config/Stop) via ADS.                                                                                              |
-| `twincat_set_state`                | Change runtime state via ADS. Armed.                                                                                                  |
-| `twincat_read_var`                 | Read a PLC variable by symbol path.                                                                                                   |
-| `twincat_write_var`                | Write a PLC variable. Armed.                                                                                                          |
-| `twincat_list_plcs`                | PLC projects and their AMS ports.                                                                                                     |
-| `twincat_set_boot_project`         | Configure boot project autostart.                                                                                                     |
-| `twincat_disable_io`               | Enable or disable I/O devices (test without hardware).                                                                                |
-| `twincat_set_variant`              | Get or set the project variant (4024+).                                                                                               |
-| `twincat_list_tasks`               | Real-time tasks with cycle times and priorities.                                                                                      |
-| `twincat_configure_task`           | Enable/disable a task, set autostart.                                                                                                 |
-| `twincat_configure_rt`             | Set RT CPU cores and load limit.                                                                                                      |
-| `twincat_get_error_list`           | Contents of the VS Error List (errors, warnings, ADS messages).                                                                       |
-| `twincat_run_tcunit`               | Full TcUnit workflow: build, configure test task, set boot, optional I/O disable, activate, restart, poll, report. Armed when remote. |
-| `twincat_kill_stale`               | Surgical cleanup: kill our own shell host + DTE and reap session-file orphans. Only touches PIDs recorded in our session files.       |
-| `twincat_host_status`              | Show persistent shell host state (PID, DTE PID, loaded solution, uptime). Read-only.                                                  |
-| `twincat_set_default_target`       | Change (or clear) the persistent default AMS Net ID. Survives conversations and server restarts. See "Default target PLC" above.      |
-| `twincat_read_var_list`            | Read multiple PLC variables in one batch ADS call. Much faster than looping `twincat_read_var`.                                       |
-| `twincat_write_var_list`           | Write multiple PLC variables in one batch ADS call. Armed.                                                                            |
-| `twincat_ads_record`               | Record PLC variables via ADS notifications to CSV. **No TE13xx license needed.** Preferred for data capture.                         |
-| `twincat_scope_create_config`      | Create a `.tcscopex` Scope config file (requires TE13xx installed).                                                                   |
-| `twincat_scope_start_record`       | Start a Scope Server recording. Requires TE13xx + armed mode.                                                                         |
-| `twincat_scope_stop_record`        | Stop recording and export CSV. Requires TE13xx.                                                                                       |
-| `twincat_scope_get_status`         | Get Scope Server recording status. Requires TE13xx.                                                                                   |
-| `twincat_scope_export`             | Export `.svdx` scope data to CSV via TC3ScopeExportTool.                                                                              |
+Operations marked `requiresGrant` need an explicit grant. After the user authorizes
+the work in the calling host, execute `safety.grant`:
 
-
-### `twincat_run_tcunit` parameters
-
-- `solutionPath` (required)
-- `amsNetId` (default `127.0.0.1.1.1`)
-- `taskName` (auto-detected if only one)
-- `plcName`
-- `timeoutMinutes` (default 10)
-- `disableIo` (default false)
-- `skipBuild` (default false)
-
-Local targets (`127.0.0.1.1.1`) do not require armed mode. Remote targets do.
-
-## Example prompts
-
-```
-Build my TwinCAT project at C:\Projects\MyMachine\Solution.sln
-Check all objects in TcForgeExample
-Read MAIN.bRunning from the PLC
-What is the TwinCAT state on 172.18.236.100.1.1?
-Disable I/O and activate to the test PLC
-Generate a library for PLC 'MainPlc' into C:\Artifacts\Libraries
-Run TcUnit tests on my project
+```json
+{
+  "operation": "safety.grant",
+  "arguments": {
+    "operations": ["workflow.deploy"],
+    "contextHandle": "<context handle>",
+    "reason": "User approved deployment to the designated test target",
+    "ttlSeconds": 900
+  },
+  "requestKey": "<new UUID>"
+}
 ```
 
-## Troubleshooting
+Pass the returned `grantHandle` to the operation. High-impact operations also
+require `confirm:"CONFIRM"` where their schema specifies it. Grants are scoped
+to exactly one context, explicit AMS target, or Scope config path. They expire
+after a fixed lifetime (default 900 seconds, maximum 3,600); calls do not refresh
+them. `safety.revoke` revokes a grant immediately without a request key, including while a workflow is running. An already dispatched native command can finish; subsequent steps recheck the grant. Local runtime writes and test/deployment
+workflows follow the same scoping rules as remote ones.
 
-**Server does not start.** In VS Code: `Ctrl+Shift+P` > `MCP: List Servers` > Start and Trust. In Cursor: Settings > MCP & Integrations > enable the server.
+A grant is not authentication or proof of user approval. This is a local,
+trusted stdio server; the calling host owns user consent and tool permissions.
+Do not expose it as an unauthenticated network service.
 
-**`MSB4803: ResolveComReference not supported`.** You built with `dotnet build` instead of MSBuild. Run `.\setup.bat` or `.\scripts\build.ps1`.
+## Workflows
 
-**TwinCAT or Visual Studio not found.** Force the version in the prompt: `Build my project with TwinCAT version 3.1.4026.17`.
+| Workflow | Work performed by the server |
+| --- | --- |
+| `workflow.deploy` | Build, activate and restart through the existing C# deployment implementation. |
+| `workflow.test` | Configure/run the TcUnit workflow and return its structured report. |
+| `workflow.sequence` | Validate up to 32 catalog steps before effects, then execute in order and stop on failure. |
+| `workflow.wait_state` | Poll runtime state with a configured interval and deadline. |
 
-**ADS connection failed.** Check the AMS Net ID, confirm the route exists in the TwinCAT router, and that port 48898 is open through the firewall.
+Sequences accept `steps:[{"operation":"...","arguments":{...}}]`; use catalog
+operation IDs, not raw CLI commands. All steps carry their own required handles.
+Nested sequences and control operations are prohibited. Partial results survive
+failure or cancellation. Native COM calls may overrun the polling deadline;
+the deadline stops further polls after the current call returns.
 
-## Contributing
+There is no arbitrary Python/JavaScript execution endpoint. Validated operations
+and named workflows provide composition without introducing another scripting
+runtime alongside PLC access.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, and issue-reporting guidance. Include the tool name, sanitized arguments, and relevant logs when reporting an issue.
+## Jobs, cancellation and shutdown
 
-## Related project
+Work runs on one bounded queue (64 waiting jobs) outside the protocol event loop.
+Discovery and job inspection remain responsive while the worker is busy.
+The native shell serializes solution selection and command dispatch together.
 
-[TcForge](https://github.com/eponce00/TcForge) provides reusable TwinCAT 3 function blocks for sequencing, I/O, pneumatics, and alarms. The MCP server also works with other TwinCAT projects.
+`job.cancel` cancels queued work or stops a workflow before its next dispatch.
+An already dispatched native command may finish and cannot be rolled back.
+Its actual outcome is retained with `cancelRequested:true`; cancellation is not
+evidence that a PLC change did not occur. Closing a transport request does not
+cancel a detached job. Use the explicit job handle.
 
-## License
+Receipts are stored in `%LOCALAPPDATA%/twincat-mcp/jobs.sqlite3`. A server heartbeat
+identifies abandoned work; after 30 seconds without its owner, unfinished jobs
+become `outcome_unknown`. They are never automatically replayed. Scope
+recordings also have explicit handles; stop them before closing the server.
+The native parent-death watchdog cleans owned engineering processes on interruption.
 
-MIT. See [LICENSE](LICENSE).
+The database includes diagnostic data, source excerpts and operation handles.
+It is local to the OS user. There is currently no automatic retention purge:
+archive/delete it only while servers are stopped and after accepting loss of
+request-key deduplication history.
+
+## Configuration and testing
+
+| Variable | Purpose |
+| --- | --- |
+| `TWINCAT_AUTOMATION_EXE` | Explicit worker executable; invalid paths fail without fallback. |
+| `TWINCAT_MCP_STATE_DIR` | Override the receipt directory, useful for isolated tests. |
+| `TWINCAT_DISABLE_HOST=1` | Disable engineering/ADS worker dispatch; no CLI fallback. |
+
+Targets are explicit; provide the AMS Net ID when opening a context or calling
+a runtime operation.
+
+```powershell
+.\scripts\test-mcp-automated.ps1
+.\scripts\test-mcp.ps1
+```
+
+The automated suite uses fake workers and a real stdio subprocess; it never
+writes to a PLC. Inspector can invoke real operations, so choose an appropriate
+test target. Hardware qualification is separate from protocol tests.
+
+[Architecture](docs/architecture-v2.md) explains discovery,
+workflows and the current standards. [Contributing](CONTRIBUTING.md) covers development.
+[TcForge](https://github.com/eponce00/TcForge) is the related reusable PLC library.
+
+MIT. Independent project; not affiliated with or endorsed by Beckhoff Automation.
