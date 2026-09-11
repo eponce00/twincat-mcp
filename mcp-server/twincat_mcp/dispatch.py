@@ -32,6 +32,7 @@ def run_shell_step(
     solution_path: str | None = None,
     tc_version: str | None = None,
     timeout_minutes: int = 10,
+    allow_fallback: bool = True,
 ) -> tuple[dict, list[str]]:
     """
     Run one TcAutomation command, preferring the persistent shell host.
@@ -43,8 +44,13 @@ def run_shell_step(
     camelCase keys without change.
     """
     step_args = step_args or {}
+    if command.lower() == "online-change":
+        allow_fallback = False
 
     host = get_shell_host()
+    if host is None and not allow_fallback:
+        return _ci_wrap({"success": False, "dispatched": False,
+                         "errorMessage": "A persistent engineering host is required; no CLI fallback was attempted."}), []
     if host is not None:
         try:
             inner, progress = host.execute_step(
@@ -53,6 +59,9 @@ def run_shell_step(
             )
             return _ci_wrap(inner), progress
         except HostError as e:
+            if not allow_fallback:
+                return _ci_wrap({"success": False, "outcomeUnknown": True,
+                                 "errorMessage": "Engineering host failed; inspect the runtime before another attempt. No replay was attempted."}), []
             # Log once to stderr and fall through to CLI. Subsequent calls
             # will re-attempt host; this matters if the host crashed but
             # can be restarted.

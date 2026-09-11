@@ -116,6 +116,7 @@
     <Compile Include="Commands\SetTargetCommand.cs" />
     <Compile Include="Commands\ActivateCommand.cs" />
     <Compile Include="Commands\RestartCommand.cs" />
+    <Compile Include="Commands\OnlineChangeCommand.cs" />
     <Compile Include="Commands\DeployCommand.cs" />
     <Compile Include="Commands\ListPlcsCommand.cs" />
     <Compile Include="Commands\SetBootProjectCommand.cs" />

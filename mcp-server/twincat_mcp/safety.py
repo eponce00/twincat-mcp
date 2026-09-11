@@ -39,6 +39,7 @@ ARMED_MODE_TTL = int(os.environ.get("TWINCAT_ARMED_TTL", 900))
 DANGEROUS_TOOLS = [
     "twincat_activate",
     "twincat_restart",
+    "twincat_online_change",
     "twincat_deploy",
     "twincat_set_state",
     "twincat_write_var",
@@ -50,6 +51,7 @@ DANGEROUS_TOOLS = [
 CONFIRMATION_REQUIRED_TOOLS = [
     "twincat_activate",
     "twincat_restart",
+    "twincat_online_change",
     "twincat_deploy",
 ]
 
@@ -61,6 +63,7 @@ CONFIRM_TOKEN = "CONFIRM"
 DANGEROUS_BATCH_COMMANDS = {
     "activate",
     "restart",
+    "online-change",
     "set-state",
     "write-var",
     "write-var-list",
@@ -72,6 +75,7 @@ DANGEROUS_BATCH_COMMANDS = {
 CONFIRMATION_REQUIRED_BATCH_COMMANDS = {
     "activate",
     "restart",
+    "online-change",
 }
 
 # -----------------------------------------------------------------------------

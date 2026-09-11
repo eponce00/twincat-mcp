@@ -675,3 +675,18 @@ async def handle_get_error_list(arguments: dict, tool_start_time: float) -> list
         output = f"❌ Failed to read error list: {result.get('errorMessage', 'Unknown error')}"
 
     return [TextContent(type="text", text=add_timing_to_output(output, tool_start_time))]
+
+
+@register("twincat_online_change")
+async def handle_online_change(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    """Apply once in the current logged-in session; never replay after host failure."""
+    import json
+    required = ("solutionPath", "amsNetId", "plcName", "port", "cycleSymbol", "expectedOnlineChangeCount")
+    if any(arguments.get(key) is None for key in required):
+        return [TextContent(type="text", text="Explicit solution, target, PLC, port, ULINT cycle symbol and expected counter required.")]
+    result, _ = run_shell_step(
+        "online-change", {key: arguments[key] for key in required if key != "solutionPath"} | {"timeoutMs": arguments.get("timeoutMs", 10000)},
+        solution_path=arguments["solutionPath"], tc_version=arguments.get("tcVersion"),
+        timeout_minutes=2, allow_fallback=False,
+    )
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]

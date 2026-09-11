@@ -27,6 +27,9 @@ An MCP server that exposes the TwinCAT Automation Interface and ADS to compatibl
 | Read and record | Read symbols, batch ADS operations, capture variable data to CSV. |
 | Test and automate | Run TcUnit, batch commands, reuse a persistent TwinCAT shell host. |
 
+[Online Change](docs/online-change.md) applies a delta in an already logged-in
+session and verifies runtime counters, with no download fallback or automatic retry.
+
 Unofficial. Not affiliated with Beckhoff.
 
 ## Prerequisites

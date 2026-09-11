@@ -201,9 +201,17 @@ class ShellHost:
         if HOST_DISABLED:
             raise HostError("host disabled via TWINCAT_DISABLE_HOST")
 
+        if command == "online-change" and (
+            not self.is_alive() or not solution_path or not self._current_solution
+            or not _paths_equal(self._current_solution, solution_path)
+            or (tc_version or None) != (self._current_tc_version or None)
+        ):
+            return {"success": False, "dispatched": False, "runtimeVerified": False,
+                    "errorMessage": "Online Change requires the existing matching host session; no session was opened or replaced"}, []
+
         # Only shell commands need a loaded solution; ADS commands don't.
         shell_commands = {
-            "build", "info", "clean", "set-target", "activate", "restart",
+            "build", "info", "clean", "set-target", "activate", "restart", "online-change",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis", "generate-library",

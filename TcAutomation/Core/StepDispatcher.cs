@@ -22,7 +22,7 @@ namespace TcAutomation.Core
         public static readonly HashSet<string> ShellCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "build", "info", "clean",
-            "set-target", "activate", "restart",
+            "set-target", "activate", "restart", "online-change",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis",
@@ -109,6 +109,16 @@ namespace TcAutomation.Core
                     {
                         string? amsNetId = GetString(argsElement, "amsNetId", hasArgs);
                         return ActivateCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId);
+                    }
+                    case "online-change":
+                    {
+                        string target = GetString(argsElement, "amsNetId", hasArgs) ?? throw new ArgumentException("Explicit amsNetId required");
+                        string plc = GetString(argsElement, "plcName", hasArgs) ?? throw new ArgumentException("Explicit plcName required");
+                        string cycles = GetString(argsElement, "cycleSymbol", hasArgs) ?? throw new ArgumentException("ULINT cycleSymbol required");
+                        int port = GetInt(argsElement, "port", hasArgs) ?? throw new ArgumentException("Explicit port required");
+                        uint expected = argsElement.GetProperty("expectedOnlineChangeCount").GetUInt32();
+                        int timeout = GetInt(argsElement, "timeoutMs", hasArgs) ?? 10000;
+                        return OnlineChangeCommand.ExecuteInSession(vsInstance, target, plc, port, cycles, expected, timeout);
                     }
                     case "restart":
                     {

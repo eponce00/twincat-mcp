@@ -23,6 +23,24 @@ _AMS_NET_ID_DESC = describe_default_for_schema()
 def get_tool_schemas() -> list[Tool]:
     """Return the list of Tool descriptors advertised via list_tools."""
     return [
+        Tool(
+            name="twincat_online_change",
+            description="Apply Online Change once in an already logged-in matching PLC session as the sole logged-in PLC. Requires retained compile information. Verifies exactly one runtime online-change counter increment and advancing cycles. No login, download, activation, restart, boot-project update or replay after uncertain failure. Does not qualify application behavior or uninterrupted execution.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "solutionPath": {"type": "string"}, "tcVersion": {"type": "string"},
+                    "amsNetId": {"type": "string"}, "plcName": {"type": "string"},
+                    "port": {"type": "integer", "minimum": 851, "maximum": 899},
+                    "cycleSymbol": {"type": "string", "description": "ULINT application cycle counter; must advance before and after dispatch."},
+                    "expectedOnlineChangeCount": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+                    "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 60000},
+                    "confirm": {"type": "string", "enum": ["CONFIRM"]}
+                },
+                "required": ["solutionPath", "amsNetId", "plcName", "port", "cycleSymbol", "expectedOnlineChangeCount", "confirm"]
+            },
+            annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False}
+        ),
         # Safety control tool
         Tool(
             name="twincat_arm_dangerous_operations",
