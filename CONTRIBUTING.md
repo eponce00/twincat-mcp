@@ -6,7 +6,7 @@ Issues and focused pull requests are welcome.
 
 Use the prerequisites and setup instructions in the [README](README.md#install). The C# automation executable requires MSBuild; Python hosts the MCP server.
 
-For changes to public interfaces or architecture, open an issue describing the problem and proposed behavior first. Keep pull requests focused on one change and update the affected documentation and examples.
+For changes to public interfaces or architecture, document the problem and proposed behavior in a focused design note. Keep pull requests focused on one change and update the affected documentation and examples.
 
 ## Validation
 
@@ -19,3 +19,9 @@ Include a minimal reproduction, expected and actual behavior, relevant versions,
 ## Pull requests
 
 Explain the problem, the resulting behavior, and how you validated it. Call out compatibility changes and any validation that remains incomplete.
+
+## Releases
+
+Follow the [release procedure](docs/releasing.md). Update the [changelog](CHANGELOG.md)
+and public documentation with interface changes. Application and MCP protocol
+versions are tracked separately.

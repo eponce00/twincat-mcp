@@ -3,22 +3,30 @@
   "configurations": [
     {
       "name": "TcAutomation - Build",
-      "type": "coreclr",
+      "type": "clr",
       "request": "launch",
       "preLaunchTask": "build-tcautomation",
-      "program": "${workspaceFolder}/TcAutomation/bin/Debug/net8.0-windows/TcAutomation.exe",
-      "args": ["build", "--solution", "${input:solutionPath}"],
+      "program": "${workspaceFolder}/TcAutomation/bin/Release-v2/TcAutomation.exe",
+      "args": [
+        "build",
+        "--solution",
+        "${input:solutionPath}"
+      ],
       "cwd": "${workspaceFolder}/TcAutomation",
       "console": "integratedTerminal",
       "stopAtEntry": false
     },
     {
       "name": "TcAutomation - Info",
-      "type": "coreclr",
+      "type": "clr",
       "request": "launch",
       "preLaunchTask": "build-tcautomation",
-      "program": "${workspaceFolder}/TcAutomation/bin/Debug/net8.0-windows/TcAutomation.exe",
-      "args": ["info", "--solution", "${input:solutionPath}"],
+      "program": "${workspaceFolder}/TcAutomation/bin/Release-v2/TcAutomation.exe",
+      "args": [
+        "info",
+        "--solution",
+        "${input:solutionPath}"
+      ],
       "cwd": "${workspaceFolder}/TcAutomation",
       "console": "integratedTerminal",
       "stopAtEntry": false
@@ -28,7 +36,8 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/mcp-server/server.py",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe"
     }
   ],
   "inputs": [

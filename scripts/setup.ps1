@@ -84,14 +84,14 @@ Write-Host "✅ TcAutomation built successfully" -ForegroundColor Green
 Write-Host ""
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
 
-Push-Location "$PSScriptRoot\..\mcp-server"
-pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ pip install failed" -ForegroundColor Red
-    Pop-Location
-    exit 1
+$root = (Resolve-Path "$PSScriptRoot/..").Path
+$pythonPath = Join-Path $root ".venv/Scripts/python.exe"
+if (-not (Test-Path -LiteralPath $pythonPath)) {
+    python -m venv "$root/.venv"
+    if ($LASTEXITCODE -ne 0) { throw "Could not create Python environment." }
 }
-Pop-Location
+& $pythonPath -m pip install -r "$root/mcp-server/requirements.txt"
+if ($LASTEXITCODE -ne 0) { throw "Could not install pinned dependencies." }
 Write-Host "✅ Python dependencies installed" -ForegroundColor Green
 
 Write-Host ""

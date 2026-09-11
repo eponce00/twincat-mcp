@@ -41,7 +41,7 @@ $projectPath = Join-Path $PSScriptRoot "..\TcAutomation\TcAutomation.csproj"
 if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "✅ Build succeeded!" -ForegroundColor Green
-    Write-Host "Executable: TcAutomation\bin\Release\TcAutomation.exe" -ForegroundColor Gray
+    Write-Host "Executable: TcAutomation\bin\Release-v2\TcAutomation.exe" -ForegroundColor Gray
 } else {
     Write-Host "❌ Build failed with exit code $LASTEXITCODE" -ForegroundColor Red
     exit $LASTEXITCODE

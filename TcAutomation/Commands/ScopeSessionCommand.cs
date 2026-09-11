@@ -30,54 +30,66 @@ namespace TcAutomation.Commands
 
         public static int Execute()
         {
-            // Send ready signal
-            var ready = new ScopeSessionResponse { Success = true, State = "Ready" };
-            Console.WriteLine(JsonSerializer.Serialize(ready, CompactJson));
-
-            string line;
-            while ((line = Console.ReadLine()) != null)
+            try
             {
-                if (string.IsNullOrWhiteSpace(line))
-                    continue;
+                // Send ready signal
+                var ready = new ScopeSessionResponse { Success = true, State = "Ready" };
+                Console.WriteLine(JsonSerializer.Serialize(ready, CompactJson));
 
-                try
+                string line;
+                while ((line = Console.ReadLine()) != null)
                 {
-                    using (var doc = JsonDocument.Parse(line))
-                    {
-                        var root = doc.RootElement;
-                        var command = root.GetProperty("command").GetString()?.ToLowerInvariant() ?? "";
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
 
-                        switch (command)
+                    try
+                    {
+                        using (var doc = JsonDocument.Parse(line))
                         {
-                            case "create":
-                                HandleCreate(root);
-                                break;
-                            case "start":
-                                HandleStart(root);
-                                break;
-                            case "stop":
-                                HandleStop(root);
-                                break;
-                            case "status":
-                                HandleStatus();
-                                break;
-                            case "exit":
-                                var exitResp = new ScopeSessionResponse { Success = true, State = "Exit" };
-                                Console.WriteLine(JsonSerializer.Serialize(exitResp, CompactJson));
-                                return 0;
-                            default:
-                                SendError($"Unknown command: {command}");
-                                break;
+                            var root = doc.RootElement;
+                            var command = root.GetProperty("command").GetString()?.ToLowerInvariant() ?? "";
+
+                            switch (command)
+                            {
+                                case "create":
+                                    HandleCreate(root);
+                                    break;
+                                case "start":
+                                    HandleStart(root);
+                                    break;
+                                case "stop":
+                                    HandleStop(root);
+                                    break;
+                                case "status":
+                                    HandleStatus();
+                                    break;
+                                case "exit":
+                                    var exitResp = new ScopeSessionResponse { Success = true, State = "Exit" };
+                                    Console.WriteLine(JsonSerializer.Serialize(exitResp, CompactJson));
+                                    return 0;
+                                default:
+                                    SendError($"Unknown command: {command}");
+                                    break;
+                            }
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        SendError($"Failed to parse command: {ex.Message}");
+                    }
                 }
-                catch (Exception ex)
+
+                return 0;
+            }
+            finally
+            {
+                if (_connector != null)
                 {
-                    SendError($"Failed to parse command: {ex.Message}");
+                    try { if (!_connector.Disposed) _connector.StopShaddow(); } catch { }
+                    try { _connector.Dispose(); } catch { }
+                    _connector = null;
                 }
             }
-
-            return 0;
         }
 
         private static void HandleCreate(JsonElement root)

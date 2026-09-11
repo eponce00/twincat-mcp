@@ -14,9 +14,8 @@ $ErrorActionPreference = "Stop"
 
 # Find the executable
 $exePaths = @(
-    "$PSScriptRoot\..\TcAutomation\bin\Release\net8.0-windows\win-x64\TcAutomation.exe",
-    "$PSScriptRoot\..\TcAutomation\bin\Release\net8.0-windows\TcAutomation.exe",
-    "$PSScriptRoot\..\TcAutomation\bin\Debug\net8.0-windows\TcAutomation.exe",
+    "$PSScriptRoot\..\TcAutomation\bin\Release-v2\TcAutomation.exe",
+    "$PSScriptRoot\..\TcAutomation\bin\Debug\TcAutomation.exe",
     "$PSScriptRoot\..\TcAutomation\publish\TcAutomation.exe"
 )
 

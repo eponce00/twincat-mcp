@@ -4,10 +4,14 @@
     {
       "label": "build-tcautomation",
       "type": "shell",
-      "command": "dotnet",
-      "args": ["build", "-c", "Debug"],
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/scripts/build.ps1"
+      ],
       "options": {
-        "cwd": "${workspaceFolder}/TcAutomation"
+        "cwd": "${workspaceFolder}"
       },
       "group": "build",
       "problemMatcher": "$msCompile"
@@ -15,10 +19,14 @@
     {
       "label": "publish-tcautomation",
       "type": "shell",
-      "command": "dotnet",
-      "args": ["publish", "-c", "Release", "-r", "win-x64", "--self-contained", "false", "-o", "publish"],
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-File",
+        "${workspaceFolder}/scripts/publish.ps1"
+      ],
       "options": {
-        "cwd": "${workspaceFolder}/TcAutomation"
+        "cwd": "${workspaceFolder}"
       },
       "group": "build",
       "problemMatcher": "$msCompile"
@@ -27,7 +35,30 @@
       "label": "test-mcp-inspector",
       "type": "shell",
       "command": "npx",
-      "args": ["@modelcontextprotocol/inspector", "--", "python", "mcp-server/server.py"],
+      "args": [
+        "@modelcontextprotocol/inspector",
+        "--",
+        "${workspaceFolder}/.venv/Scripts/python.exe",
+        "mcp-server/server.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "test-mcp",
+      "type": "process",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": [
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "mcp-server/tests",
+        "-v"
+      ],
       "options": {
         "cwd": "${workspaceFolder}"
       },
