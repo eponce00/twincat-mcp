@@ -116,13 +116,15 @@ namespace TcAutomation.Commands
 
                 stopwatch.Stop();
 
-                result.Success = result.Errors.Count == 0;
+                result.FailedProjectCount = vsInstance.LastBuildInfo;
+                result.BuildOutput = vsInstance.GetBuildOutput();
+                result.Success = result.Errors.Count == 0 && result.FailedProjectCount == 0;
                 result.ErrorCount = result.Errors.Count;
                 result.WarningCount = result.Warnings.Count;
                 result.BuildTime = $"{stopwatch.Elapsed.TotalSeconds:F1}s";
                 result.Summary = result.Success
                     ? $"Build succeeded with {result.WarningCount} warning(s) in {result.BuildTime}"
-                    : $"Build failed with {result.ErrorCount} error(s) and {result.WarningCount} warning(s)";
+                    : $"Build failed: {result.FailedProjectCount} failed project(s), {result.ErrorCount} reported error(s) and {result.WarningCount} warning(s); see BuildOutput for compiler diagnostics";
             }
             catch (Exception ex)
             {

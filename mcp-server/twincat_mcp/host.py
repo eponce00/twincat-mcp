@@ -201,17 +201,18 @@ class ShellHost:
         if HOST_DISABLED:
             raise HostError("host disabled via TWINCAT_DISABLE_HOST")
 
-        if command == "online-change" and (
+        if command in {"online-change", "edit-plc-source"} and (
             not self.is_alive() or not solution_path or not self._current_solution
             or not _paths_equal(self._current_solution, solution_path)
             or (tc_version or None) != (self._current_tc_version or None)
         ):
             return {"success": False, "dispatched": False, "runtimeVerified": False,
-                    "errorMessage": "Online Change requires the existing matching host session; no session was opened or replaced"}, []
+                    "errorMessage": "This operation requires the existing matching host session; no session was opened or replaced"}, []
 
         # Only shell commands need a loaded solution; ADS commands don't.
         shell_commands = {
             "build", "info", "clean", "set-target", "activate", "restart", "online-change",
+            "matching-login", "read-plc-source", "edit-plc-source",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis", "generate-library",
@@ -376,6 +377,12 @@ class ShellHost:
 
             if msg.get("ok"):
                 return msg.get("result", {})
+            elif (method == "execute-step" and isinstance(msg.get("result"), dict)
+                  and msg.get("command") == (params or {}).get("command")):
+                # A delivered command rejection is not a broken host connection.
+                # Preserve the receipt, including whether any mutation started;
+                # otherwise callers may replay a rejected command via CLI.
+                return {"command": msg["command"], "result": msg["result"]}
             else:
                 err = msg.get("error") or "host returned error"
                 raise HostError(str(err))

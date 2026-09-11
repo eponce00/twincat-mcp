@@ -8,6 +8,8 @@ namespace TcAutomation.Models
     public class BuildResult
     {
         public bool Success { get; set; }
+        public int FailedProjectCount { get; set; }
+        public string BuildOutput { get; set; } = "";
         public string BuildTime { get; set; } = "";
         public int ErrorCount { get; set; }
         public int WarningCount { get; set; }

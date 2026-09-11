@@ -44,7 +44,7 @@ def run_shell_step(
     camelCase keys without change.
     """
     step_args = step_args or {}
-    if command.lower() == "online-change":
+    if command.lower() in {"online-change", "matching-login", "edit-plc-source"}:
         allow_fallback = False
 
     host = get_shell_host()
@@ -61,6 +61,7 @@ def run_shell_step(
         except HostError as e:
             if not allow_fallback:
                 return _ci_wrap({"success": False, "outcomeUnknown": True,
+                                 "hostError": str(e),
                                  "errorMessage": "Engineering host failed; inspect the runtime before another attempt. No replay was attempted."}), []
             # Log once to stderr and fall through to CLI. Subsequent calls
             # will re-attempt host; this matters if the host crashed but

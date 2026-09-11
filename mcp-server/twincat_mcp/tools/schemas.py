@@ -20,9 +20,29 @@ from ..defaults import DEFAULT_AMS_NET_ID, describe_default_for_schema
 _AMS_NET_ID_DESC = describe_default_for_schema()
 
 
+def _session_tool(name, description, extra, read_only=False):
+    properties = {"solutionPath": {"type": "string"}, "amsNetId": {"type": "string"},
+                  "plcName": {"type": "string"}} | extra
+    required = list(properties)
+    properties["tcVersion"] = {"type": "string"}
+    return Tool(name=name, description=description,
+                inputSchema={"type": "object", "properties": properties, "required": required},
+                annotations={"readOnlyHint": read_only, "destructiveHint": not read_only,
+                             "idempotentHint": read_only})
+
+
 def get_tool_schemas() -> list[Tool]:
     """Return the list of Tool descriptors advertised via list_tools."""
     return [
+        _session_tool(
+            "twincat_matching_login",
+            "Establish login from an unchanged baseline with retained compile information. Select the explicit baseline configuration/platform; target and configured ADS port must match and runtime must be RUN. Rejects change/download prompts instead of approving them. Use before source edits; no CLI replay.",
+            {"port": {"type": "integer", "minimum": 851, "maximum": 899},
+             "configuration": {"type": "string", "description": "Matching baseline configuration, e.g. Release"},
+             "platform": {"type": "string", "description": "Matching baseline platform, e.g. TwinCAT RT (x64)"},
+             "confirm": {"type": "string", "enum": ["CONFIRM"]}}),
+        _session_tool("twincat_read_plc_source", "Read a PLC POU declaration or implementation and its UTF-8 SHA256 in the engineering session.", {"path": {"type": "string"}, "section": {"type": "string", "enum": ["declaration", "implementation"]}}, read_only=True),
+        _session_tool("twincat_edit_plc_source", "Edit and save one POU section in the existing logged-in engineering session only when its current SHA256 matches. Does not compile or apply the edit. Run check-all-objects, then explicitly apply Online Change. Never replays after host failure.", {"path": {"type": "string"}, "section": {"type": "string", "enum": ["declaration", "implementation"]}, "text": {"type": "string"}, "expectedSha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}}),
         Tool(
             name="twincat_online_change",
             description="Apply Online Change once in an already logged-in matching PLC session as the sole logged-in PLC. Requires retained compile information. Verifies exactly one runtime online-change counter increment and advancing cycles. No login, download, activation, restart, boot-project update or replay after uncertain failure. Does not qualify application behavior or uninterrupted execution.",

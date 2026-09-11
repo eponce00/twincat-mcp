@@ -213,7 +213,9 @@ namespace TcAutomation.Commands
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"Warning: Could not read error list: {ex.Message}");
+                    result.Success = false;
+                    result.ErrorMessage = $"Cannot verify CheckAllObjects diagnostics: {ex.Message}";
+                    return result;
                 }
 
                 result.ErrorCount = result.Errors.Count;

@@ -151,10 +151,10 @@ namespace TcAutomation.Commands
 
                     var errorItems = vsInstance.GetErrorItems();
                     int errorCount = CountBuildErrors(errorItems);
-                    if (errorCount > 0)
+                    if (errorCount > 0 || vsInstance.LastBuildInfo != 0)
                     {
                         result.Success = false;
-                        result.ErrorMessage = $"Build failed with {errorCount} error(s)";
+                        result.ErrorMessage = $"Build failed: {vsInstance.LastBuildInfo} failed project(s), {errorCount} reported error(s). {vsInstance.GetBuildOutput()}";
                         return result;
                     }
                 }

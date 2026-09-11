@@ -38,9 +38,45 @@ separately with application-specific assertions.
 
 The operation does not log in, edit source, build the whole solution, download,
 activate, restart, update the boot project or approve dialogs. Prepare the matching
-session and edit separately. A cold MCP host without a matching login will reject
-the operation. Automatic baseline login/edit preparation remains a separate
-engineering-workflow task.
+session and edit separately. A cold MCP host without a matching login rejects
+the operation.
+
+## Prepare and edit in the persistent session
+
+1. Open/select the solution and target with `twincat_set_target`. Keep the matching
+   source and compile information; do not clean or change source before login.
+2. Arm operations and call `twincat_matching_login` with `solutionPath`, `amsNetId`,
+   `plcName`, `port`, matching `configuration`/`platform` (for example `Release` /
+   `TwinCAT RT (x64)`) and `confirm: "CONFIRM"`. It requires the configured port
+   and a running application. An offline session may report no reference code;
+   a successful login must report unchanged code afterward. It temporarily disables silent
+   dialog defaults and cancels change/download/overwrite prompts in its owned XAE
+   process. It never approves a replacement application. Unknown/localized dialog
+   variants may time out; inspect the session instead of retrying automatically.
+3. Call `twincat_read_plc_source` with the same solution/target/PLC plus the full
+   Automation Interface POU `path` and `section` (`declaration` or `implementation`).
+   The result contains `Text` and `Sha256`, calculated over the exact UTF-8 text.
+4. Call `twincat_edit_plc_source` with those fields, replacement `text` and the
+   returned `expectedSha256`. The existing matching host and a logged-in PLC are
+   required. A stale hash rejects the edit. It saves source, but does not apply it.
+5. Run `twincat_check_all_objects`, then explicitly call `twincat_online_change`
+   with the current expected runtime count. Check application behavior separately.
+
+Use the same `tcVersion` selection throughout. Login and edits never fall back to
+a one-shot process after host failure. Read the current source/runtime to reconcile
+an uncertain outcome. A failed edit can have changed source if its save/reply failed;
+do not assume rollback. Login and edit are also dispatcher steps `matching-login`
+and `edit-plc-source`; source reads use `read-plc-source`.
+
+An isolated build can be selected with `TWINCAT_AUTOMATION_EXE` in the MCP server
+environment. An invalid explicit path fails instead of selecting another build.
+
+On the dedicated TcForge bench (XAE 3.1.4026.26, XAR 3.1.4026.17), an actual MCP
+client completed this sequence on ADS 854: matching login, source read, rejected
+stale hash, edit, object check and Online Change (runtime count 0 to 1, cycles
+31365 to 32146). Source was restored and the owned session closed. The object
+check included one generated-TMC version warning; this is not a zero-warning or
+production-load qualification. The TcForge tracker retains the evidence paths.
 
 `DispatchAttempted`, `Dispatched`, `RuntimeVerified` and `OutcomeUnknown` distinguish
 dispatch from verification. On a host error, the wrapper never falls back to a

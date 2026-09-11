@@ -37,6 +37,8 @@ ARMED_MODE_TTL = int(os.environ.get("TWINCAT_ARMED_TTL", 900))
 
 # Tools that require armed mode.
 DANGEROUS_TOOLS = [
+    "twincat_matching_login",
+    "twincat_edit_plc_source",
     "twincat_activate",
     "twincat_restart",
     "twincat_online_change",
@@ -49,6 +51,7 @@ DANGEROUS_TOOLS = [
 
 # Tools that additionally require `confirm: "CONFIRM"` on every call.
 CONFIRMATION_REQUIRED_TOOLS = [
+    "twincat_matching_login",
     "twincat_activate",
     "twincat_restart",
     "twincat_online_change",
@@ -61,6 +64,8 @@ CONFIRM_TOKEN = "CONFIRM"
 # inside twincat_batch. If any step in a batch matches one of these, the
 # batch as a whole is treated as dangerous and requires armed mode.
 DANGEROUS_BATCH_COMMANDS = {
+    "matching-login",
+    "edit-plc-source",
     "activate",
     "restart",
     "online-change",
@@ -73,6 +78,7 @@ DANGEROUS_BATCH_COMMANDS = {
 # confirm='CONFIRM' at the batch level (same policy as twincat_activate /
 # twincat_restart).
 CONFIRMATION_REQUIRED_BATCH_COMMANDS = {
+    "matching-login",
     "activate",
     "restart",
     "online-change",

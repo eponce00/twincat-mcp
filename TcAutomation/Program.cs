@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.CommandLine;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -33,6 +34,13 @@ namespace TcAutomation
         [STAThread] // Required for COM STA thread
         static int Main(string[] args)
         {
+            // Package Manager installations keep the native ADS transport here.
+            // Resolve it for this process even when the launching client has an
+            // older PATH (for example, Codex was open during TwinCAT setup).
+            string common64 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Beckhoff", "TwinCAT", "Common64");
+            if (File.Exists(Path.Combine(common64, "TcAdsDll.dll")))
+                Environment.SetEnvironmentVariable("PATH", common64 + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
+
             // The persistent host owns its own MessageFilter lifetime across many
             // requests, so do NOT wrap it with the outer Register/Revoke. All
             // other subcommands get the existing global registration.

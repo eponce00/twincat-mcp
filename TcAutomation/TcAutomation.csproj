@@ -94,7 +94,7 @@
       <Version>2.0.0-beta4.22272.1</Version>
     </PackageReference>
     <PackageReference Include="Beckhoff.TwinCAT.Ads">
-      <Version>6.1.203</Version>
+      <Version>7.0.317</Version>
     </PackageReference>
     <PackageReference Include="Beckhoff.TwinCAT.TcEventLoggerAdsProxy.Net">
       <Version>2.9.3</Version>
@@ -117,6 +117,8 @@
     <Compile Include="Commands\ActivateCommand.cs" />
     <Compile Include="Commands\RestartCommand.cs" />
     <Compile Include="Commands\OnlineChangeCommand.cs" />
+    <Compile Include="Commands\MatchingLoginCommand.cs" />
+    <Compile Include="Commands\PlcSourceCommand.cs" />
     <Compile Include="Commands\DeployCommand.cs" />
     <Compile Include="Commands\ListPlcsCommand.cs" />
     <Compile Include="Commands\SetBootProjectCommand.cs" />

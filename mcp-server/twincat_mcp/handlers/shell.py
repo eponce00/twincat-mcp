@@ -690,3 +690,33 @@ async def handle_online_change(arguments: dict, tool_start_time: float) -> list[
         timeout_minutes=2, allow_fallback=False,
     )
     return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
+async def _source_session_step(command: str, arguments: dict, required: tuple) -> list[TextContent]:
+    import json
+    if any(arguments.get(key) is None for key in required):
+        return [TextContent(type="text", text=json.dumps({"success": False, "errorMessage": "Required explicit fields: " + ", ".join(required)}))]
+    result, _ = run_shell_step(
+        command, {key: arguments[key] for key in required if key != "solutionPath"},
+        solution_path=arguments["solutionPath"], tc_version=arguments.get("tcVersion"),
+        timeout_minutes=2, allow_fallback=False,
+    )
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+
+@register("twincat_matching_login")
+async def handle_matching_login(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    return await _source_session_step("matching-login", arguments,
+                                     ("solutionPath", "amsNetId", "plcName", "port", "configuration", "platform"))
+
+
+@register("twincat_read_plc_source")
+async def handle_read_plc_source(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    return await _source_session_step("read-plc-source", arguments,
+                                     ("solutionPath", "amsNetId", "plcName", "path", "section"))
+
+
+@register("twincat_edit_plc_source")
+async def handle_edit_plc_source(arguments: dict, tool_start_time: float) -> list[TextContent]:
+    return await _source_session_step("edit-plc-source", arguments,
+                                     ("solutionPath", "amsNetId", "plcName", "path", "section", "text", "expectedSha256"))

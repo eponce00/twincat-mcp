@@ -15,6 +15,7 @@ These wrappers are legacy as the primary call path, but they stay in use:
 """
 
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -42,6 +43,12 @@ TC_AUTOMATION_PATHS = [
 
 def find_tc_automation_exe() -> Path:
     """Find the TcAutomation.exe executable, raising FileNotFoundError with a helpful message."""
+    configured = os.environ.get("TWINCAT_AUTOMATION_EXE")
+    if configured:
+        path = Path(configured).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Configured TWINCAT_AUTOMATION_EXE does not exist: {path}")
+        return path
     for path in TC_AUTOMATION_PATHS:
         if path.exists():
             return path

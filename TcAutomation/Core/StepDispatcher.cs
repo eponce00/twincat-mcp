@@ -22,7 +22,7 @@ namespace TcAutomation.Core
         public static readonly HashSet<string> ShellCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "build", "info", "clean",
-            "set-target", "activate", "restart", "online-change",
+            "set-target", "activate", "restart", "online-change", "matching-login", "read-plc-source", "edit-plc-source",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis",
@@ -110,6 +110,22 @@ namespace TcAutomation.Core
                         string? amsNetId = GetString(argsElement, "amsNetId", hasArgs);
                         return ActivateCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId);
                     }
+                    case "matching-login":
+                        return MatchingLoginCommand.ExecuteInSession(vsInstance,
+                            GetString(argsElement, "amsNetId", hasArgs),
+                            GetString(argsElement, "plcName", hasArgs),
+                            GetInt(argsElement, "port", hasArgs) ?? throw new ArgumentException("Explicit port required"),
+                            GetString(argsElement, "configuration", hasArgs), GetString(argsElement, "platform", hasArgs));
+                    case "read-plc-source":
+                    case "edit-plc-source":
+                        return PlcSourceCommand.ExecuteInSession(vsInstance,
+                            GetString(argsElement, "amsNetId", hasArgs),
+                            GetString(argsElement, "plcName", hasArgs),
+                            GetString(argsElement, "path", hasArgs),
+                            GetString(argsElement, "section", hasArgs),
+                            command.Equals("edit-plc-source", StringComparison.OrdinalIgnoreCase)
+                                ? GetString(argsElement, "text", hasArgs) ?? throw new ArgumentException("Source text required") : null,
+                            GetString(argsElement, "expectedSha256", hasArgs));
                     case "online-change":
                     {
                         string target = GetString(argsElement, "amsNetId", hasArgs) ?? throw new ArgumentException("Explicit amsNetId required");

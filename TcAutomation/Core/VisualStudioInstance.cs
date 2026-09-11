@@ -2,6 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using Microsoft.Win32;
 using System.Threading;
 using EnvDTE80;
 using TCatSysManagerLib;
@@ -27,7 +31,7 @@ namespace TcAutomation.Core
         private EnvDTE.Solution? _solution;
         private EnvDTE.Project? _tcProject;
         private bool _loaded;
-        private HashSet<int>? _preExistingPids;
+        private Process? _ownedProcess;
 
         // Silent-reload state. When we change DTE options (AutoloadExternalChanges,
         // etc.) we remember the previous value so we can restore it on Close()
@@ -51,7 +55,7 @@ namespace TcAutomation.Core
 
         /// <summary>
         /// The Windows PID of the TcXaeShell/devenv process we launched.
-        /// Populated after Load() via PID-diff against the pre-existing snapshot.
+        /// Populated directly from Process.Start before attaching to that PID in the ROT.
         /// Used by the persistent host to write session files and force-kill on
         /// shutdown even if DTE.Quit() fails or the DTE proxy becomes unresponsive.
         /// </summary>
@@ -72,7 +76,9 @@ namespace TcAutomation.Core
         {
             _solutionFilePath = solutionFilePath;
             _tcVersion = tcVersion;
-            _forceTcVersion = forceTcVersion;
+            // PowerShell's string binding can turn a supplied $null into "".
+            // An absent override must not hide the required project baseline.
+            _forceTcVersion = string.IsNullOrWhiteSpace(forceTcVersion) ? null : forceTcVersion;
         }
 
         /// <summary>
@@ -312,6 +318,26 @@ namespace TcAutomation.Core
             return _dte.ToolWindows.ErrorList.ErrorItems;
         }
 
+        public DTE2 Dte => _dte ?? throw new InvalidOperationException("DTE not loaded.");
+
+        public int LastBuildInfo => _solution.SolutionBuild.LastBuildInfo;
+
+        public string GetBuildOutput()
+        {
+            var output = new System.Text.StringBuilder();
+            foreach (EnvDTE.OutputWindowPane pane in _dte.ToolWindows.OutputWindow.OutputWindowPanes)
+            {
+                try
+                {
+                    var doc = pane.TextDocument;
+                    output.AppendLine("[" + pane.Name + "]");
+                    output.AppendLine(doc.StartPoint.CreateEditPoint().GetText(doc.EndPoint));
+                }
+                catch (System.Runtime.InteropServices.COMException) { }
+            }
+            return output.ToString();
+        }
+
         /// <summary>
         /// Close Visual Studio instance. Force-kills the process if DTE.Quit() fails.
         /// </summary>
@@ -345,23 +371,25 @@ namespace TcAutomation.Core
                 }
                 catch { }
 
-                // Force-kill the process we spawned (identify by PID diff)
+            }
+            // A retained Process handle identifies only the process we launched,
+            // including when startup failed before a DTE became available.
+            if (_ownedProcess != null)
+            {
                 try
                 {
-                    var currentPids = Process.GetProcessesByName("TcXaeShell")
-                        .Concat(Process.GetProcessesByName("devenv"));
-                    foreach (var proc in currentPids)
+                    if (!_ownedProcess.HasExited)
                     {
-                        if (_preExistingPids != null && !_preExistingPids.Contains(proc.Id))
-                        {
-                            Console.Error.WriteLine($"[DEBUG] Force-killing spawned DTE process (PID {proc.Id})");
-                            try { proc.Kill(); proc.WaitForExit(5000); } catch { }
-                        }
+                        Console.Error.WriteLine($"[DEBUG] Force-killing owned DTE process (PID {_ownedProcess.Id})");
+                        _ownedProcess.Kill();
+                        _ownedProcess.WaitForExit(5000);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] Owned DTE cleanup failed: {ex.Message}"); }
+                finally { _ownedProcess.Dispose(); _ownedProcess = null; }
             }
             _dte = null;
+            DteProcessId = null;
             _loaded = false;
         }
 
@@ -372,23 +400,9 @@ namespace TcAutomation.Core
 
         private void LoadDevelopmentToolsEnvironment(string vsVersion)
         {
-            // Snapshot existing TcXaeShell/devenv PIDs so we can identify ours
-            // later via PID-diff. Every PID captured here belongs to someone
-            // else (user's IDE, another automation, etc.) and is OFF-LIMITS
-            // for the rest of this instance's lifetime.
-            //
-            // NOTE: we deliberately do NOT kill TcXaeShell instances with an
-            // empty MainWindowTitle here. That heuristic was unsafe — a
-            // legitimately user-opened IDE reports an empty title during
-            // startup, when a modal dialog (e.g. Static Routes) is active,
-            // or when minimized to tray. Orphan cleanup is now done
-            // precisely via SessionFile.ReapOrphans() using recorded PIDs
-            // + start-time fingerprints.
-            _preExistingPids = new HashSet<int>(
-                Process.GetProcessesByName("TcXaeShell").Select(p => p.Id)
-                .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id)));
-
-            // Try TcXaeShell first, then Visual Studio
+            // COM activation launches through the service host, whose environment
+            // can predate TwinCAT installation. Launch our own process with the
+            // native-library search path, then attach only to that exact PID.
             string[] progIds = new[]
             {
                 $"TcXaeShell.DTE.{vsVersion}",
@@ -397,48 +411,150 @@ namespace TcAutomation.Core
                 "TcXaeShell.DTE.15.0",
                 "VisualStudio.DTE.17.0",
             };
-
-            foreach (var progId in progIds)
+            Exception? lastError = null;
+            foreach (var progId in progIds.Distinct())
             {
                 try
                 {
                     var type = Type.GetTypeFromProgID(progId);
                     if (type == null) continue;
-
-                    _dte = (DTE2)Activator.CreateInstance(type)!;
-
-                    // Identify which TcXaeShell/devenv we just spawned by diffing PIDs.
-                    // This PID is what the persistent host persists + force-kills on
-                    // cleanup (the COM runtime owns the process lifecycle otherwise).
-                    try
+                    using var key = Registry.ClassesRoot.OpenSubKey($@"CLSID\{{{type.GUID}}}\LocalServer32");
+                    var command = key?.GetValue(null) as string;
+                    if (string.IsNullOrWhiteSpace(command)) continue;
+                    var start = CreateDevelopmentToolsStartInfo(command!);
+                    _ownedProcess = Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
+                    DteProcessId = _ownedProcess.Id;
+                    Console.Error.WriteLine($"[DEBUG] Launched owned DTE process PID: {DteProcessId}");
+                    var timer = Stopwatch.StartNew();
+                    while (timer.Elapsed < TimeSpan.FromSeconds(120))
                     {
-                        var newPids = Process.GetProcessesByName("TcXaeShell")
-                            .Select(p => p.Id)
-                            .Concat(Process.GetProcessesByName("devenv").Select(p => p.Id))
-                            .ToList();
-                        foreach (var pid in newPids)
-                        {
-                            if (_preExistingPids != null && !_preExistingPids.Contains(pid))
-                            {
-                                DteProcessId = pid;
-                                Console.Error.WriteLine($"[DEBUG] Tracked DTE process PID: {pid}");
-                                break;
-                            }
-                        }
+                        if (_ownedProcess.HasExited)
+                            throw new InvalidOperationException($"XAE exited before publishing DTE (exit {_ownedProcess.ExitCode}).");
+                        _dte = FindOwnedDte(progId, DteProcessId.Value);
+                        if (_dte != null) break;
+                        Thread.Sleep(250);
                     }
-                    catch { }
-
+                    if (_dte == null) throw new TimeoutException($"XAE PID {DteProcessId} did not publish its DTE within 120 seconds.");
                     ConfigureDte();
                     LoadTwinCATVersion();
                     return;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Try next ProgID
+                    lastError = ex;
+                    Console.Error.WriteLine($"[DEBUG] DTE launch {progId} failed: {ex}");
+                    Close();
                 }
             }
+            throw new InvalidOperationException("Could not load TcXaeShell or Visual Studio DTE. Ensure TwinCAT XAE is installed.", lastError);
+        }
 
-            throw new InvalidOperationException("Could not load TcXaeShell or Visual Studio DTE. Ensure TwinCAT XAE is installed.");
+        private static ProcessStartInfo CreateDevelopmentToolsStartInfo(string registeredCommand)
+        {
+            var command = Environment.ExpandEnvironmentVariables(registeredCommand.Trim());
+            string executable;
+            string arguments;
+            if (command.StartsWith("\"", StringComparison.Ordinal))
+            {
+                var end = command.IndexOf('"', 1);
+                if (end < 0) throw new InvalidOperationException("Unterminated registered XAE executable path.");
+                executable = command.Substring(1, end - 1);
+                arguments = command.Substring(end + 1).Trim();
+            }
+            else
+            {
+                // LocalServer32 commonly stores an unquoted path containing spaces.
+                var end = command.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+                if (end < 0) throw new InvalidOperationException("Registered XAE server is not an executable.");
+                executable = command.Substring(0, end + 4);
+                arguments = command.Substring(end + 4).Trim();
+            }
+            if (!Path.IsPathRooted(executable) || !File.Exists(executable))
+                throw new FileNotFoundException("Registered XAE executable does not exist.", executable);
+            // Preserve the automation-server startup mode formerly supplied by
+            // COM activation; a normal interactive launch has different ownership.
+            if (!arguments.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+                .Any(arg => string.Equals(arg, "-Embedding", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(arg, "/Embedding", StringComparison.OrdinalIgnoreCase)))
+                arguments = (arguments + " -Embedding").Trim();
+            var start = new ProcessStartInfo(executable, arguments)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                WorkingDirectory = Path.GetDirectoryName(executable)!,
+            };
+            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Beckhoff", "TwinCAT");
+            // Legacy shells can be 32-bit even though this automation host is x64.
+            // Put the launched executable's native directory first.
+            bool x86;
+            using (var reader = new BinaryReader(File.OpenRead(executable)))
+            {
+                reader.BaseStream.Position = 0x3c;
+                var peOffset = reader.ReadInt32();
+                reader.BaseStream.Position = peOffset;
+                if (reader.ReadUInt32() != 0x00004550) throw new InvalidOperationException("Invalid XAE PE signature.");
+                x86 = reader.ReadUInt16() == 0x014c;
+            }
+            var common = new[] { Path.Combine(root, x86 ? "Common32" : "Common64"), Path.Combine(root, x86 ? "Common64" : "Common32") };
+            start.EnvironmentVariables["PATH"] = string.Join(";", common.Where(Directory.Exists)
+                .Concat(new[] { start.EnvironmentVariables["PATH"] ?? string.Empty }));
+            return start;
+        }
+
+        [DllImport("ole32.dll")]
+        private static extern int GetRunningObjectTable(int reserved, out IRunningObjectTable table);
+        [DllImport("ole32.dll")]
+        private static extern int CreateBindCtx(int reserved, out IBindCtx context);
+
+        private static DTE2? FindOwnedDte(string progId, int processId)
+        {
+            IRunningObjectTable? table = null;
+            IBindCtx? context = null;
+            IEnumMoniker? enumerator = null;
+            try
+            {
+                Marshal.ThrowExceptionForHR(GetRunningObjectTable(0, out table));
+                Marshal.ThrowExceptionForHR(CreateBindCtx(0, out context));
+                table.EnumRunning(out enumerator);
+                var monikers = new IMoniker[1];
+                while (enumerator.Next(1, monikers, IntPtr.Zero) == 0)
+                {
+                    try
+                    {
+                        monikers[0].GetDisplayName(context, null, out var name);
+                        if (!IsOwnedDteMoniker(name, progId, processId)) continue;
+                        table.GetObject(monikers[0], out var value);
+                        if (value is DTE2 dte) return dte;
+                        if (Marshal.IsComObject(value)) Marshal.ReleaseComObject(value);
+                    }
+                    catch (COMException) { /* A startup/closing ROT entry can be temporarily unavailable. */ }
+                    catch (UnauthorizedAccessException) { /* E_ACCESSDENIED maps to this managed type; skip protected/unavailable ROT entries. */ }
+                    finally { Marshal.ReleaseComObject(monikers[0]); }
+                }
+            }
+            catch (COMException) { /* Retry until the owned shell has finished startup. */ }
+            catch (UnauthorizedAccessException) { /* Retry bounded attachment; never change permissions or select another PID. */ }
+            finally
+            {
+                if (enumerator != null) Marshal.ReleaseComObject(enumerator);
+                if (context != null) Marshal.ReleaseComObject(context);
+                if (table != null) Marshal.ReleaseComObject(table);
+            }
+            return null;
+        }
+
+        private static bool IsOwnedDteMoniker(string name, string progId, int processId)
+        {
+            // XAE shells may publish the VisualStudio alias. Never attach merely
+            // by ProgID: interactive and automated sessions can coexist.
+            var suffix = ":" + processId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var plain = name.TrimStart('!');
+            var alias = progId.StartsWith("TcXaeShell.", StringComparison.OrdinalIgnoreCase)
+                ? "VisualStudio." + progId.Substring("TcXaeShell.".Length)
+                : "TcXaeShell." + progId.Substring("VisualStudio.".Length);
+            return string.Equals(plain, progId + suffix, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(plain, alias + suffix, StringComparison.OrdinalIgnoreCase);
         }
 
         private void ConfigureDte()
@@ -454,7 +570,7 @@ namespace TcAutomation.Core
             // modal dialogs, not the IDE frame itself.
             //
             // MainWindow can be briefly unavailable immediately after the
-            // Activator.CreateInstance call (the shell is still initializing
+            // process launch and ROT attachment (the shell is still initializing
             // its UI thread), so retry a few times before giving up.
             HideMainWindow();
 
@@ -654,7 +770,7 @@ namespace TcAutomation.Core
         /// <summary>
         /// Hide the DTE main window. Uses a short retry loop because
         /// MainWindow can throw RPC_E_SERVERCALL_RETRYLATER or return null
-        /// while the shell is still coming up after CreateInstance.
+        /// while the owned shell is still coming up after process launch.
         /// Also tries to minimize as a belt-and-braces fallback if hiding
         /// ever fails silently on a given shell version.
         /// </summary>
@@ -689,39 +805,42 @@ namespace TcAutomation.Core
             }
         }
 
+        /// <summary>Reads and verifies the actual selected engineering version, including after solution load.</summary>
+        public string EffectiveTwinCATVersion
+        {
+            get
+            {
+                if (_dte == null) throw new InvalidOperationException("DTE not loaded.");
+                var manager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
+                var actual = manager.Version;
+                var requested = _forceTcVersion ?? _tcVersion;
+                if (!string.Equals(actual, requested, StringComparison.Ordinal))
+                    throw new InvalidOperationException($"Requested TwinCAT XAE {requested}, but effective version is {actual}.");
+                return actual;
+            }
+        }
+
         private void LoadTwinCATVersion()
         {
-            if (_dte == null) return;
+            if (_dte == null) throw new InvalidOperationException("DTE not loaded.");
+            var manager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
+            var available = new List<string>();
+            foreach (string version in manager.Versions) available.Add(version);
+            var actual = SelectExactTwinCATVersion(_forceTcVersion ?? _tcVersion, available,
+                version => manager.Version = version, () => manager.Version);
+            Console.Error.WriteLine($"[DEBUG] Verified TwinCAT XAE version: {actual}");
+        }
 
-            try
-            {
-                var remoteManager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
-                var versionToUse = _forceTcVersion ?? _tcVersion;
-
-                // Check if requested version is available
-                bool versionFound = false;
-                Version? latestVersion = null;
-
-                foreach (string version in remoteManager.Versions)
-                {
-                    var v = new Version(version);
-                    if (latestVersion == null || v > latestVersion)
-                        latestVersion = v;
-
-                    if (version == versionToUse)
-                        versionFound = true;
-                }
-
-                if (versionFound)
-                {
-                    remoteManager.Version = versionToUse;
-                }
-                else if (latestVersion != null)
-                {
-                    remoteManager.Version = latestVersion.ToString();
-                }
-            }
-            catch { }
+        private static string SelectExactTwinCATVersion(string requested, IEnumerable<string> available,
+            Action<string> select, Func<string> read)
+        {
+            if (string.IsNullOrWhiteSpace(requested) || !available.Contains(requested, StringComparer.Ordinal))
+                throw new InvalidOperationException($"Requested TwinCAT XAE version '{requested}' is not installed; no fallback is permitted.");
+            select(requested);
+            var actual = read();
+            if (!string.Equals(actual, requested, StringComparison.Ordinal))
+                throw new InvalidOperationException($"Requested TwinCAT XAE {requested}, but effective version is {actual}.");
+            return actual;
         }
     }
 }
