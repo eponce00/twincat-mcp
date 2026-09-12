@@ -86,7 +86,9 @@ return directly without a request key. Each marked operation requires a scoped g
 | Operation | Purpose | Required arguments | Grant | Execution |
 | --- | --- | --- | --- | --- |
 | `system.reap_orphans` | Clean dead-parent workers recorded in session files using PID start-time verification. | None | No | Job |
-| `system.routes` | Read configured ADS routes from local TwinCAT StaticRoutes.xml without contacting a PLC. | None | No | Job |
+| `system.route_remove` | Remove one exact ADS route locally, or from both systems when removeRemote is true. Remote removal requires a DPAPI-protected PSCredential file. | `amsNetId`, `confirm`, `grantHandle` | Yes | Job |
+| `system.route_upsert` | Create or replace one fingerprint-verified self-signed Secure ADS route using Beckhoff TcXaeMgmt, then verify the target ADS port. | `amsNetId`, `ipOrHostName`, `name`, `credentialPath`, `fingerprint`, `confirm`, `grantHandle` | Yes | Job |
+| `system.routes` | List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode, certificate fingerprint and current online status. | None | No | Job |
 | `system.status` | Application version and queue status. Does not start TwinCAT. | None | No | Immediate |
 
 ## Workflow

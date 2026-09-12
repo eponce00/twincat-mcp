@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,9 @@ from twincat_mcp.backend import Backend
 from twincat_mcp.catalog import Catalog
 from twincat_mcp.cli import find_tc_automation_exe
 from twincat_mcp.dispatch import run_shell_step
+from twincat_mcp.errors import OperationError
 from twincat_mcp.host import HostError, ShellHost
+from twincat_mcp.routes import run_route_action
 from twincat_mcp.scope import ScopeSession
 
 
@@ -128,6 +131,74 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(receipt, result)
         backend.scope.close.assert_called_once()
 
+    def test_route_backend_uses_fixed_beckhoff_adapter_actions(self):
+        backend = Backend()
+        catalog = Catalog()
+
+        with patch(
+            "twincat_mcp.backend.run_route_action",
+            return_value={"success": True, "routes": []},
+        ) as run:
+            backend.run(catalog.get("system.routes"), {})
+            run.assert_called_once_with("Get", {})
+
+        arguments = {
+            "amsNetId": "1.2.3.4.1.1",
+            "ipOrHostName": "1.2.3.4",
+            "name": "test-target",
+            "credentialPath": "C:/secure/target.credential.xml",
+            "fingerprint": "a" * 64,
+            "verifyPort": 10000,
+            "unidirectional": False,
+        }
+        with patch(
+            "twincat_mcp.backend.run_route_action",
+            return_value={"success": True},
+        ) as run:
+            backend.run(catalog.get("system.route_upsert"), arguments)
+            run.assert_called_once_with("Upsert", arguments)
+
+    def test_route_adapter_parses_json_without_exposing_credential(self):
+        receipt = {
+            "success": True,
+            "route": {"amsNetId": "1.2.3.4.1.1", "secure": True},
+        }
+        completed = Mock(returncode=0, stdout=json.dumps(receipt), stderr="")
+
+        with tempfile.TemporaryDirectory() as folder:
+            credential = Path(folder) / "credential.xml"
+            credential.write_text("protected", encoding="utf-8")
+            with (
+                patch("twincat_mcp.routes._powershell_executable", return_value="powershell.exe"),
+                patch("twincat_mcp.routes.subprocess.run", return_value=completed) as run,
+            ):
+                result = run_route_action(
+                    "Upsert",
+                    {
+                        "credentialPath": str(credential.resolve()),
+                        "amsNetId": "1.2.3.4.1.1",
+                    },
+                )
+
+        self.assertEqual(receipt, result)
+        invocation = run.call_args
+        self.assertNotIn("protected", " ".join(invocation.args[0]))
+        self.assertNotIn("credential.xml", completed.stdout)
+
+    def test_route_adapter_does_not_replay_timeout(self):
+        with (
+            patch("twincat_mcp.routes._powershell_executable", return_value="powershell.exe"),
+            patch(
+                "twincat_mcp.routes.subprocess.run",
+                side_effect=subprocess.TimeoutExpired("powershell", 1),
+            ) as run,
+        ):
+            result = run_route_action("Remove", {"amsNetId": "1.2.3.4.1.1"}, 1)
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["outcomeUnknown"])
+        run.assert_called_once()
+
 
 class CatalogTests(unittest.TestCase):
     def test_discovery_is_bounded_and_deterministic(self):
@@ -160,3 +231,24 @@ class CatalogTests(unittest.TestCase):
     def test_every_catalog_schema_is_strict(self):
         for e in Catalog().entries.values():
             self.assertFalse(e["inputSchema"]["additionalProperties"])
+
+    def test_route_mutations_require_scoped_grant_and_confirmation(self):
+        catalog = Catalog()
+        for operation in ("system.route_upsert", "system.route_remove"):
+            entry = catalog.get(operation)
+            self.assertTrue(entry["requiresGrant"])
+            self.assertFalse(entry["readOnly"])
+            self.assertIn("amsNetId", entry["inputSchema"]["required"])
+            self.assertIn("grantHandle", entry["inputSchema"]["required"])
+            self.assertIn("confirm", entry["inputSchema"]["required"])
+
+        with self.assertRaisesRegex(OperationError, "credentialPath"):
+            catalog.validate(
+                "system.route_remove",
+                {
+                    "amsNetId": "1.2.3.4.1.1",
+                    "removeRemote": True,
+                    "confirm": "CONFIRM",
+                    "grantHandle": "grant",
+                },
+            )

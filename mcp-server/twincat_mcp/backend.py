@@ -1,15 +1,14 @@
 """Structured adapters to the existing TwinCAT automation worker."""
 
 import json
-import os
 import tempfile
 import uuid
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .cli import run_tc_automation, run_tc_automation_with_progress
 from .dispatch import run_shell_step
 from .host import get_shell_host_if_alive, shutdown_shell_host
+from .routes import run_route_action
 from .scope import ScopeSession
 
 
@@ -56,7 +55,11 @@ class Backend:
             args["plcName"] = context["plcName"]
         id = entry["id"]
         if id == "system.routes":
-            return self.routes()
+            return run_route_action("Get", args)
+        if id == "system.route_upsert":
+            return run_route_action("Upsert", args)
+        if id == "system.route_remove":
+            return run_route_action("Remove", args)
         if id == "system.reap_orphans":
             return normalize(run_tc_automation("reap-orphans", []))
         if id.startswith("scope."):
@@ -144,27 +147,3 @@ class Backend:
         if args.get("outputPath"):
             cli += ["--output", args["outputPath"]]
         return normalize(run_tc_automation("scope-export", cli))
-
-    @staticmethod
-    def routes():
-        roots = [
-            Path(os.environ.get("TWINCAT3DIR", "C:/TwinCAT/3.1")),
-            Path("C:/TwinCAT/3.1"),
-            Path("C:/Program Files/Beckhoff/TwinCAT/3.1"),
-        ]
-        for root in roots:
-            file = root / "Target/StaticRoutes.xml"
-            if file.is_file():
-                tree = ET.parse(file)
-                return {
-                    "success": True,
-                    "routes": [
-                        {
-                            "name": r.findtext("Name"),
-                            "amsNetId": r.findtext("NetId"),
-                            "address": r.findtext("Address"),
-                        }
-                        for r in tree.findall(".//Route")
-                    ],
-                }
-        return {"success": False, "errorMessage": "TwinCAT StaticRoutes.xml not found."}

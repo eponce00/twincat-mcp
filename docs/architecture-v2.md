@@ -38,7 +38,7 @@ must be conservative. Descriptions disclose each operation's finer-grained effec
 | engine.py | Explicit contexts, grants, workflow orchestration and preflight checks. |
 | jobs.py | SQLite receipts, deduplication, serialized queue, cancellation, bounded result pages. |
 | safety.py | Scoped grants with fixed monotonic expiration. |
-| backend.py | Structured adapters between operation arguments and native commands. |
+| backend.py / routes.py | Structured adapters between operation arguments, native commands and Beckhoff's fixed ADS-route cmdlets. |
 | dispatch.py / host.py | One native dispatch; COM serialization and process ownership. |
 | cli.py / scope.py | Bounded recording/export processes and owned Scope sessions. |
 | TcAutomation | Existing automation primitives and composite deployment/test workflows. |
@@ -94,6 +94,7 @@ backend tests cover target/grant isolation, source/session invariants, duplicate
 submissions, persistence, cancellation, sequence preflight and partial output.
 No PLC activation or deployment is performed by these tests.
 
-The protocol and orchestration suite contains 50 tests. Hardware qualification
-is separate: live PLC deployment, online change and optional TE13xx Scope
-require testing against the intended installation.
+The protocol and orchestration suite contains 54 tests. ADS route qualification
+also exercises a grant-scoped local remove, fingerprint-verified secure upsert and
+live system-port probe against the dedicated bench. PLC deployment, online change
+and optional TE13xx Scope remain separate installation-specific checks.

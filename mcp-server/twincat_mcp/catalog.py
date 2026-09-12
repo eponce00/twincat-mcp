@@ -234,6 +234,15 @@ class Catalog:
                 value[key] = copy.deepcopy(prop["default"])
         if "amsNetId" in value and any(int(p) > 255 for p in value["amsNetId"].split(".")):
             raise OperationError("invalid_target", "AMS Net ID octets must be in 0..255.")
+        if (
+            id == "system.route_remove"
+            and value.get("removeRemote")
+            and not value.get("credentialPath")
+        ):
+            raise OperationError(
+                "invalid_arguments",
+                "credentialPath is required when removeRemote is true.",
+            )
         if id == "workflow.sequence":
             for step in value["steps"]:
                 child = self.get(step["operation"])
@@ -307,6 +316,10 @@ def example_for(spec):
         "configuration": "Release",
         "platform": "TwinCAT RT (x64)",
         "path": "TIPC^PLC^PLC Project^POUs^MAIN",
+        "ipOrHostName": "1.2.3.4",
+        "name": "test-target",
+        "credentialPath": "C:/Credentials/test-target.credential.xml",
+        "fingerprint": "0" * 64,
     }
     result = {}
     for key in spec.get("required", []):

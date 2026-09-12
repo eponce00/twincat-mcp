@@ -667,7 +667,7 @@
         },
         "timeoutMs": {
           "type": "integer",
-          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 × timeoutMs.",
+          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 \u00d7 timeoutMs.",
           "default": 2500
         }
       },
@@ -1035,7 +1035,7 @@
   },
   {
     "id": "system.routes",
-    "description": "Read configured ADS routes from local TwinCAT StaticRoutes.xml without contacting a PLC.",
+    "description": "List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode, certificate fingerprint and current online status.",
     "kind": "operation",
     "command": "list-routes",
     "engineering": false,
@@ -1045,6 +1045,121 @@
       "type": "object",
       "properties": {},
       "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "system.route_upsert",
+    "description": "Create or replace one fingerprint-verified self-signed Secure ADS route using Beckhoff TcXaeMgmt, then verify the target ADS port. Reads the target credential from a DPAPI-protected PSCredential file; plaintext passwords are not accepted.",
+    "kind": "operation",
+    "command": "route-upsert",
+    "engineering": false,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "amsNetId": {
+          "type": "string",
+          "pattern": "^(?:\\d{1,3}\\.){5}\\d{1,3}$",
+          "description": "Explicit target AMS Net ID; six octets, each 0..255.",
+          "minLength": 1
+        },
+        "ipOrHostName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "credentialPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path to a DPAPI-protected PSCredential created by Export-Clixml for the current OS user."
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$",
+          "description": "Expected SHA-256 fingerprint of the target self-signed certificate."
+        },
+        "verifyPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 10000
+        },
+        "unidirectional": {
+          "type": "boolean",
+          "default": false
+        },
+        "confirm": {
+          "const": "CONFIRM",
+          "type": "string",
+          "minLength": 1
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unexpired safety grant for this operation and target/context."
+        }
+      },
+      "required": [
+        "amsNetId",
+        "ipOrHostName",
+        "name",
+        "credentialPath",
+        "fingerprint",
+        "confirm",
+        "grantHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "system.route_remove",
+    "description": "Remove one exact ADS route locally, or from both systems when removeRemote is true. Remote removal requires a DPAPI-protected PSCredential file.",
+    "kind": "operation",
+    "command": "route-remove",
+    "engineering": false,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "amsNetId": {
+          "type": "string",
+          "pattern": "^(?:\\d{1,3}\\.){5}\\d{1,3}$",
+          "description": "Explicit target AMS Net ID; six octets, each 0..255.",
+          "minLength": 1
+        },
+        "removeRemote": {
+          "type": "boolean",
+          "default": false
+        },
+        "credentialPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required only when removeRemote is true; absolute path to a DPAPI-protected PSCredential."
+        },
+        "confirm": {
+          "const": "CONFIRM",
+          "type": "string",
+          "minLength": 1
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unexpired safety grant for this operation and target/context."
+        }
+      },
+      "required": [
+        "amsNetId",
+        "confirm",
+        "grantHandle"
+      ],
       "additionalProperties": false
     }
   },
@@ -1083,7 +1198,7 @@
         },
         "contains": {
           "type": "string",
-          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise — e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
+          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise \u2014 e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
         },
         "contextHandle": {
           "type": "string",

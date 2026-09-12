@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Capabilities
+
+- Added grant-scoped `system.route_upsert` and `system.route_remove` operations
+  backed by Beckhoff's `TcXaeMgmt` PowerShell module.
+- Secure route creation requires the target certificate's SHA-256 fingerprint
+  and a DPAPI-protected `PSCredential` file. Plaintext password arguments are
+  not accepted or logged.
+- `system.routes` now reports Beckhoff route metadata, Secure ADS mode,
+  certificate fingerprints and current availability.
+
+### Validation
+
+- The automated protocol and orchestration suite now covers 54 cases.
+- A dedicated Beckhoff bench passed local route removal, self-signed route
+  recreation and an ADS system-port `Run` verification through the MCP engine.
+
 ## 2.0.0 — 2026-09-11
 
 TwinCAT MCP exposes a fixed discovery interface backed by 51 operations.

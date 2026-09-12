@@ -9,7 +9,7 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 51 operations. Individual operations are **not separate MCP tools**.
+The catalog contains 53 operations. Individual operations are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
@@ -20,9 +20,10 @@ the three public tools and the [operation catalog](docs/operations.md).
 
 ## Install
 
-Requires Windows, Python 3.10+, TwinCAT XAE, Visual Studio MSBuild and the .NET
-Framework 4.7.2 targeting pack. Optional Scope operations require TE13xx and an
-automation worker built with Scope support. ADS recording does not require TE13xx.
+Requires Windows, Python 3.10+, TwinCAT XAE, Visual Studio MSBuild, the .NET
+Framework 4.7.2 targeting pack and Beckhoff's `TcXaeMgmt` PowerShell module.
+Optional Scope operations require TE13xx and an automation worker built with
+Scope support. ADS recording does not require TE13xx.
 
 ```powershell
 .\scripts\setup.ps1
@@ -119,6 +120,8 @@ previous server process expire; no implicit replacement login is attempted.
 Build with `engineering.build` and `{"contextHandle":"...","clean":false}`.
 Use `clean:false` when preserving compile information for online change.
 [Online-change workflow](docs/online-change.md) documents the retained-state requirements.
+[Secure ADS route management](docs/ads-routes.md) documents fingerprint-verified
+route recovery and protected credential files.
 
 Operations marked `requiresGrant` need an explicit grant. After the user authorizes
 the work in the calling host, execute `safety.grant`:

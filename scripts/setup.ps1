@@ -68,6 +68,18 @@ if (-not $tcInstalled) {
     Write-Host "⚠️  TwinCAT 3 not detected in registry (may still work if installed)" -ForegroundColor Yellow
 }
 
+# Secure ADS route operations use Beckhoff's supported management cmdlets.
+$tcXaeMgmt = Get-Module -ListAvailable -Name TcXaeMgmt |
+    Sort-Object Version -Descending |
+    Select-Object -First 1
+if ($tcXaeMgmt) {
+    Write-Host "✅ TcXaeMgmt PowerShell module: $($tcXaeMgmt.Version)" -ForegroundColor Green
+} else {
+    Write-Host "❌ Beckhoff TcXaeMgmt PowerShell module not found" -ForegroundColor Red
+    Write-Host "   Install the module before using ADS route operations." -ForegroundColor Gray
+    exit 1
+}
+
 Write-Host ""
 Write-Host "Building TcAutomation..." -ForegroundColor Yellow
 
