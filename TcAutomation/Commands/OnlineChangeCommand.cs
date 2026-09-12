@@ -14,16 +14,24 @@ namespace TcAutomation.Commands
     public static class OnlineChangeCommand
     {
         public static OnlineChangeResult ExecuteInSession(VisualStudioInstance vs,
-            string amsNetId, string plcName, int port, string cycleSymbol,
+            string amsNetId, string plcName, string contextFile, int port, string cycleSymbol,
             uint expectedOnlineChangeCount, int timeoutMs = 10000)
         {
-            var result = new OnlineChangeResult { TargetNetId = amsNetId, Port = port, PlcName = plcName };
+            var result = new OnlineChangeResult
+            {
+                TargetNetId = amsNetId,
+                Port = port,
+                PlcName = plcName,
+                ContextFile = contextFile
+            };
             try
             {
                 if (string.IsNullOrWhiteSpace(amsNetId) || string.IsNullOrWhiteSpace(plcName) ||
                     plcName.Contains("^") || port < 851 || port > 899 ||
-                    string.IsNullOrWhiteSpace(cycleSymbol) || timeoutMs < 100 || timeoutMs > 60000)
-                    throw new ArgumentException("Explicit target, PLC name, port 851..899, ULINT cycle symbol and timeout 100..60000 ms required.");
+                    string.IsNullOrWhiteSpace(contextFile) || !System.IO.Path.IsPathRooted(contextFile) ||
+                    !System.IO.File.Exists(contextFile) || string.IsNullOrWhiteSpace(cycleSymbol) ||
+                    timeoutMs < 100 || timeoutMs > 60000)
+                    throw new ArgumentException("Explicit target, PLC name, existing absolute context file, port 851..899, ULINT cycle symbol and timeout 100..60000 ms required.");
                 var automation = new AutomationInterface(vs);
                 if (automation.TargetNetId != amsNetId)
                     throw new InvalidOperationException("Engineering target does not match; select the target separately before login.");
@@ -46,6 +54,15 @@ namespace TcAutomation.Commands
                     if (status?.Element("LoggedIn")?.Value == "true")
                         throw new InvalidOperationException("Another PLC is logged in; Online Change requires an unambiguous sole online PLC.");
                 }
+
+                // XAE exposes Online Change as a Visual Studio command whose target is
+                // determined by the active PLC editor. Activate a source file belonging
+                // to the selected online PLC application so a stale selection cannot
+                // dispatch a no-op or target another project. The edited object may
+                // belong to a referenced source-library project.
+                // OpenFile itself establishes the active editor in TwinCAT XAE;
+                // its COM return value can be null in the embedded shell.
+                vs.Dte.ItemOperations.OpenFile(System.IO.Path.GetFullPath(contextFile));
                 string command = null;
                 foreach (var name in new[] { "PLC.OnlineChangenone", "OtherContextMenus.Plc2Projects.OnlineChange" })
                 {
@@ -128,6 +145,7 @@ namespace TcAutomation.Commands
         public string Operation => "OnlineChange";
         public string TargetNetId { get; set; }
         public string PlcName { get; set; }
+        public string ContextFile { get; set; }
         public int Port { get; set; }
         public string Command { get; set; }
         public string ContextPolicy => "OnlyLoggedInPlc";

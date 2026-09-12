@@ -130,11 +130,12 @@ namespace TcAutomation.Core
                     {
                         string target = GetString(argsElement, "amsNetId", hasArgs) ?? throw new ArgumentException("Explicit amsNetId required");
                         string plc = GetString(argsElement, "plcName", hasArgs) ?? throw new ArgumentException("Explicit plcName required");
+                        string contextFile = GetString(argsElement, "contextFile", hasArgs) ?? throw new ArgumentException("Absolute contextFile required");
                         string cycles = GetString(argsElement, "cycleSymbol", hasArgs) ?? throw new ArgumentException("ULINT cycleSymbol required");
                         int port = GetInt(argsElement, "port", hasArgs) ?? throw new ArgumentException("Explicit port required");
                         uint expected = argsElement.GetProperty("expectedOnlineChangeCount").GetUInt32();
                         int timeout = GetInt(argsElement, "timeoutMs", hasArgs) ?? 10000;
-                        return OnlineChangeCommand.ExecuteInSession(vsInstance, target, plc, port, cycles, expected, timeout);
+                        return OnlineChangeCommand.ExecuteInSession(vsInstance, target, plc, contextFile, port, cycles, expected, timeout);
                     }
                     case "restart":
                     {

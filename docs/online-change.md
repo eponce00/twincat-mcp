@@ -34,6 +34,7 @@ Example execute arguments for the online-change step:
     "contextHandle": "<context handle>",
     "grantHandle": "<grant handle>",
     "port": 851,
+    "contextFile": "C:\\absolute\\path\\to\\the-online-plc\\MAIN.TcPOU",
     "cycleSymbol": "MAIN.cycles",
     "expectedOnlineChangeCount": 0,
     "confirm": "CONFIRM"
@@ -43,6 +44,10 @@ Example execute arguments for the online-change step:
 ```
 
 The selected PLC must be the only logged-in PLC in the owned engineering session.
+`contextFile` must be an existing absolute source path inside the selected online
+PLC application. The edited object may live in a referenced source-library project.
+The worker activates the application editor before dispatch because XAE resolves
+the Online Change target from the active PLC editor context.
 The command checks target and configured ADS port, engineering login/RUN, command
 availability, ADS RUN and advancing cycles. An unrelated interactive XAE session
 does not provide this context. Multiple simultaneous PLC logins are rejected.

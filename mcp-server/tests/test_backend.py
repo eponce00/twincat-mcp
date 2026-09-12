@@ -87,6 +87,9 @@ class BackendTests(unittest.TestCase):
         self.assertIn(
             "platform", catalog.get("engineering.matching_login")["inputSchema"]["required"]
         )
+        self.assertIn(
+            "contextFile", catalog.get("engineering.online_change")["inputSchema"]["required"]
+        )
 
     def test_online_change_receipt_preserves_dispatch_and_verification(self):
         backend = Backend()

@@ -163,6 +163,11 @@
           "description": "ULINT application cycle counter; must advance before and after dispatch.",
           "minLength": 1
         },
+        "contextFile": {
+          "type": "string",
+          "description": "Existing absolute source file in the selected online PLC application; its editor establishes the XAE Online Change target context.",
+          "minLength": 1
+        },
         "expectedOnlineChangeCount": {
           "type": "integer",
           "minimum": 0,
@@ -191,6 +196,7 @@
       },
       "required": [
         "port",
+        "contextFile",
         "cycleSymbol",
         "expectedOnlineChangeCount",
         "confirm",
