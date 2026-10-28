@@ -41,6 +41,7 @@ namespace TcAutomation.Models
 
     public class AdsRecordResult
     {
+        public bool LimitReached { get; set; }
         public bool Success { get; set; }
         public string OutputPath { get; set; } = "";
         public int ChannelCount { get; set; }

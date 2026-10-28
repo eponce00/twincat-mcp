@@ -208,7 +208,9 @@ class Catalog:
                 else "Submitted work returns a durable job receipt; small final results are inline, larger results use job.result pages."
             )
             if e["id"] == "job.wait":
-                e["result"] = "Waits for up to waitSeconds and returns the current durable receipt; no requestKey is required."
+                e["result"] = (
+                    "Waits for up to waitSeconds and returns the current durable receipt; no requestKey is required."
+                )
             example = example_for(e["inputSchema"])
             if e["id"] == "safety.grant":
                 example = dict(
@@ -294,6 +296,8 @@ class Catalog:
         terms |= {synonyms[t] for t in list(terms) if t in synonyms}
         ranked = []
         for e in self.entries.values():
+            if e.get("available") is False:
+                continue
             if category and e["id"].split(".")[0] != category:
                 continue
             name = e["id"].replace("_", " ")

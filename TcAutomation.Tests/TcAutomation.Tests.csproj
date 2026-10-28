@@ -27,6 +27,7 @@
     <Compile Include="Program.cs" />
     <Compile Include="FeedbackTests.cs" />
     <Compile Include="MoveTests.cs" />
+    <Compile Include="ReviewTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

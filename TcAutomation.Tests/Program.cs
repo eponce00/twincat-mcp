@@ -151,5 +151,6 @@ static class Program
         Console.WriteLine("PASS: " + cases + " PLC object policy cases; no XAE or PLC used.");
         FeedbackTests.Run();
         MoveTests.Run();
+        ReviewTests.Run();
     }
 }

@@ -44,6 +44,7 @@ must be conservative. Descriptions disclose each operation's finer-grained effec
 | cli.py / scope.py | Bounded recording/export processes and owned Scope sessions. |
 | PlcObjectsCommand.cs | PLC tree traversal, typed creation, source snapshots, offline edits and native/PLCopen import/export. |
 | BuildRun.cs / BuildArtifacts.cs | Build-event completion, owned deadlines, scoped output and TMC/source evidence. |
+| ArtifactFiles.cs / AdsValues.cs / RecordingSamples.cs | New-file publication, strict scalar values, symbol-size limits and bounded recording snapshots. |
 | PlcObjectMove.cs | Bounded offline file/project relocation, durable recovery records and guarded rollback. |
 | TcAutomation | Automation primitives and composite deployment/test workflows. |
 
@@ -104,7 +105,7 @@ backend tests cover target/grant isolation, source/session invariants, duplicate
 submissions, persistence, cancellation, sequence preflight and partial output.
 No PLC activation or deployment is performed by these tests.
 
-The protocol, orchestration and lifecycle suite contains 83 tests. ADS route qualification
+The protocol, orchestration and lifecycle suite contains 91 tests. ADS route qualification
 also exercises a grant-scoped local remove, fingerprint-verified secure upsert and
 live system-port probe against the dedicated bench. PLC deployment, online change
 and optional TE13xx Scope remain separate installation-specific checks.
@@ -129,3 +130,15 @@ closes only its owned offline solution for file edits and reopens it before
 tree/native-byte verification. It is one durable job with explicit partial
 failure evidence; it does not claim crash atomicity. See
 [moving objects](moving-objects.md).
+
+Application 3.0 retains the fixed discovery surface and protocol version.
+Artifact writers require explicit grants. Disabled integrations are omitted
+from search, remain describable with `available:false`, and fail preflight
+before dispatch. `system.status.unavailableOperations` lists them. Scope
+capture/export remains disabled until real native data acquisition, export
+and immutable configuration authorization are qualified.
+
+The native review harness adds 43 checks for single-call non-installing library
+export, no-effect preview, output preservation, batch failure semantics, strict
+values, recording limits, process leases and atomic session-record deletion.
+See [the contributor security review](contributor-security-review.md).

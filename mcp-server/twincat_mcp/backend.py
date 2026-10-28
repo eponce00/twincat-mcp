@@ -21,7 +21,11 @@ def normalize(value):
         return value
     return {
         k[0].lower() + k[1:] if k else k: (
-            v if k.lower() in {"values", "variables"} else normalize(v)
+            {name: normalize(item) for name, item in v.items()}
+            if k.lower() == "results" and isinstance(v, dict)
+            else v
+            if k.lower() in {"values", "variables"}
+            else normalize(v)
         )
         for k, v in value.items()
     }
@@ -71,8 +75,6 @@ class Backend:
             return self.scope_run(id, args)
         if id == "runtime.record":
             return self.record(args)
-        if id == "runtime.read_var_list":
-            args["symbols"] = ",".join(args["symbols"])
         if id == "runtime.write_var_list":
             args["variables"] = json.dumps(args["variables"])
         if id == "engineering.set_variant":
@@ -92,6 +94,10 @@ class Backend:
         result = normalize(result)
         # CLI info and other plain metadata results have no Success property.
         result.setdefault("success", not bool(result.get("errorMessage") or result.get("error")))
+        if id in {"runtime.read_var_list", "runtime.write_var_list"} and result.get(
+            "errorCount", 0
+        ):
+            result["success"] = False
         if progress:
             result["progress"] = progress[-50:]
         return result
@@ -109,7 +115,7 @@ class Backend:
             "startTrigger": "--start-trigger",
             "stopTrigger": "--stop-trigger",
         }
-        cli = ["--variables", ",".join(args["variables"]), "--output", output]
+        cli = ["--variables", json.dumps(args["variables"]), "--output", output]
         for key, flag in flags.items():
             if key in args:
                 cli += [flag, str(args[key])]
@@ -145,7 +151,7 @@ class Backend:
             output = args.get("outputPath") or str(
                 Path(tempfile.gettempdir()) / ("scope-" + uuid.uuid4().hex + ".tcscopex")
             )
-            cli = ["--variables", ",".join(args["variables"]), "--output", output]
+            cli = ["--variables", json.dumps(args["variables"]), "--output", output]
             for key, flag in flags.items():
                 if key in args:
                     cli += [flag, str(args[key])]

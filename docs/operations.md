@@ -1,16 +1,15 @@
 # Operation catalog
 
-The three public MCP tools expose the following 66 operations. Use
-`twincat_describe` for current full input schemas, defaults, limits, prerequisites
-and examples. This index summarizes the catalog; it does not replace validation.
+The three public MCP tools expose 66 operation contracts; 62 are available to
+discovery. Disabled Scope contracts remain describable with `available:false`
+and fail before dispatch. Use `twincat_describe` for schemas and prerequisites.
 
-Submitted operations return jobs and require a request key. Immediate operations
-return directly without a request key. `job.wait` waits on an existing receipt
-without a request key. Each marked operation requires a scoped grant.
+Submitted operations require a request key. Immediate operations and `job.wait`
+do not. Each marked operation requires a scoped grant.
 
-[PLC object and folder guide](plc-objects.md) covers source authoring and import/export.
-[Build feedback](build-feedback.md) covers compilation, TMC evidence and waits.
-[Moving objects](moving-objects.md) covers identity-preserving relocation and recovery.
+[PLC objects](plc-objects.md), [moving objects](moving-objects.md),
+[build feedback](build-feedback.md) and [security review](contributor-security-review.md)
+describe supported behavior and limits.
 
 ## Context
 
@@ -36,7 +35,7 @@ without a request key. Each marked operation requires a scoped grant.
 | `engineering.disable_io` | Enable or disable top-level I/O devices in the solution configuration. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.edit_plc_source` | Edit and save one POU section only if expectedSha256 matches. Requires the existing logged-in engineering context. Does not compile or apply the edit. | `path`, `section`, `text`, `expectedSha256`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.export_objects` | Export selected PLC objects to a new absolute file. Native format exports one saved POU, DUT, GVL or interface including its nested members; PLCopen supports up to 32 paths. No destination overwrite. Requires a grant for filesystem writes. | `format`, `filePath`, `paths`, `contextHandle`, `grantHandle` | Yes | Job |
-| `engineering.generate_library` | Build and export the context PLC as a .library artifact. Existing outputs are backed up; dryRun previews the export. | `contextHandle` | No | Job |
+| `engineering.generate_library` | Export the context PLC through the documented API without installing into the library repository. Requires a context grant. New absolute .library outputs only; dryRun performs no build/export. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.get_error_list` | Read the XAE Error List with severity and substring filters; waitSeconds permits a bounded delay for async messages. | `contextHandle` | No | Job |
 | `engineering.import_objects` | Import a SHA256-verified native TwinCAT object or PLCopen XML file offline through Automation Interface. Rejects name collisions; never replaces or silently renames. Max 4 MiB. Native import requires parentPath; PLCopen preserves exported folders at the root. | `format`, `filePath`, `expectedFileSha256`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.info` | Read solution, toolchain and PLC project information in the engineering context. | `contextHandle` | No | Job |
@@ -75,11 +74,11 @@ without a request key. Each marked operation requires a scoped grant.
 | `runtime.ping_target` | Probe system and runtime ADS reachability with per-probe timeoutMs; distinguish unreachable, rebooting and reachable targets. | `amsNetId` | No | Job |
 | `runtime.read_plc_log` | Listen to the TwinCAT event log over ADS for a bounded window, optionally filtering messages. Requires the TcEventLogger proxy. | `amsNetId` | No | Job |
 | `runtime.read_var` | Read one PLC symbol over ADS, returning value, data type and byte size. | `symbol`, `amsNetId` | No | Job |
-| `runtime.read_var_list` | Read up to 500 PLC symbols in a single ADS batch and return structured values. | `amsNetId`, `symbols` | No | Job |
-| `runtime.record` | Record PLC variables through ADS notifications into CSV with optional start/stop triggers. No TE13xx license is needed; recording and trigger waits are bounded by arguments. | `amsNetId`, `variables` | No | Job |
+| `runtime.read_var_list` | Read up to 500 PLC symbols in one operation. Per-item errors fail the overall receipt; this is not an atomic ADS sum read. | `amsNetId`, `symbols` | No | Job |
+| `runtime.record` | Record numeric scalar PLC variables into a new .csv file with target-scoped grant. Bounded to 100000 rows and 1000000 cells; limit exhaustion returns failure with collected data retained. | `amsNetId`, `variables`, `grantHandle` | Yes | Job |
 | `runtime.set_state` | Change the explicit target runtime state over ADS. Requires a grant for this operation and AMS target. | `state`, `amsNetId`, `grantHandle` | Yes | Job |
 | `runtime.write_var` | Write one PLC symbol over ADS. Requires a grant for this operation and AMS target. | `symbol`, `value`, `amsNetId`, `grantHandle` | Yes | Job |
-| `runtime.write_var_list` | Write up to 500 PLC symbol/value pairs in a single ADS batch. Requires a grant for this operation and target. | `amsNetId`, `variables`, `grantHandle` | Yes | Job |
+| `runtime.write_var_list` | Write up to 500 PLC symbols with a target grant. Per-item errors fail the receipt and retain partial results; writes are not atomic or rolled back. | `amsNetId`, `variables`, `grantHandle` | Yes | Job |
 
 ## Safety
 
@@ -92,11 +91,11 @@ without a request key. Each marked operation requires a scoped grant.
 
 | Operation | Purpose | Required arguments | Grant | Execution |
 | --- | --- | --- | --- | --- |
-| `scope.create_config` | Create a .tcscopex file from explicit target, variables and recording settings. Requires a TE13xx-enabled worker. | `amsNetId`, `variables` | No | Job |
-| `scope.export` | Export an existing Scope recording through TC3ScopeExportTool. Requires TE13xx; writes the requested output file. | `inputPath` | No | Job |
-| `scope.start` | Start a Scope Server recording from an existing .tcscopex file. Requires a grant scoped to that configPath; returns recordingHandle on success. | `configPath`, `grantHandle` | Yes | Job |
-| `scope.status` | Read the status of the recording identified by recordingHandle. Never creates a new Scope process. | `recordingHandle` | No | Job |
-| `scope.stop` | Stop the recording identified by recordingHandle and export its data. Returns path, elapsed time and sample count. | `recordingHandle` | No | Job |
+| `scope.create_config` | Create a .tcscopex file from explicit target, variables and recording settings. Requires a TE13xx-enabled worker. | `amsNetId`, `variables`, `grantHandle` | Yes | Job |
+| `scope.export` | Disabled: native Scope capture/export has not been qualified. No placeholder data or estimated sample counts are returned. | `inputPath` | No | Unavailable |
+| `scope.start` | Disabled: native Scope capture/export has not been qualified. No placeholder data or estimated sample counts are returned. | `configPath`, `grantHandle` | Yes | Unavailable |
+| `scope.status` | Disabled with Scope recording pending qualified native capture/export. | `recordingHandle` | No | Unavailable |
+| `scope.stop` | Disabled with Scope recording pending qualified native capture/export. | `recordingHandle` | No | Unavailable |
 
 ## System
 

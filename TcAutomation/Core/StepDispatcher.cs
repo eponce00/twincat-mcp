@@ -338,9 +338,7 @@ namespace TcAutomation.Core
                         string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
                             ?? throw new ArgumentException("read-var-list requires args.amsNetId");
                         int port = GetInt(argsElement, "port", hasArgs) ?? 851;
-                        string symbolsCsv = GetString(argsElement, "symbols", hasArgs)
-                            ?? throw new ArgumentException("read-var-list requires args.symbols");
-                        string[] symbols = symbolsCsv.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                        string[] symbols = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(argsElement.GetProperty("symbols").EnumerateArray(), s => s.GetString()));
                         return ExecuteAdsStep(() => ReadVariableListCommand.Execute(amsNetId, port, symbols));
                     }
                     case "write-var-list":

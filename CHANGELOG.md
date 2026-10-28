@@ -1,5 +1,51 @@
 # Changelog
 
+## 3.0.0 — 2026-10-28
+
+### Safety corrections and breaking contracts
+
+- Library export now uses the documented non-installing API once, without
+  speculative reflection, guessed flags or mutation retries. Preview performs
+  no build/export. Output is staged, hashed and published to a new `.library`.
+- `engineering.generate_library`, `runtime.record` and `scope.create_config`
+  require scoped grants. Existing output files are never overwritten. Recording
+  outputs must be absolute `.csv` paths; configuration outputs use `.tcscopex`.
+- Failed ADS batch items now fail the overall receipt and stop workflows.
+  Partial results, symbol-key casing and dispatched-write uncertainty survive.
+  BOOL conversion rejects invalid values. Symbol data and recording rows/cells
+  have aggregate bounds. Recording rejects unknown types and incomplete initial
+  snapshots instead of inventing values.
+- `scope.start`, `scope.stop`, `scope.status` and `scope.export` are disabled
+  pending qualified native capture/export. Placeholder files and estimated
+  sample counts are removed. Search exposes 62 available contracts; describe
+  retains all 66 with explicit unavailable metadata.
+- Dialog automation verifies process start time and retains identity through
+  each callback. Janitor record deletion compares/deletes one locked file handle
+  so concurrent replacement records survive.
+- Patched reviewed dependency advisories in PyJWT, certifi, OpenTelemetry and
+  packaging tools. Added read-only PR checks with SHA-pinned actions and explicit
+  contributor safety/architecture review requirements.
+
+### Upgrade
+
+Finish active operations and stop the server before updating. Run
+`scripts/setup.ps1`, then restart the MCP connection and open new contexts and
+grants. Verify application version `3.0.0`. Update artifact-writer calls to
+supply grants. Native CLI read/record variable lists use JSON arrays. Existing
+artifacts require a new output filename. Scope capture/export cannot be enabled
+by rebuilding with TE13xx alone.
+
+The three public tools, MCP 2026-07-28 and Python SDK 2.2.0 remain unchanged.
+See [the contributor review](docs/contributor-security-review.md) for findings,
+retained capabilities, dependency evidence and qualification limits.
+
+### Validation
+
+91 Python tests and 162 native checks passed, plus Ruff, dependency compatibility
+checks and offline stdio/XAE library-export qualification. Advisory queries for
+66 resolved Python/NuGet versions had no matching reviewed advisories after
+updates. No PLC writes, login, activation or download were performed.
+
 ## 2.3.0 — 2026-10-28
 
 ### Capabilities

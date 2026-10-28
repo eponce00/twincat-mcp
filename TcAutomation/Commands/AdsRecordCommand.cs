@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using TwinCAT.Ads;
 using TwinCAT.TypeSystem;
 using TcAutomation.Models;
+using TcAutomation.Core;
 
 namespace TcAutomation.Commands
 {
@@ -34,9 +35,9 @@ namespace TcAutomation.Commands
         {
             var result = new AdsRecordResult
             {
-                Variables = new List<string>(variables),
+                Variables = new List<string>(variables ?? Array.Empty<string>()),
                 SampleTimeMs = sampleTimeMs,
-                ChannelCount = variables.Length
+                ChannelCount = variables?.Length ?? 0
             };
 
             // Note: durationSec == 0 is valid and means "record until stop trigger or maxTimeSec fallback"
@@ -45,6 +46,11 @@ namespace TcAutomation.Commands
 
             try
             {
+                if (variables == null || variables.Length < 1 || variables.Length > 500 || variables.Any(v => string.IsNullOrWhiteSpace(v) || v.Length > 512 || v.Contains("\r") || v.Contains("\n")))
+                    throw new ArgumentException("Record requires 1..500 bounded symbol paths.");
+                if (sampleTimeMs < 1 || sampleTimeMs > 60000 || double.IsNaN(durationSec) || double.IsInfinity(durationSec) || durationSec < 0 || durationSec > 3600 ||
+                    double.IsNaN(maxTimeSec) || double.IsInfinity(maxTimeSec) || maxTimeSec < 1 || maxTimeSec > 3600) throw new ArgumentException("Invalid recording bounds.");
+                outputPath = ArtifactFiles.ValidateNew(outputPath, ".csv");
                 using (var client = new AdsClient())
                 {
                     client.Connect(new AmsAddress(amsNetId, port));
@@ -65,8 +71,9 @@ namespace TcAutomation.Commands
                         try
                         {
                             var symbol = (IValueSymbol)client.ReadSymbol(varName);
-                            var typeName = symbol.DataType?.Name?.ToUpperInvariant() ?? "LREAL";
+                            var typeName = symbol.DataType?.Name?.ToUpperInvariant() ?? "";
                             var size = symbol.Size;
+                            if (AdsValues.NumericSize(typeName) != size) throw new ArgumentException("Recording requires a numeric scalar of its declared size.");
                             symbolInfos.Add((varName, size, typeName));
                         }
                         catch (Exception ex)
@@ -104,16 +111,15 @@ namespace TcAutomation.Commands
                     }
 
                     // Shared state for notification handling
-                    var latestValues = new double[variables.Length];
-                    var latestTimestamp = DateTimeOffset.MinValue;
-                    var valuesLock = new object();
-                    var rows = new ConcurrentQueue<(DateTimeOffset Timestamp, double[] Values)>();
+                    var samples = new RecordingSamples(variables.Length);
+                    var rows = samples.Rows;
                     var handles = new uint[variables.Length];
                     var handleToIndex = new ConcurrentDictionary<uint, int>();
 
                     // Trigger state
                     var recording = parsedStartTrigger == null ? 1 : 0; // 1 = recording, 0 = waiting
                     var stopSignal = new ManualResetEventSlim(false);
+                    string notificationError = null;
                     uint startTriggerHandle = 0;
                     uint stopTriggerHandle = 0;
 
@@ -123,6 +129,8 @@ namespace TcAutomation.Commands
                     // Event handler for data channels
                     EventHandler<AdsNotificationEventArgs> handler = (sender, e) =>
                     {
+                        try
+                        {
                         // Check start trigger
                         if (parsedStartTrigger != null && e.Handle == parsedStartTrigger.Value.NotificationHandle)
                         {
@@ -154,23 +162,16 @@ namespace TcAutomation.Commands
                         if (Volatile.Read(ref recording) != 1)
                             return;
 
-                        int idx;
-                        lock (valuesLock)
+                        if (!handleToIndex.TryGetValue(e.Handle, out int idx)) return;
+                        if (!samples.Update(idx, ConvertToDouble(e.Data.ToArray(), symbolInfos[idx].TypeName), e.TimeStamp))
                         {
-                            if (!handleToIndex.TryGetValue(e.Handle, out idx))
-                                return;
-
-                            var bytes = e.Data.ToArray();
-                            latestValues[idx] = ConvertToDouble(bytes, symbolInfos[idx].TypeName);
-                            latestTimestamp = e.TimeStamp;
-
-                            // When channel 0 fires (or single variable), snapshot a row
-                            if (idx == 0 || variables.Length == 1)
-                            {
-                                var snapshot = new double[variables.Length];
-                                Array.Copy(latestValues, snapshot, variables.Length);
-                                rows.Enqueue((latestTimestamp, snapshot));
-                            }
+                            Interlocked.Exchange(ref recording, 0); stopSignal.Set();
+                        }
+                        }
+                        catch (Exception ex)
+                        {
+                            Interlocked.CompareExchange(ref notificationError, ex.Message, null);
+                            Interlocked.Exchange(ref recording, 0); stopSignal.Set();
                         }
                     };
 
@@ -297,10 +298,11 @@ namespace TcAutomation.Commands
                         Directory.CreateDirectory(dir);
                     }
 
-                    using (var writer = new StreamWriter(outputPath, false, Encoding.UTF8))
+                    using (var stream = ArtifactFiles.CreateNew(outputPath, ".csv"))
+                    using (var writer = new StreamWriter(stream, Encoding.UTF8))
                     {
                         // Header
-                        var header = "Timestamp," + string.Join(",", variables);
+                        var header = "Timestamp," + string.Join(",", variables.Select(RecordingSamples.CsvHeader));
                         writer.WriteLine(header);
 
                         // Data rows
@@ -325,8 +327,10 @@ namespace TcAutomation.Commands
                     result.FileSizeKB = fileInfo.Length / 1024;
                     result.OutputPath = outputPath;
                     result.DurationSeconds = sw.Elapsed.TotalSeconds;
-                    if (result.TriggerStatus != "start_trigger_timeout")
-                        result.Success = true;
+                    result.LimitReached = samples.LimitReached;
+                    result.Success = notificationError == null && !result.LimitReached;
+                    if (result.LimitReached) result.ErrorMessage = "Recording stopped at the bounded row/cell limit; collected rows were retained.";
+                    if (notificationError != null) result.ErrorMessage = "Invalid notification data: " + notificationError;
                 }
             }
             catch (Exception ex)
@@ -382,7 +386,8 @@ namespace TcAutomation.Commands
             try
             {
                 var symbol = (IValueSymbol)client.ReadSymbol(varName);
-                var typeName = symbol.DataType?.Name?.ToUpperInvariant() ?? "LREAL";
+                var typeName = symbol.DataType?.Name?.ToUpperInvariant() ?? "";
+                if (AdsValues.NumericSize(typeName) != symbol.Size) throw new ArgumentException("Trigger must be a numeric scalar.");
                 return new TriggerCondition
                 {
                     Variable = varName,
@@ -415,6 +420,7 @@ namespace TcAutomation.Commands
 
         private static double ConvertToDouble(byte[] bytes, string typeName)
         {
+            if (bytes.Length != AdsValues.NumericSize(typeName)) throw new ArgumentException("Notification size does not match its numeric type.");
             switch (typeName)
             {
                 case "LREAL":
@@ -446,13 +452,7 @@ namespace TcAutomation.Commands
                     return (double)BitConverter.ToUInt32(bytes, 0);
                 case "LWORD":
                     return (double)BitConverter.ToUInt64(bytes, 0);
-                default:
-                    if (bytes.Length >= 8)
-                        return BitConverter.ToDouble(bytes, 0);
-                    else if (bytes.Length >= 4)
-                        return (double)BitConverter.ToSingle(bytes, 0);
-                    else
-                        return (double)bytes[0];
+                default: throw new ArgumentException("Unsupported recording type.");
             }
         }
     }

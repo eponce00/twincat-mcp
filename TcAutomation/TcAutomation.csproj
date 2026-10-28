@@ -112,6 +112,9 @@
     <Compile Include="Core\BuildRun.cs" />
     <Compile Include="Core\BuildArtifacts.cs" />
     <Compile Include="Core\PlcObjectMove.cs" />
+    <Compile Include="Core\ArtifactFiles.cs" />
+    <Compile Include="Core\AdsValues.cs" />
+    <Compile Include="Core\RecordingSamples.cs" />
     <Compile Include="Core\SessionFile.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />

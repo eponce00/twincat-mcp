@@ -6,6 +6,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Win32.SafeHandles;
 
 namespace TcAutomation.Core
 {
@@ -183,6 +184,7 @@ namespace TcAutomation.Core
                                                FileShare.ReadWrite | FileShare.Delete))
                 using (var reader = new StreamReader(fs))
                 {
+                    if (fs.Length > 1024 * 1024) throw new JsonException("Session record exceeds 1 MiB.");
                     json = reader.ReadToEnd();
                 }
                 var sf = JsonSerializer.Deserialize<SessionFile>(json);
@@ -212,20 +214,34 @@ namespace TcAutomation.Core
             }
         }
 
-        private static bool TryDelete(string path, ReapReport report)
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref byte information, uint size);
+
+        public static bool DeleteUnchanged(string path, SessionFile expected, ReapReport report)
         {
+            // DELETE | GENERIC_READ; share read only. Replacement/writes remain
+            // blocked from identity comparison through delete-on-close marking.
+            using var handle = CreateFile(path, 0x80000000 | 0x00010000, 1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                report.Unresolved++; report.Notes.Add(path + ": could not lock record for conditional deletion"); return false;
+            }
             try
             {
-                File.Delete(path);
+                using var stream = new FileStream(handle, FileAccess.Read);
+                if (stream.Length > 1024 * 1024) throw new JsonException("Session record exceeds 1 MiB.");
+                using var reader = new StreamReader(stream);
+                var actual = JsonSerializer.Deserialize<SessionFile>(reader.ReadToEnd());
+                if (actual == null || !SameProcesses(expected, actual))
+                { report.Unresolved++; report.Notes.Add(path + ": replacement record retained"); return false; }
+                byte delete = 1; // FILE_DISPOSITION_INFO.DeleteFile
+                if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                { report.DeleteFailed++; report.Notes.Add(path + ": conditional delete failed: " + Marshal.GetLastWin32Error()); return false; }
                 return true;
             }
-            catch (Exception ex)
-            {
-                // Not Unresolved: the host and DTE are gone, only the file is left.
-                report.DeleteFailed++;
-                report.Notes.Add($"{path}: delete failed: {ex.GetType().Name}: {ex.Message}");
-                return false;
-            }
+            catch (Exception ex) { report.Unresolved++; report.Notes.Add(path + ": conditional delete refused: " + ex.Message); return false; }
         }
 
         private static bool SameProcesses(SessionFile a, SessionFile b)
@@ -236,14 +252,11 @@ namespace TcAutomation.Core
                && string.Equals(a.HostStartTimeUtc, b.HostStartTimeUtc, StringComparison.Ordinal)
                && string.Equals(a.DteStartTimeUtc, b.DteStartTimeUtc, StringComparison.Ordinal);
 
-        public static void Delete(int mcpPid)
+        public static void DeleteOwned(SessionFile expected)
         {
-            try
-            {
-                string path = PathFor(mcpPid);
-                if (File.Exists(path)) File.Delete(path);
-            }
-            catch { }
+            var report = new ReapReport();
+            DeleteUnchanged(PathFor(expected.McpPid), expected, report);
+            foreach (var note in report.Notes) Console.Error.WriteLine("[DEBUG] session cleanup: " + note);
         }
 
         /// <summary>
@@ -254,7 +267,7 @@ namespace TcAutomation.Core
         {
             try
             {
-                var p = Process.GetProcessById(pid);
+                using var p = Process.GetProcessById(pid);
                 return p.StartTime.ToUniversalTime().ToString("O");
             }
             catch
@@ -320,6 +333,7 @@ namespace TcAutomation.Core
                 return ProcessIdentity.Unverified;
             }
 
+            using var identityLease = p;
             // HasExited needs more rights than StartTime. If it is denied, a
             // different start time still proves the PID was reused.
             bool exitedUnknown = false;
@@ -610,8 +624,9 @@ namespace TcAutomation.Core
                         continue;
                     }
 
-                    // A short gap remains before the delete, with no kill or wait.
-                    if (TryDelete(path, report)) report.Cleaned++;
+                    // Pin and exclusively compare/delete the same file, not a path
+                    // that an owner can replace between the reread and deletion.
+                    if (DeleteUnchanged(path, sf, report)) report.Cleaned++;
                 }
             }
             catch (Exception ex)
