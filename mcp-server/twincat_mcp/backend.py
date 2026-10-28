@@ -49,6 +49,8 @@ class Backend:
     def run(self, entry, arguments, context=None):
         args = dict(arguments)
         for key in ("contextHandle", "grantHandle", "confirm", "recordingHandle"):
+            if key == "confirm" and entry["id"] == "engineering.delete_object":
+                continue
             args.pop(key, None)
         if context:
             args["amsNetId"] = context["amsNetId"]

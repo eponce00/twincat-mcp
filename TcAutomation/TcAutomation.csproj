@@ -119,6 +119,7 @@
     <Compile Include="Commands\OnlineChangeCommand.cs" />
     <Compile Include="Commands\MatchingLoginCommand.cs" />
     <Compile Include="Commands\PlcSourceCommand.cs" />
+    <Compile Include="Commands\PlcObjectsCommand.cs" />
     <Compile Include="Commands\DeployCommand.cs" />
     <Compile Include="Commands\ListPlcsCommand.cs" />
     <Compile Include="Commands\SetBootProjectCommand.cs" />

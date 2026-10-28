@@ -41,7 +41,8 @@ must be conservative. Descriptions disclose each operation's finer-grained effec
 | backend.py / routes.py | Structured adapters between operation arguments, native commands and Beckhoff's fixed ADS-route cmdlets. |
 | dispatch.py / host.py | One native dispatch; COM serialization and process ownership. |
 | cli.py / scope.py | Bounded recording/export processes and owned Scope sessions. |
-| TcAutomation | Existing automation primitives and composite deployment/test workflows. |
+| PlcObjectsCommand.cs | PLC tree traversal, typed creation, source snapshots, offline edits and native/PLCopen import/export. |
+| TcAutomation | Automation primitives and composite deployment/test workflows. |
 
 Native dictionaries become structured result data with explicit success and
 error fields.
@@ -94,7 +95,21 @@ backend tests cover target/grant isolation, source/session invariants, duplicate
 submissions, persistence, cancellation, sequence preflight and partial output.
 No PLC activation or deployment is performed by these tests.
 
-The protocol and orchestration suite contains 54 tests. ADS route qualification
+The protocol and orchestration suite contains 66 tests. ADS route qualification
 also exercises a grant-scoped local remove, fingerprint-verified secure upsert and
 live system-port probe against the dedicated bench. PLC deployment, online change
 and optional TE13xx Scope remain separate installation-specific checks.
+
+PLC object policy is also checked by a native in-memory harness. XAE integration
+qualification covers creation, nested folders, offline source edits, renaming,
+recursive deletion, native and PLCopen round trips, reopening and fresh compilation.
+Source object metadata uses the 600-series `ItemType` IDs returned by XAE; these
+are the values accepted as the creation API's `SubType` parameter. See the
+[object guide](plc-objects.md) for supported operations and limits.
+
+PLC object policy is also checked by a native in-memory harness. XAE integration
+qualification covers creation, nested folders, offline source edits, renaming,
+recursive deletion, native and PLCopen round trips, reopening and fresh compilation.
+Source object metadata uses the 600-series `ItemType` IDs returned by XAE; these
+are the values accepted as the creation API's `SubType` parameter. See the
+[object guide](plc-objects.md) for supported operations and limits.

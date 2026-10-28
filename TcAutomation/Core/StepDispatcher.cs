@@ -23,6 +23,8 @@ namespace TcAutomation.Core
         {
             "build", "info", "clean",
             "set-target", "activate", "restart", "online-change", "matching-login", "read-plc-source", "edit-plc-source",
+            "list-plc-objects", "read-plc-object", "create-plc-object", "create-plc-folder",
+            "update-plc-object", "delete-plc-object", "rename-plc-object", "import-plc-objects", "export-plc-objects",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
             "check-all-objects", "static-analysis",
@@ -86,6 +88,18 @@ namespace TcAutomation.Core
 
                 switch (command.ToLowerInvariant())
                 {
+                    case "list-plc-objects":
+                    case "read-plc-object":
+                    case "create-plc-object":
+                    case "create-plc-folder":
+                    case "update-plc-object":
+                    case "delete-plc-object":
+                    case "rename-plc-object":
+                    case "import-plc-objects":
+                    case "export-plc-objects":
+                        return PlcObjectsCommand.ExecuteInSession(vsInstance,
+                            GetString(argsElement, "amsNetId", hasArgs),
+                            GetString(argsElement, "plcName", hasArgs), command.ToLowerInvariant(), argsElement);
                     case "build":
                     {
                         bool clean = GetBool(argsElement, "clean", hasArgs) ?? true;
@@ -344,6 +358,8 @@ namespace TcAutomation.Core
         public static bool IsResultSuccessful(object? result)
         {
             if (result == null) return false;
+            if (result is IDictionary<string, object> data && data.TryGetValue("success", out var success))
+                return success is bool flag && flag;
 
             if (result is JsonElement element)
             {
@@ -370,6 +386,8 @@ namespace TcAutomation.Core
         public static string? ExtractErrorFromResult(object? result)
         {
             if (result == null) return null;
+            if (result is IDictionary<string, object> data && data.TryGetValue("errorMessage", out var error))
+                return error as string;
 
             if (result is JsonElement element && element.ValueKind == JsonValueKind.Object)
             {

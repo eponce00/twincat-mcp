@@ -209,6 +209,17 @@ class Catalog:
                         dict(operation="runtime.get_state", arguments=dict(amsNetId="1.2.3.4.1.1"))
                     ]
                 )
+            if e["id"] == "engineering.create_object":
+                example.update(
+                    name="FB_Example", declaration="FUNCTION_BLOCK FB_Example\nVAR\nEND_VAR"
+                )
+                example["objectType"] = "functionBlock"
+            if e["id"] == "engineering.update_object":
+                example["implementation"] = "// Updated ST implementation"
+            if e["id"] == "engineering.import_objects":
+                example["parentPath"] = "TIPC^PLC^PLC Project^POUs"
+            if e["id"] in {"engineering.create_folder", "engineering.rename_object"}:
+                example["name"] = "Motion"
             self.validate(e["id"], example)
             e["example"] = dict(operation=e["id"], arguments=example)
             if not immediate:
@@ -308,6 +319,10 @@ def example_for(spec):
         "recordingHandle": "<recording handle>",
         "jobHandle": "<job handle>",
         "expectedSha256": "0" * 64,
+        "expectedFileSha256": "0" * 64,
+        "parentPath": "TIPC^PLC^PLC Project^POUs",
+        "filePath": "C:/Exports/FB_Example.TcPOU",
+        "paths": ["TIPC^PLC^PLC Project^POUs^FB_Example"],
         "cycleSymbol": "MAIN.cycles",
         "symbol": "MAIN.x",
         "inputPath": "C:/Traces/recording.svdx",

@@ -12,7 +12,7 @@ from .errors import OperationError
 from .jobs import Jobs
 from .safety import Grants
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 
 class Engine:

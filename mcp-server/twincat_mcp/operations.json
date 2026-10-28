@@ -1628,5 +1628,605 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "id": "engineering.list_objects",
+    "description": "Browse one PLC project folder or object. Omit path to discover the selected PLC root. Returns bounded child metadata and nextOffset.",
+    "kind": "operation",
+    "command": "list-plc-objects",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 100
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "contextHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "engineering.read_object",
+    "description": "Read PLC object metadata and supported source sections. sha256 covers its path, source and descendants; use it for update/delete/rename.",
+    "kind": "operation",
+    "command": "read-plc-object",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "path",
+        "contextHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "engineering.create_folder",
+    "description": "Create and save one PLC project folder through Automation Interface. Use its returned path as parentPath for objects or nested folders. Offline only; no overwrite.",
+    "kind": "operation",
+    "command": "create-plc-folder",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "parentPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_ -]{0,127}$"
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "parentPath",
+        "name",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "engineering.create_object",
+    "description": "Create and save a PLC object through Automation Interface, then read back its source. Offline only. No compile, runtime download or overwrite.",
+    "kind": "operation",
+    "command": "create-plc-object",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "parentPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "objectType": {
+          "type": "string",
+          "enum": [
+            "program",
+            "function",
+            "functionBlock",
+            "gvl",
+            "struct",
+            "enum",
+            "union",
+            "alias",
+            "method",
+            "action",
+            "interface",
+            "interfaceMethod",
+            "property",
+            "interfaceProperty",
+            "propertyGet",
+            "propertySet",
+            "interfacePropertyGet",
+            "interfacePropertySet"
+          ]
+        },
+        "declaration": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "implementation": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "returnType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "access": {
+          "type": "string",
+          "enum": [
+            "PUBLIC",
+            "PRIVATE",
+            "PROTECTED",
+            "INTERNAL"
+          ],
+          "default": "PUBLIC"
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "parentPath",
+        "name",
+        "objectType",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "objectType": {
+                "enum": [
+                  "function",
+                  "property",
+                  "interfaceMethod",
+                  "interfaceProperty"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "returnType"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "objectType": {
+                "enum": [
+                  "program",
+                  "function",
+                  "functionBlock",
+                  "gvl",
+                  "struct",
+                  "enum",
+                  "union",
+                  "alias",
+                  "method",
+                  "interface",
+                  "interfaceMethod",
+                  "property",
+                  "interfaceProperty"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "declaration"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "objectType": {
+                "enum": [
+                  "propertyGet",
+                  "interfacePropertyGet"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "Get"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "objectType": {
+                "enum": [
+                  "propertySet",
+                  "interfacePropertySet"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "name": {
+                "const": "Set"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "engineering.update_object",
+    "description": "Edit and save declaration and/or ST implementation offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains a separate operation.",
+    "kind": "operation",
+    "command": "update-plc-object",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "expectedSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "declaration": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "implementation": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "path",
+        "expectedSha256",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "declaration"
+              ]
+            },
+            {
+              "required": [
+                "implementation"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "engineering.rename_object",
+    "description": "Rename one object or folder offline using XAE. Requires current object/subtree hash. References in other source are not automatically rewritten; inspect and compile afterward.",
+    "kind": "operation",
+    "command": "rename-plc-object",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "expectedSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_ -]{0,127}$"
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "path",
+        "expectedSha256",
+        "name",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "engineering.delete_object",
+    "description": "Delete a PLC source object or folder offline. Requires current object/subtree hash and confirmation. A nonempty folder requires recursive=true and recursiveConfirm=DELETE_CONTENTS. No rollback.",
+    "kind": "operation",
+    "command": "delete-plc-object",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "expectedSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "recursive": {
+          "type": "boolean",
+          "default": false
+        },
+        "recursiveConfirm": {
+          "type": "string",
+          "const": "DELETE_CONTENTS"
+        },
+        "confirm": {
+          "type": "string",
+          "const": "CONFIRM"
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "path",
+        "expectedSha256",
+        "confirm",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "recursive": {
+                "const": true
+              }
+            },
+            "required": [
+              "recursive"
+            ]
+          },
+          "then": {
+            "required": [
+              "recursiveConfirm"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "engineering.import_objects",
+    "description": "Import a SHA256-verified native TwinCAT object or PLCopen XML file offline through Automation Interface. Rejects name collisions; never replaces or silently renames. Max 4 MiB. Native import requires parentPath; PLCopen preserves exported folders at the root.",
+    "kind": "operation",
+    "command": "import-plc-objects",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "native",
+            "plcopen"
+          ]
+        },
+        "filePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "expectedFileSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "parentPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "preserveFolders": {
+          "type": "boolean",
+          "default": true
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "format",
+        "filePath",
+        "expectedFileSha256",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "format": {
+                "const": "native"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "parentPath"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "engineering.export_objects",
+    "description": "Export selected PLC objects to a new absolute file. Native format exports one saved POU, DUT, GVL or interface including its nested members; PLCopen supports up to 32 paths. No destination overwrite. Requires a grant for filesystem writes.",
+    "kind": "operation",
+    "command": "export-plc-objects",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "native",
+            "plcopen"
+          ]
+        },
+        "filePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+          }
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "format",
+        "filePath",
+        "paths",
+        "contextHandle",
+        "grantHandle"
+      ],
+      "additionalProperties": false
+    }
   }
 ]

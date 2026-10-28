@@ -10,7 +10,7 @@ For changes to public interfaces or architecture, document the problem and propo
 
 ## Validation
 
-Build with `scripts/build.ps1` and run the relevant tests in `mcp-server/tests`. Integration scripts are available under `scripts/test-*.ps1`; inspect their target and operations before running them. Record which tests ran and whether TwinCAT or hardware integration was exercised.
+Build with `scripts/build.ps1` and run the relevant tests in `mcp-server/tests`. Run `scripts/test-plc-objects.ps1` for the native in-memory object-policy harness; it builds with MSBuild and does not start XAE or access a PLC. Integration scripts are available under `scripts/test-*.ps1`; inspect their target and operations before running them. Record which tests ran and whether TwinCAT or hardware integration was exercised.
 
 ## Reporting an issue
 
