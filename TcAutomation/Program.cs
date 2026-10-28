@@ -957,10 +957,10 @@ namespace TcAutomation
             var reapCommand = new Command("reap-orphans", "Reap orphaned TwinCAT host/DTE processes from crashed MCP sessions (surgical: start-time verified)");
             reapCommand.SetHandler(() =>
             {
-                int count = 0;
+                SessionFile.ReapReport report;
                 try
                 {
-                    count = SessionFile.ReapOrphans();
+                    report = SessionFile.ReapOrphansDetailed();
                 }
                 catch (Exception ex)
                 {
@@ -968,7 +968,24 @@ namespace TcAutomation
                     Environment.ExitCode = 1;
                     return;
                 }
-                Console.WriteLine(JsonSerializer.Serialize(new { success = true, reaped = count }, JsonOptions));
+                // `reaped` counts records removed, `stopped` processes killed.
+                // `reaped` alone let a failed kill look like a cleanup.
+                // `error` appears only when the sweep aborted.
+                var reapJsonOptions = new JsonSerializerOptions(JsonOptions)
+                {
+                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+                };
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    success = !report.Aborted,
+                    error = report.AbortReason,
+                    reaped = report.Cleaned,
+                    stopped = report.Stopped,
+                    unresolved = report.Unresolved,
+                    deleteFailed = report.DeleteFailed,
+                    aborted = report.Aborted,
+                    notes = report.Notes
+                }, reapJsonOptions));
             });
             rootCommand.AddCommand(reapCommand);
 
