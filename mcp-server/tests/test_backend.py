@@ -65,6 +65,32 @@ class BackendTests(unittest.TestCase):
             )
         self.assertEqual(receipt, result["result"])
 
+    def test_failed_ensure_solution_forgets_cached_solution(self):
+        host = ShellHost(Path("unused.exe"))
+        host._current_solution = "sample.sln"
+        host._current_tc_version = None
+        with (
+            patch.object(host, "is_alive", return_value=True),
+            patch.object(host, "_call_raw_locked", side_effect=HostError("restart failed")),
+        ):
+            with self.assertRaises(HostError):
+                host.ensure_solution("sample.sln", "3.1.4024.55")
+        with (
+            patch.object(host, "is_alive", return_value=True),
+            patch.object(host, "_call_raw_locked", return_value={"loaded": True}) as call,
+        ):
+            host.ensure_solution("sample.sln", None)
+        call.assert_called_once()
+
+    def test_restarted_host_forgets_cached_solution(self):
+        host = ShellHost(Path("unused.exe"))
+        host._current_solution = "sample.sln"
+        host._current_tc_version = None
+        with patch("twincat_mcp.host.subprocess.Popen", side_effect=OSError("no worker")):
+            with self.assertRaises(HostError):
+                host.ensure_solution("sample.sln", None)
+        self.assertIsNone(host._current_solution)
+
     def test_explicit_executable_never_falls_back(self):
         with tempfile.TemporaryDirectory() as folder:
             exe = Path(folder) / "isolated.exe"

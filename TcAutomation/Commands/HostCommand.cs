@@ -35,8 +35,9 @@ namespace TcAutomation.Commands
     ///   1. Parent-death watchdog thread kills DTE and exits if MCP server dies.
     ///   2. Session file (Core.SessionFile) records mcpPid/hostPid/dtePid with
     ///      start-time fingerprints so the janitor can reap on any crash combo.
-    ///   3. Graceful shutdown tries DTE.Quit() first, then force-kills the
-    ///      tracked DTE PID, then deletes the session file.
+    ///   3. Graceful shutdown tries DTE.Quit() first, then terminates the
+    ///      owned shell through its launch handle, then deletes the session
+    ///      file. The record is kept if the shell cannot be confirmed gone.
     /// </summary>
     public static class HostCommand
     {
@@ -247,6 +248,9 @@ namespace TcAutomation.Commands
             bool hasParams = paramsEl.ValueKind == JsonValueKind.Object;
             string? solutionPath = StepDispatcher.GetString(paramsEl, "solutionPath", hasParams);
             string? tcVersionOverride = StepDispatcher.GetString(paramsEl, "tcVersion", hasParams);
+            // A blank override is absent, as in VisualStudioInstance. Otherwise
+            // the shell loads the project version but the host records the blank.
+            if (string.IsNullOrWhiteSpace(tcVersionOverride)) tcVersionOverride = null;
 
             if (string.IsNullOrWhiteSpace(solutionPath))
             {
@@ -281,32 +285,34 @@ namespace TcAutomation.Commands
 
             if (_vsInstance == null)
             {
-                EmitProgress($"host: opening TwinCAT shell for {Path.GetFileName(solutionPath)} ...");
-                var openSw = Stopwatch.StartNew();
-                _vsInstance = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersionOverride);
-                _vsInstance.Load();
-                _vsInstance.LoadSolution();
-                try { _vsInstance.CloseAllDocuments(); } catch { }
-                openSw.Stop();
+                OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion);
                 openedFresh = true;
-                EmitProgress($"host: shell ready ({openSw.Elapsed.TotalSeconds:F1}s)");
-
-                _loadedTcVersion = effectiveTcVersion;
-                UpdateSessionFileWithDte(solutionPath, effectiveTcVersion);
             }
             else if (!PathsEqual(_vsInstance.SolutionFilePath, solutionPath)
                 || !string.Equals(_loadedTcVersion, effectiveTcVersion, StringComparison.OrdinalIgnoreCase))
             {
                 EmitProgress($"host: switching solution -> {Path.GetFileName(solutionPath)} ...");
                 var reloadSw = Stopwatch.StartNew();
-                _vsInstance.ReloadSolution(solutionPath, projectTcVersion, tcVersionOverride);
-                try { _vsInstance.CloseAllDocuments(); } catch { }
-                reloadSw.Stop();
-                reloaded = true;
-                EmitProgress($"host: solution reloaded ({reloadSw.Elapsed.TotalSeconds:F1}s)");
+                try
+                {
+                    _vsInstance.ReloadSolution(solutionPath, projectTcVersion, tcVersionOverride);
+                    try { _vsInstance.CloseAllDocuments(); } catch { }
+                    reloadSw.Stop();
+                    reloaded = true;
+                    EmitProgress($"host: solution reloaded ({reloadSw.Elapsed.TotalSeconds:F1}s)");
 
-                _loadedTcVersion = effectiveTcVersion;
-                UpdateSessionFileWithDte(solutionPath, effectiveTcVersion);
+                    _loadedTcVersion = effectiveTcVersion;
+                    UpdateSessionFileWithDte(_vsInstance, solutionPath, effectiveTcVersion);
+                }
+                catch (ShellRestartRequiredException ex)
+                {
+                    // Thrown before anything was closed. The running shell
+                    // cannot change version, so replace it.
+                    EmitProgress($"host: {ex.Message} Restarting the shell ...");
+                    DiscardShell(_vsInstance, "version change");
+                    OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion);
+                    openedFresh = true;
+                }
             }
             else
             {
@@ -322,6 +328,114 @@ namespace TcAutomation.Commands
                 tcVersion = effectiveTcVersion,
                 dtePid = _vsInstance?.DteProcessId
             }, sw);
+        }
+
+        // ================ Shell lifecycle ================
+        //
+        // A started shell stays in _ownedShells until its exit is confirmed.
+        // The record names one DTE PID, so no shell starts while an earlier
+        // one is unconfirmed: the new record would hide it from the janitor.
+        // Shutdown sets _launchesClosed under the lock that admits launches,
+        // then retires every listed shell.
+
+        private static readonly object LifecycleLock = new object();
+        private static readonly System.Collections.Generic.List<VisualStudioInstance> _ownedShells =
+            new System.Collections.Generic.List<VisualStudioInstance>();
+        private static bool _launchesClosed;
+
+        private static void AdmitShell(VisualStudioInstance vs)
+        {
+            lock (LifecycleLock)
+            {
+                if (_launchesClosed)
+                    throw new OperationCanceledException("The host is shutting down. No shell is started.");
+                _ownedShells.Add(vs);
+            }
+        }
+
+        /// <summary>
+        /// Kill a shell and unlist it once its exit is confirmed. False means
+        /// it may still run, and it stays listed.
+        /// </summary>
+        private static bool ReleaseShell(VisualStudioInstance vs, string reason, bool retire)
+        {
+            bool gone = retire ? vs.Retire(reason) : vs.KillOwnedProcess(reason);
+            if (gone)
+            {
+                lock (LifecycleLock) { _ownedShells.Remove(vs); }
+            }
+            return gone;
+        }
+
+        private static VisualStudioInstance[] ListedShells()
+        {
+            lock (LifecycleLock) { return _ownedShells.ToArray(); }
+        }
+
+        /// <summary>
+        /// Close and drop the active shell (Close() also releases the dialog
+        /// watchdog). Throws if the exit is unconfirmed, keeping the record.
+        /// </summary>
+        private static void DiscardShell(VisualStudioInstance vs, string reason)
+        {
+            if (ReferenceEquals(_vsInstance, vs)) _vsInstance = null;
+            _loadedTcVersion = null;
+            try { vs.Close(); } catch { }
+            if (!ReleaseShell(vs, reason, retire: false))
+                throw new InvalidOperationException(
+                    $"The TwinCAT shell (PID {vs.DteProcessId?.ToString() ?? "unknown"}) did not exit. No new shell " +
+                    "is started while it may be running. Its session record is kept for the janitor.");
+            UpdateSessionFileWithDte(null, null, null);
+        }
+
+        /// <summary>
+        /// Start a shell, select its version and open the solution. Any failure,
+        /// including the solution load, discards the shell. If its exit is
+        /// unconfirmed, it stays listed and blocks the next launch.
+        /// </summary>
+        private static void OpenFreshShell(string solutionPath, string projectTcVersion, string? tcVersionOverride,
+            string effectiveTcVersion)
+        {
+            // Retry any shell whose earlier termination was not confirmed.
+            foreach (var stale in ListedShells())
+            {
+                if (ReferenceEquals(stale, _vsInstance)) continue;
+                if (!ReleaseShell(stale, "retry before a new launch", retire: false))
+                    throw new InvalidOperationException(
+                        $"An earlier TwinCAT shell (PID {stale.DteProcessId?.ToString() ?? "unknown"}) is still not " +
+                        "confirmed gone. No new shell is started. Its session record is kept for the janitor.");
+            }
+
+            EmitProgress($"host: opening TwinCAT shell for {Path.GetFileName(solutionPath)} ...");
+            var openSw = Stopwatch.StartNew();
+            var vs = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersionOverride)
+            {
+                // Record the shell at once. The DTE wait alone takes up to 2 min,
+                // and a worker killed meanwhile must not leave an unrecorded shell.
+                OwnedProcessStarted = started => UpdateSessionFileWithDte(started, solutionPath, effectiveTcVersion)
+            };
+            AdmitShell(vs);
+            _vsInstance = vs;
+            _loadedTcVersion = null;
+            try
+            {
+                vs.Load();
+                vs.LoadSolution();
+            }
+            catch
+            {
+                // Report the startup error. DiscardShell throws only for an
+                // unconfirmed exit, and then keeps the record.
+                try { DiscardShell(vs, "startup failed"); }
+                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] host: {ex.Message}"); }
+                throw;
+            }
+            try { vs.CloseAllDocuments(); } catch { }
+            openSw.Stop();
+            EmitProgress($"host: shell ready ({openSw.Elapsed.TotalSeconds:F1}s)");
+
+            _loadedTcVersion = effectiveTcVersion;
+            UpdateSessionFileWithDte(vs, solutionPath, effectiveTcVersion);
         }
 
         private static void HandleExecuteStep(int? requestId, JsonElement paramsEl, Stopwatch sw)
@@ -424,15 +538,18 @@ namespace TcAutomation.Commands
 
         // ================ Session file helpers ================
 
-        private static void UpdateSessionFileWithDte(string solutionPath, string? tcVersion)
+        /// <summary>
+        /// Record the owned shell, or clear the record when vs is null. PID and
+        /// fingerprint come from the launch handle: reopening the PID here can
+        /// fingerprint a newer process.
+        /// </summary>
+        private static void UpdateSessionFileWithDte(VisualStudioInstance? vs, string? solutionPath, string? tcVersion)
         {
             if (_sessionFile == null) return;
             try
             {
-                _sessionFile.DtePid = _vsInstance?.DteProcessId;
-                _sessionFile.DteStartTimeUtc = _vsInstance?.DteProcessId is int dtePid
-                    ? SessionFile.TryGetProcessStartTime(dtePid)
-                    : null;
+                _sessionFile.DtePid = vs?.DteProcessId;
+                _sessionFile.DteStartTimeUtc = vs?.DteProcessId != null ? vs.DteProcessStartTimeUtc : null;
                 _sessionFile.SolutionPath = solutionPath;
                 _sessionFile.TcVersion = tcVersion;
                 _sessionFile.Save();
@@ -452,27 +569,18 @@ namespace TcAutomation.Commands
             if (Interlocked.Exchange(ref _shutdownEntered, 1) == 1) return;
 
             Console.Error.WriteLine($"[DEBUG] host: shutting down ({reason})");
-            int? dtePid = _vsInstance?.DteProcessId;
 
-            try { _vsInstance?.Close(); } catch { }
+            // Admit no new shell from here on.
+            lock (LifecycleLock) { _launchesClosed = true; }
+
+            // Close() tries Quit, then kills a survivor through the launch
+            // handle. Never by PID: once a shell exits, the number can belong
+            // to anything.
+            var vs = _vsInstance;
             _vsInstance = null;
+            try { vs?.Close(); } catch { }
 
-            // Double-check — if DTE.Quit() somehow left the shell up, kill it by
-            // tracked PID. The COM runtime owns the process, so it can linger
-            // even if we've released all RCWs.
-            if (dtePid.HasValue)
-            {
-                try
-                {
-                    var p = Process.GetProcessById(dtePid.Value);
-                    if (!p.HasExited)
-                    {
-                        Console.Error.WriteLine($"[DEBUG] host: force-killing lingering DTE PID {dtePid.Value}");
-                        try { p.Kill(); } catch { }
-                    }
-                }
-                catch { /* already gone */ }
-            }
+            bool shellLeftRunning = !RetireAllShells("shutdown");
 
             if (_messageFilterRegistered)
             {
@@ -480,10 +588,27 @@ namespace TcAutomation.Commands
                 _messageFilterRegistered = false;
             }
 
-            if (_sessionFile != null)
+            // Keep the record if a shell survived: the janitor needs it to find that shell.
+            if (_sessionFile != null && !shellLeftRunning)
             {
                 try { SessionFile.Delete(_sessionFile.McpPid); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Retire every listed shell. True only when each is confirmed gone.
+        /// </summary>
+        private static bool RetireAllShells(string reason)
+        {
+            bool allGone = true;
+            foreach (var shell in ListedShells())
+            {
+                bool gone;
+                try { gone = ReleaseShell(shell, reason, retire: true); }
+                catch { gone = false; }
+                allGone &= gone;
+            }
+            return allGone;
         }
 
         // ================ Parent-death watchdog ================
@@ -559,31 +684,24 @@ namespace TcAutomation.Commands
         private static void TriggerEmergencyShutdown()
         {
             // The main STA thread may be deep inside a DTE call and unable to
-            // exit gracefully. Give it a short window, then force-kill the DTE
-            // PID and exit the process. The janitor will clean up the session
-            // file if we didn't manage to.
+            // exit gracefully. Give it a short window, then terminate the
+            // owned shells and exit the process. The janitor will clean up the
+            // session file if we didn't manage to.
             ShutdownCts.Cancel();
 
-            int? dtePid = _vsInstance?.DteProcessId;
+            // Close launches now, not after the grace period: a launch in progress
+            // on the STA thread must not start a shell nothing would terminate.
+            lock (LifecycleLock) { _launchesClosed = true; }
 
             // Short grace period for main loop to tear down cleanly.
             Task.Delay(3000).ContinueWith(_ =>
             {
-                try
-                {
-                    if (dtePid.HasValue)
-                    {
-                        var p = Process.GetProcessById(dtePid.Value);
-                        if (!p.HasExited)
-                        {
-                            Console.Error.WriteLine($"[DEBUG] host: emergency-killing DTE PID {dtePid.Value}");
-                            try { p.Kill(); } catch { }
-                        }
-                    }
-                }
-                catch { }
+                // Every shell this worker started, even one mid-close or
+                // mid-launch, through its launch handle, never by PID. Retire
+                // also blocks a launch not yet at Process.Start.
+                bool shellLeftRunning = !RetireAllShells("parent died");
 
-                if (_sessionFile != null)
+                if (_sessionFile != null && !shellLeftRunning)
                 {
                     try { SessionFile.Delete(_sessionFile.McpPid); } catch { }
                 }

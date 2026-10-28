@@ -113,8 +113,22 @@ class ShellHost:
       - On a hard crash, the host's own parent-death watchdog takes over.
     """
 
+    # Time to wait for ensure-solution: up to 150 s for another worker's
+    # launch (LaunchGateWaitSeconds, VisualStudioInstance.cs), 120 s for the
+    # ROT attach, the unbounded claim (up to 35 s measured), Solution.Open
+    # (unbounded), then the project search (gives up after 30 s). A version
+    # change first closes the old shell, about 35 s when its kill succeeds.
+    # A budget, not a maximum.
+    # Too short, and a request the host still completes reports a lost response.
+    ENSURE_SOLUTION_TIMEOUT_SEC = 400.0
+
     # Time to wait for the "ready" handshake line on startup.
     READY_TIMEOUT_SEC = 30.0
+
+    # Time to wait for a graceful shutdown before killing the host. Must exceed
+    # TeardownTimeoutMs (30 s, VisualStudioInstance.cs) plus 5 s for its kill
+    # to confirm, or the shell outlives the process that owns it.
+    SHUTDOWN_TIMEOUT_SEC = 40.0
 
     def __init__(self, exe_path: Path):
         self._exe_path = exe_path
@@ -143,7 +157,10 @@ class ShellHost:
         return self._call_raw("status", None, timeout=10)
 
     def ensure_solution(
-        self, solution_path: str, tc_version: str | None, timeout: float = 120.0
+        self,
+        solution_path: str,
+        tc_version: str | None,
+        timeout: float = ENSURE_SOLUTION_TIMEOUT_SEC,
     ) -> dict:
         """
         Ensure the host has the given solution loaded. Lazily starts the
@@ -168,6 +185,12 @@ class ShellHost:
             params = {"solutionPath": solution_path}
             if tc_version:
                 params["tcVersion"] = tc_version
+            # Forget the cached pair first. A failed request can leave the host
+            # with no solution (a version change closed the old shell and the new
+            # one failed), and a stale cache would skip ensure-solution for the
+            # old pair forever.
+            self._current_solution = None
+            self._current_tc_version = None
             res = self._call_raw_locked("ensure-solution", params, timeout=timeout)
             self._current_solution = solution_path
             self._current_tc_version = tc_version
@@ -241,7 +264,7 @@ class ShellHost:
             if command in shell_commands:
                 if not solution_path:
                     raise HostError(f"{command} requires a solution path")
-                self.ensure_solution(solution_path, tc_version, timeout=120.0)
+                self.ensure_solution(solution_path, tc_version)
 
             with self._lock:
                 if not self.is_alive():
@@ -267,7 +290,7 @@ class ShellHost:
 
                 return inner, progress
 
-    def shutdown(self, timeout: float = 8.0):
+    def shutdown(self, timeout: float = SHUTDOWN_TIMEOUT_SEC):
         """Politely ask the host to shut down; force-kill if it won't."""
         with self._lock:
             if not self.is_alive():
@@ -299,6 +322,10 @@ class ShellHost:
     def _start_locked(self):
         if self.is_alive():
             return
+
+        # A new host holds no solution, whatever the previous one held.
+        self._current_solution = None
+        self._current_tc_version = None
 
         cmd = [str(self._exe_path), "host", "--mcp-pid", str(os.getpid())]
         try:
@@ -510,7 +537,7 @@ def shutdown_shell_host() -> None:
     if host is None:
         return
     try:
-        host.shutdown(timeout=8.0)
+        host.shutdown()
     except Exception:
         pass
     _shell_host = None
