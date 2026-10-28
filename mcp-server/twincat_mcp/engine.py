@@ -13,7 +13,7 @@ from .jobs import Jobs
 from .lifecycle import status as process_status
 from .safety import Grants
 
-VERSION = "2.3.0"
+VERSION = "3.0.0"
 
 
 class Engine:
@@ -65,6 +65,9 @@ class Engine:
                 queued=self.jobs.pending.qsize(),
                 protocol="2026-07-28",
                 lifecycle=process_status(),
+                unavailableOperations=[
+                    e["id"] for e in self.catalog.entries.values() if e.get("available") is False
+                ],
             )
         if operation == "context.status":
             with self.lock:
@@ -90,6 +93,8 @@ class Engine:
 
     def preflight(self, operation, args):
         entry = self.catalog.get(operation)
+        if entry.get("available") is False:
+            raise OperationError("unsupported_integration", entry["unavailableReason"])
         if operation == "workflow.sequence":
             for step in args["steps"]:
                 self.preflight(step["operation"], step["arguments"])
@@ -152,6 +157,8 @@ class Engine:
                     self.context_for(args["contextHandle"])
                 for name in args["operations"]:
                     entry = self.catalog.get(name)
+                    if entry.get("available") is False:
+                        raise OperationError("unsupported_integration", entry["unavailableReason"])
                     if not entry["requiresGrant"]:
                         raise OperationError(
                             "invalid_grant", "Grant only operations marked requiresGrant."

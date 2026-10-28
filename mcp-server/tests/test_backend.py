@@ -242,7 +242,9 @@ class CatalogTests(unittest.TestCase):
             if page["nextOffset"] is None:
                 break
             offset = page["nextOffset"]
-        self.assertEqual(len(c.entries), len(set(ids)))
+        self.assertEqual(
+            sum(e.get("available") is not False for e in c.entries.values()), len(set(ids))
+        )
 
     def test_search_finds_workflows_and_granular_operations(self):
         c = Catalog()

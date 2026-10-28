@@ -442,7 +442,7 @@ namespace TcAutomation
                 getDefaultValue: () => 851);
             var readVarListSymbolsOpt = new Option<string>(
                 aliases: new[] { "--symbols" },
-                description: "Comma-separated list of symbol paths (max 500)");
+                description: "JSON array of symbol paths (max 500)");
             readVarListSymbolsOpt.IsRequired = true;
             readVarListCommand.AddOption(readVarListAmsOpt);
             readVarListCommand.AddOption(readVarListPortOpt);
@@ -450,7 +450,7 @@ namespace TcAutomation
 
             readVarListCommand.SetHandler((string amsNetId, int port, string symbols) =>
             {
-                var symbolArray = symbols.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                var symbolArray = JsonSerializer.Deserialize<string[]>(symbols) ?? throw new ArgumentException("Expected a JSON symbol array.");
                 ReadVariableListCommand.Execute(amsNetId, port, symbolArray);
             }, readVarListAmsOpt, readVarListPortOpt, readVarListSymbolsOpt);
 
@@ -735,7 +735,7 @@ namespace TcAutomation
                 getDefaultValue: () => 851);
             var adsRecordVarsOpt = new Option<string>(
                 aliases: new[] { "--variables" },
-                description: "Comma-separated list of PLC variable paths to record");
+                description: "JSON array of PLC variable paths to record");
             adsRecordVarsOpt.IsRequired = true;
             var adsRecordSampleOpt = new Option<int>(
                 aliases: new[] { "--sampletime" },
@@ -781,8 +781,8 @@ namespace TcAutomation
                 var stopTrigger = ctx.ParseResult.GetValueForOption(adsRecordStopTriggerOpt);
                 var maxTime = ctx.ParseResult.GetValueForOption(adsRecordMaxTimeOpt);
 
-                var varArray = variables.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                string outputPath = output ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ads_record_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+                var varArray = JsonSerializer.Deserialize<string[]>(variables) ?? throw new ArgumentException("Expected a JSON variable array.");
+                string outputPath = output ?? System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ads_record_{Guid.NewGuid():N}.csv");
                 var result = AdsRecordCommand.Execute(amsNetId, port, varArray, sampleTime, duration, outputPath, startTrigger, stopTrigger, maxTime);
                 Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
             });
@@ -802,7 +802,7 @@ namespace TcAutomation
                 getDefaultValue: () => 851);
             var scopeCreateVarsOpt = new Option<string>(
                 aliases: new[] { "--variables" },
-                description: "Comma-separated list of PLC variable paths to record");
+                description: "JSON array of PLC variable paths to record");
             scopeCreateVarsOpt.IsRequired = true;
             var scopeCreateSampleOpt = new Option<int>(
                 aliases: new[] { "--sampletime" },
@@ -829,7 +829,7 @@ namespace TcAutomation
 
             scopeCreateCommand.SetHandler((string amsNetId, int port, string variables, int sampleTime, double? recordTime, string output, string chartName) =>
             {
-                var varArray = variables.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                var varArray = JsonSerializer.Deserialize<string[]>(variables) ?? throw new ArgumentException("Expected a JSON variable array.");
                 ScopeCreateCommand.Execute(amsNetId, port, varArray, sampleTime, recordTime, output, chartName);
             }, scopeCreateAmsOpt, scopeCreatePortOpt, scopeCreateVarsOpt, scopeCreateSampleOpt, scopeCreateRecordOpt, scopeCreateOutputOpt, scopeCreateChartOpt);
 
@@ -869,10 +869,11 @@ namespace TcAutomation
             rootCommand.AddCommand(scopeExportCommand);
 #else
             var scopeUnavailableMessage =
-                "TwinCAT Scope tools are not available in this build. " +
-                "Rebuild TcAutomation with /p:EnableScope=true and install TwinCAT Scope components.";
-            Action writeScopeUnavailable = () =>
+                "Scope configuration creation requires a TE13xx-enabled build. " +
+                "Scope capture and export are disabled pending qualified native implementations.";
+            Action<System.CommandLine.Invocation.InvocationContext> writeScopeUnavailable = invocation =>
             {
+                invocation.ExitCode = 1;
                 Console.WriteLine(JsonSerializer.Serialize(new
                 {
                     success = false,

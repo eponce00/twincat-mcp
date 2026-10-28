@@ -45,11 +45,12 @@ class ScopeSession:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             proc = self.process
+            lines = self.lines
 
             def read_stdout():
                 for line in proc.stdout:
-                    self.lines.put(line)
-                self.lines.put("")
+                    lines.put(line)
+                lines.put("")
 
             def drain_stderr():
                 for _ in proc.stderr:

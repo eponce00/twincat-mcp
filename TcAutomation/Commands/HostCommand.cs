@@ -599,7 +599,7 @@ namespace TcAutomation.Commands
             // Keep the record if a shell survived: the janitor needs it to find that shell.
             if (_sessionFile != null && !shellLeftRunning)
             {
-                try { SessionFile.Delete(_sessionFile.McpPid); } catch { }
+                try { SessionFile.DeleteOwned(_sessionFile); } catch { }
             }
         }
 
@@ -711,7 +711,7 @@ namespace TcAutomation.Commands
 
                 if (_sessionFile != null && !shellLeftRunning)
                 {
-                    try { SessionFile.Delete(_sessionFile.McpPid); } catch { }
+                    try { SessionFile.DeleteOwned(_sessionFile); } catch { }
                 }
 
                 try { Environment.Exit(2); } catch { }

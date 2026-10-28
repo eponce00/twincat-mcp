@@ -2,7 +2,7 @@
   <img src="img/banner.png" alt="TwinCAT MCP Server" width="800"/>
 </p>
 
-# TwinCAT MCP Server v2
+# TwinCAT MCP Server
 
 TwinCAT engineering, runtime diagnostics and workflows through three MCP tools.
 The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
@@ -13,12 +13,14 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 66 operations. Individual operations are **not separate MCP tools**.
+The catalog contains 66 operation contracts; 62 are discoverable. Scope capture,
+status, stop and export are disabled pending qualification. Individual operations
+are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
 
-The application version is **2.3.0**. See the [release notes](CHANGELOG.md) for
+The application version is **3.0.0**. See the [release notes](CHANGELOG.md) for
 changes and upgrade instructions. The supported interface consists of
 the three public tools and the [operation catalog](docs/operations.md).
 
@@ -26,15 +28,17 @@ the three public tools and the [operation catalog](docs/operations.md).
 
 Requires Windows, Python 3.10+, TwinCAT XAE, Visual Studio MSBuild, the .NET
 Framework 4.7.2 targeting pack and Beckhoff's `TcXaeMgmt` PowerShell module.
-Optional Scope operations require TE13xx and an automation worker built with
-Scope support. ADS recording does not require TE13xx.
+Optional Scope configuration creation requires TE13xx and a worker built with
+Scope support. Scope capture/export is disabled; use `runtime.record` for bounded
+ADS recording without TE13xx.
 
 ```powershell
 .\scripts\setup.ps1
 .\scripts\install-mcp.ps1
 ```
 
-Setup creates `.venv`, installs pinned direct dependencies, and builds
+Setup creates `.venv`, updates pinned packaging tools and security-reviewed
+dependencies, and builds
 `TcAutomation/bin/Release-v2/TcAutomation.exe` with MSBuild. Reload the MCP server
 through the client after installation.
 
@@ -135,6 +139,11 @@ artifacts and deadlines.
 [Online-change workflow](docs/online-change.md) documents the retained-state requirements.
 [Secure ADS route management](docs/ads-routes.md) documents fingerprint-verified
 route recovery and protected credential files.
+
+Artifact writers `engineering.generate_library`, `runtime.record` and
+`scope.create_config` require scoped grants as well. Existing output files are
+never overwritten. Library export does not install into a repository, and its
+`dryRun` skips building and exporting.
 
 Operations marked `requiresGrant` need an explicit grant. After the user authorizes
 the work in the calling host, execute `safety.grant`:
@@ -245,6 +254,9 @@ a runtime operation.
 .\scripts\test-plc-objects.ps1
 .\scripts\test-mcp.ps1
 ```
+
+The [contributor review](docs/contributor-security-review.md) records retained
+changes, corrected safety issues, quarantined integrations and dependency checks.
 
 The automated suite uses fake workers, real stdio subprocesses and disposable
 test-owned processes; it never writes to a PLC. Inspector can invoke real operations, so choose an appropriate

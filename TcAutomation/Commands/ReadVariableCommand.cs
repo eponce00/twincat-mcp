@@ -50,6 +50,7 @@ namespace TcAutomation.Commands
                     {
                         // Get symbol info to determine the type
                         var symbolInfo = adsClient.ReadSymbol(symbolName);
+                    TcAutomation.Core.AdsValues.ValidateSize(symbolInfo.Size);
                         result.DataType = symbolInfo.TypeName;
                         result.Size = symbolInfo.Size;
 

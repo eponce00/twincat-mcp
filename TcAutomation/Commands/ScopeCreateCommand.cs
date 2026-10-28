@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using TcAutomation.Models;
+using TcAutomation.Core;
 using TwinCAT.Scope2.Communications;
 
 // ReSharper disable once CheckNamespace
@@ -30,10 +31,11 @@ namespace TcAutomation.Commands
                 {
                     var tempDir = Path.Combine(Path.GetTempPath(), "TcAutomation_Scope");
                     Directory.CreateDirectory(tempDir);
-                    var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+                    var timestamp = Guid.NewGuid().ToString("N");
                     outputPath = Path.Combine(tempDir, $"trace_{timestamp}.tcscopex");
                 }
 
+                outputPath = ArtifactFiles.ValidateNew(outputPath, ".tcscopex");
                 // Ensure output directory exists
                 var dir = Path.GetDirectoryName(outputPath);
                 if (!string.IsNullOrEmpty(dir))
@@ -79,7 +81,8 @@ namespace TcAutomation.Commands
                 // Save config — use WriteScopeToString + File.WriteAllText
                 // because WriteScope(view, path) may fail with internal file access issues
                 var xml = ScopeXmlSerializer.WriteScopeToString(view);
-                File.WriteAllText(outputPath, xml);
+                using (var stream = ArtifactFiles.CreateNew(outputPath, ".tcscopex"))
+                using (var writer = new StreamWriter(stream)) writer.Write(xml);
 
                 result.Success = true;
                 result.ConfigPath = outputPath;

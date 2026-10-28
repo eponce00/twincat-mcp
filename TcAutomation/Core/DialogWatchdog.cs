@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -81,6 +82,7 @@ namespace TcAutomation.Core
 
         private static readonly object _lock = new object();
         private static readonly Dictionary<int, int> _pidRefCounts = new Dictionary<int, int>();
+        private static readonly Dictionary<int, DateTime> _pidStarts = new Dictionary<int, DateTime>();
         private static Thread? _thread;
         private static volatile bool _running;
 
@@ -118,6 +120,13 @@ namespace TcAutomation.Core
                 }
                 else
                 {
+                    try
+                    {
+                        using var process = Process.GetProcessById(targetPid);
+                        var retained = process.Handle;
+                        _pidStarts[targetPid] = process.StartTime.ToUniversalTime();
+                    }
+                    catch { return; } // Unverified ownership never authorizes a UI action.
                     _pidRefCounts[targetPid] = 1;
                     Console.Error.WriteLine(
                         $"[DialogWatchdog] Now monitoring PID {targetPid} (active set: {_pidRefCounts.Count})");
@@ -151,6 +160,7 @@ namespace TcAutomation.Core
                     if (count <= 1)
                     {
                         _pidRefCounts.Remove(targetPid);
+                        _pidStarts.Remove(targetPid);
                         Console.Error.WriteLine(
                             $"[DialogWatchdog] Stopped monitoring PID {targetPid} (active set: {_pidRefCounts.Count})");
                     }
@@ -195,11 +205,31 @@ namespace TcAutomation.Core
             // been asked to monitor. Everything else (user's interactive
             // VS, other automation's shell, unrelated apps) is off-limits.
             GetWindowThreadProcessId(hWnd, out var winPid);
+            DateTime expected;
             lock (_lock)
             {
-                if (!_pidRefCounts.ContainsKey((int)winPid)) return true;
+                if (!_pidStarts.TryGetValue((int)winPid, out expected)) return true;
             }
+            using var lease = LeaseProcess((int)winPid, expected);
+            if (lease == null) return true;
+            return OnOwnedWindow(hWnd, winPid);
+        }
 
+        public static Process LeaseProcess(int pid, DateTime expectedUtc)
+        {
+            Process process = null;
+            try
+            {
+                process = Process.GetProcessById(pid);
+                var handle = process.Handle; // Pin identity until the complete UI callback returns.
+                if (process.HasExited || process.StartTime.ToUniversalTime() != expectedUtc) { process.Dispose(); return null; }
+                return process;
+            }
+            catch { process?.Dispose(); return null; }
+        }
+
+        private static bool OnOwnedWindow(IntPtr hWnd, uint winPid)
+        {
             var title = new StringBuilder(256);
             GetWindowText(hWnd, title, title.Capacity);
             string t = title.ToString();

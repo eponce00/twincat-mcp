@@ -102,6 +102,8 @@ if (-not (Test-Path -LiteralPath $pythonPath)) {
     python -m venv "$root/.venv"
     if ($LASTEXITCODE -ne 0) { throw "Could not create Python environment." }
 }
+& $pythonPath -m pip install --upgrade -r "$root/mcp-server/requirements-bootstrap.txt"
+if ($LASTEXITCODE -ne 0) { throw "Could not update pinned packaging tools." }
 & $pythonPath -m pip install -r "$root/mcp-server/requirements.txt"
 if ($LASTEXITCODE -ne 0) { throw "Could not install pinned dependencies." }
 Write-Host "✅ Python dependencies installed" -ForegroundColor Green

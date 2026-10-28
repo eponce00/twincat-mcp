@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 using TwinCAT.Ads;
+using TcAutomation.Core;
 
 namespace TcAutomation.Commands
 {
@@ -25,21 +26,21 @@ namespace TcAutomation.Commands
             catch (Exception ex)
             {
                 result.ErrorMessage = $"Failed to parse variablesJson: {ex.Message}";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
 
             if (variables == null || variables.Count == 0)
             {
                 result.ErrorMessage = "No variables specified";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
 
             if (variables.Count > 500)
             {
                 result.ErrorMessage = "Maximum 500 variables per batch";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
 
@@ -54,15 +55,16 @@ namespace TcAutomation.Commands
                     if (!adsClient.IsConnected)
                     {
                         result.ErrorMessage = $"Failed to connect to {amsNetId}:{port}";
-                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                         return 1;
                     }
 
+                    int remainingBytes = 8 * 1024 * 1024;
                     var stateInfo = adsClient.ReadState();
                     if (stateInfo.AdsState != AdsState.Run)
                     {
                         result.ErrorMessage = $"PLC is not running (state: {stateInfo.AdsState}). Cannot write variables.";
-                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                         return 1;
                     }
 
@@ -77,6 +79,9 @@ namespace TcAutomation.Commands
                         try
                         {
                             var symbolInfo = adsClient.ReadSymbol(symbolName);
+                            AdsValues.ValidateSize(symbolInfo.Size);
+                            if (symbolInfo.Size > remainingBytes) throw new ArgumentException("Batch symbol data exceeds 8 MiB.");
+                            remainingBytes -= symbolInfo.Size;
                             itemResult.DataType = symbolInfo.TypeName;
 
                             handle = adsClient.CreateVariableHandle(symbolName);
@@ -85,7 +90,10 @@ namespace TcAutomation.Commands
                             object previousValue = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
                             itemResult.PreviousValue = previousValue?.ToString() ?? "null";
 
-                            WriteTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size, value);
+                            object parsed = AdsValues.Parse(symbolInfo.TypeName, symbolInfo.Size, value);
+                            itemResult.WriteDispatched = true;
+                            if (parsed is string) adsClient.WriteAny(handle, parsed, new int[] { symbolInfo.Size });
+                            else adsClient.WriteAny(handle, parsed);
 
                             object newValue = ReadTypedValue(adsClient, handle, symbolInfo.TypeName, symbolInfo.Size);
                             itemResult.NewValue = newValue?.ToString() ?? "null";
@@ -97,35 +105,38 @@ namespace TcAutomation.Commands
                         {
                             itemResult.ErrorMessage = $"ADS Error: {ex.ErrorCode} - {ex.Message}";
                             result.ErrorCount++;
+                            result.OutcomeUnknown |= itemResult.WriteDispatched;
                         }
                         catch (Exception ex)
                         {
                             itemResult.ErrorMessage = ex.Message;
                             result.ErrorCount++;
+                            result.OutcomeUnknown |= itemResult.WriteDispatched;
                         }
                         finally
                         {
                             if (handleCreated)
-                                adsClient.DeleteVariableHandle(handle);
+                                try { adsClient.DeleteVariableHandle(handle); }
+                                catch (Exception cleanup) { itemResult.CleanupError = cleanup.Message; }
                         }
 
                         result.Results[symbolName] = itemResult;
                     }
                 }
 
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
+                return result.Success ? 0 : 1;
             }
             catch (AdsErrorException ex)
             {
                 result.ErrorMessage = $"ADS Error: {ex.ErrorCode} - {ex.Message}";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
         }
@@ -165,69 +176,12 @@ namespace TcAutomation.Commands
             return BitConverter.ToString(data).Replace("-", " ");
         }
 
-        private static void WriteTypedValue(AdsClient client, uint handle, string typeName, int size, string value)
-        {
-            string upperType = typeName.ToUpperInvariant();
-
-            if (upperType == "BOOL")
-            {
-                bool boolValue = value.Equals("TRUE", StringComparison.OrdinalIgnoreCase)
-                    || value.Equals("1", StringComparison.Ordinal);
-                client.WriteAny(handle, boolValue);
-            }
-            else if (upperType == "BYTE" || upperType == "USINT")
-            {
-                client.WriteAny(handle, byte.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "SINT")
-            {
-                client.WriteAny(handle, sbyte.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "WORD" || upperType == "UINT")
-            {
-                client.WriteAny(handle, ushort.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "INT")
-            {
-                client.WriteAny(handle, short.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "DWORD" || upperType == "UDINT")
-            {
-                client.WriteAny(handle, uint.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "DINT")
-            {
-                client.WriteAny(handle, int.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "LWORD" || upperType == "ULINT")
-            {
-                client.WriteAny(handle, ulong.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "LINT")
-            {
-                client.WriteAny(handle, long.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "REAL")
-            {
-                client.WriteAny(handle, float.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType == "LREAL")
-            {
-                client.WriteAny(handle, double.Parse(value, CultureInfo.InvariantCulture));
-            }
-            else if (upperType.StartsWith("STRING"))
-            {
-                client.WriteAny(handle, value, new int[] { size });
-            }
-            else
-            {
-                throw new ArgumentException($"Unsupported type for writing: {typeName}");
-            }
-        }
     }
 
     public class WriteVariableListResult
     {
+        public bool OutcomeUnknown { get; set; }
+        public bool Success => ErrorMessage == null && SymbolCount > 0 && Results.Count == SymbolCount && ErrorCount == 0;
         public string AmsNetId { get; set; } = "";
         public int Port { get; set; }
         public int SymbolCount { get; set; }
@@ -239,6 +193,8 @@ namespace TcAutomation.Commands
 
     public class WriteVariableItemResult
     {
+        public bool WriteDispatched { get; set; }
+        public string CleanupError { get; set; }
         public bool Success { get; set; }
         public string PreviousValue { get; set; } = "";
         public string NewValue { get; set; } = "";

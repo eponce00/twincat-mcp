@@ -47,6 +47,7 @@ namespace TcAutomation.Commands
 
                     // Get symbol info
                     var symbolInfo = adsClient.ReadSymbol(symbolName);
+                    TcAutomation.Core.AdsValues.ValidateSize(symbolInfo.Size);
                     result.DataType = symbolInfo.TypeName;
 
                     // Create a handle for the symbol
@@ -130,8 +131,7 @@ namespace TcAutomation.Commands
 
             if (upperType == "BOOL")
             {
-                bool boolValue = value.Equals("TRUE", StringComparison.OrdinalIgnoreCase) 
-                    || value.Equals("1", StringComparison.Ordinal);
+                bool boolValue = TcAutomation.Core.AdsValues.Boolean(value);
                 client.WriteAny(handle, boolValue);
             }
             else if (upperType == "BYTE" || upperType == "USINT")

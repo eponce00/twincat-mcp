@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using TwinCAT.Ads;
+using TcAutomation.Core;
 
 namespace TcAutomation.Commands
 {
@@ -18,14 +19,14 @@ namespace TcAutomation.Commands
             if (symbols == null || symbols.Length == 0)
             {
                 result.ErrorMessage = "No symbols specified";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
 
             if (symbols.Length > 500)
             {
                 result.ErrorMessage = "Maximum 500 symbols per batch";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
 
@@ -40,15 +41,16 @@ namespace TcAutomation.Commands
                     if (!adsClient.IsConnected)
                     {
                         result.ErrorMessage = $"Failed to connect to {amsNetId}:{port}";
-                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                         return 1;
                     }
 
+                    int remainingBytes = 8 * 1024 * 1024;
                     var stateInfo = adsClient.ReadState();
                     if (stateInfo.AdsState != AdsState.Run)
                     {
                         result.ErrorMessage = $"PLC is not running (state: {stateInfo.AdsState}). Cannot read variables.";
-                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                         return 1;
                     }
 
@@ -61,6 +63,9 @@ namespace TcAutomation.Commands
                         try
                         {
                             var symbolInfo = adsClient.ReadSymbol(symbolName);
+                            AdsValues.ValidateSize(symbolInfo.Size);
+                            if (symbolInfo.Size > remainingBytes) throw new ArgumentException("Batch symbol data exceeds 8 MiB.");
+                            remainingBytes -= symbolInfo.Size;
                             itemResult.DataType = symbolInfo.TypeName;
                             itemResult.Size = symbolInfo.Size;
 
@@ -85,7 +90,8 @@ namespace TcAutomation.Commands
                         finally
                         {
                             if (handleCreated)
-                                adsClient.DeleteVariableHandle(handle);
+                                try { adsClient.DeleteVariableHandle(handle); }
+                                catch (Exception cleanup) { itemResult.CleanupError = cleanup.Message; }
                         }
 
                         result.Results[symbolName] = itemResult;
@@ -98,19 +104,19 @@ namespace TcAutomation.Commands
                     else result.ErrorCount++;
                 }
 
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                return 0;
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
+                return result.Success ? 0 : 1;
             }
             catch (AdsErrorException ex)
             {
                 result.ErrorMessage = $"ADS Error: {ex.ErrorCode} - {ex.Message}";
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
             catch (Exception ex)
             {
                 result.ErrorMessage = ex.Message;
-                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals }));
                 return 1;
             }
         }
@@ -152,6 +158,7 @@ namespace TcAutomation.Commands
 
     public class ReadVariableListResult
     {
+        public bool Success => ErrorMessage == null && SymbolCount > 0 && Results.Count == SymbolCount && ErrorCount == 0;
         public string AmsNetId { get; set; } = "";
         public int Port { get; set; }
         public int SymbolCount { get; set; }
@@ -163,6 +170,7 @@ namespace TcAutomation.Commands
 
     public class ReadVariableItemResult
     {
+        public string CleanupError { get; set; }
         public bool Success { get; set; }
         public string Value { get; set; } = "";
         public object? RawValue { get; set; }
