@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.0 — Unreleased
+## 2.1.0 — 2026-10-28
 
 ### Capabilities
 
@@ -19,6 +19,14 @@
   not accepted or logged.
 - `system.routes` now reports Beckhoff route metadata, Secure ADS mode,
   certificate fingerprints and current availability.
+
+### Upgrade
+
+Finish active operations and stop the MCP server before updating. Run
+`scripts/setup.ps1` to rebuild the native worker and install pinned dependencies,
+then restart the MCP server. `system.status` reports version `2.1.0` and 62
+operations. Existing v2 tool calls remain supported; object authoring uses the
+new catalog operations described in [the object guide](docs/plc-objects.md).
 
 ### Validation
 
