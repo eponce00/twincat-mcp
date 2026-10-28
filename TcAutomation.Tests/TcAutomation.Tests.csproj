@@ -26,6 +26,7 @@
     </ProjectReference>
     <Compile Include="Program.cs" />
     <Compile Include="FeedbackTests.cs" />
+    <Compile Include="MoveTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

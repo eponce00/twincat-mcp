@@ -9,6 +9,7 @@ using Microsoft.Win32;
 using System.Threading;
 using EnvDTE80;
 using TCatSysManagerLib;
+using TcAutomation.Commands;
 
 namespace TcAutomation.Core
 {
@@ -263,6 +264,20 @@ namespace TcAutomation.Core
             LoadTwinCATVersion();
 
             LoadSolution();
+        }
+
+        public void CloseSolutionForMove()
+        {
+            if (_solution == null || !_solution.IsOpen) return;
+            if (_solution.SolutionBuild.BuildState == EnvDTE.vsBuildState.vsBuildStateInProgress)
+                throw new InvalidOperationException("A build is running; the solution cannot be closed for a move.");
+            if (_tcProject != null)
+                foreach (ITcSmTreeItem plc in GetSystemManager().LookupTreeItem("TIPC"))
+                    if (MatchingLoginCommand.IsLoggedIn(((ITcProjectRoot)plc).NestedProject))
+                        throw new InvalidOperationException("All PLC projects must be offline before relocating source.");
+            _solution.Close(false);
+            if (_solution.IsOpen) throw new InvalidOperationException("The solution did not close; no files were moved.");
+            _solution = null; _tcProject = null; _loaded = false;
         }
 
         /// <summary>

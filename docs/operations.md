@@ -1,6 +1,6 @@
 # Operation catalog
 
-The three public MCP tools expose the following 65 operations. Use
+The three public MCP tools expose the following 66 operations. Use
 `twincat_describe` for current full input schemas, defaults, limits, prerequisites
 and examples. This index summarizes the catalog; it does not replace validation.
 
@@ -10,6 +10,7 @@ without a request key. Each marked operation requires a scoped grant.
 
 [PLC object and folder guide](plc-objects.md) covers source authoring and import/export.
 [Build feedback](build-feedback.md) covers compilation, TMC evidence and waits.
+[Moving objects](moving-objects.md) covers identity-preserving relocation and recovery.
 
 ## Context
 
@@ -43,6 +44,7 @@ without a request key. Each marked operation requires a scoped grant.
 | `engineering.list_plcs` | List PLC projects, configured ADS ports and boot-project settings in the solution. | `contextHandle` | No | Job |
 | `engineering.list_tasks` | List configured real-time tasks with cycle times, priorities and enabled state. | `contextHandle` | No | Job |
 | `engineering.matching_login` | Log into the unchanged baseline in this engineering context. Requires retained compile information, matching configuration/platform, configured ADS port and a RUN application. Rejects download/change prompts. | `port`, `configuration`, `platform`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.move_object` | Relocate a top-level PLC object or project folder within the context PLC, preserving native bytes, GUIDs and nested members. Offline only; requires current subtree hash and CONFIRM. Saves and reloads the owned solution. Rejects conflicts, linked paths and member-only moves. Recovery records and rollback evidence are returned; no crash-atomicity or replay. | `path`, `expectedSha256`, `contextHandle`, `grantHandle`, `newParentPath`, `confirm` | Yes | Job |
 | `engineering.online_change` | Apply one online change in the already logged-in matching PLC context. Verify one counter increment and advancing cycles. Never substitute download, activate, restart or boot-project update. | `port`, `contextFile`, `cycleSymbol`, `expectedOnlineChangeCount`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.read_object` | Read PLC object metadata and supported source sections. sha256 covers its path, source and descendants; use it for update/delete/rename. | `path`, `contextHandle` | No | Job |
 | `engineering.read_plc_source` | Read a POU declaration or implementation and its exact UTF-8 SHA256 from the engineering context. | `path`, `section`, `contextHandle` | No | Job |

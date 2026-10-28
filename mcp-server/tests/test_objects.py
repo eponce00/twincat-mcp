@@ -24,6 +24,7 @@ class ObjectCatalogTests(unittest.TestCase):
             "create_object",
             "update_object",
             "rename_object",
+            "move_object",
             "delete_object",
             "import_objects",
             "export_objects",
@@ -159,3 +160,51 @@ class ObjectCatalogTests(unittest.TestCase):
             )
         self.assertEqual("CONFIRM", run.call_args.args[1]["confirm"])
         self.assertEqual("DELETE_CONTENTS", run.call_args.args[1]["recursiveConfirm"])
+
+    def test_move_requires_hash_destination_and_confirmation(self):
+        arguments = dict(
+            path="PLC^Source^FB",
+            newParentPath="PLC^Destination",
+            expectedSha256="0" * 64,
+            confirm="CONFIRM",
+        )
+        self.validate("move_object", **arguments)
+        for key in ("path", "newParentPath", "expectedSha256", "confirm"):
+            with self.subTest(missing=key), self.assertRaises(OperationError):
+                self.validate("move_object", **{k: v for k, v in arguments.items() if k != key})
+        for extra in (
+            {"confirm": "no"},
+            {"timeoutSeconds": 601},
+            {"timeoutSeconds": 0},
+            {"expectedSha256": "bad"},
+        ):
+            with self.assertRaises(OperationError):
+                self.validate("move_object", **(arguments | extra))
+
+    def test_move_preserves_confirmation_and_recovery_evidence_without_replay(self):
+        receipt = dict(
+            success=False,
+            mutationAttempted=True,
+            outcomeUnknown=True,
+            recoveryPath="C:/State/moves/id",
+            rollbackError="External edit",
+        )
+        with patch("twincat_mcp.backend.run_shell_step", return_value=(receipt, [])) as run:
+            result = Backend().run(
+                self.catalog.get("engineering.move_object"),
+                dict(
+                    self.base,
+                    path="PLC^Source^FB",
+                    newParentPath="PLC^Destination",
+                    expectedSha256="0" * 64,
+                    confirm="CONFIRM",
+                    timeoutSeconds=600,
+                ),
+                dict(solutionPath="fixture.sln", amsNetId="1.2.3.4.1.1", plcName="PLC"),
+            )
+        self.assertEqual(receipt, result)
+        self.assertEqual(1, run.call_count)
+        self.assertEqual("move-plc-object", run.call_args.args[0])
+        self.assertEqual("CONFIRM", run.call_args.args[1]["confirm"])
+        self.assertEqual(11, run.call_args.kwargs["timeout_minutes"])
+        self.assertNotIn("grantHandle", run.call_args.args[1])

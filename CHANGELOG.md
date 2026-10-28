@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.3.0 — 2026-10-28
+
+### Capabilities
+
+- Added `engineering.move_object` for relocating a whole PLC object or project
+  folder within the selected PLC. It preserves native file bytes, GUIDs and
+  nested methods/properties. The catalog has 66 operations; the three public
+  MCP tools remain unchanged.
+- Moves require offline PLC projects, an existing destination, a current source
+  subtree hash, a context-scoped grant and confirmation. Conflicts, category
+  roots, cross-PLC paths, individual members and unsupported linked/conditional
+  layouts are rejected.
+- Relocation saves and closes the owned solution, moves files and updates
+  project entries, then reopens XAE and verifies exact source/native bytes.
+  Recovery manifests and project copies precede mutation. Guarded rollback and
+  explicit uncertain receipts cover failures; no crash atomicity is claimed.
+
+### Upgrade
+
+Stop the MCP server, run `scripts/setup.ps1`, and restart it through the client.
+Verify `system.status` reports application version `2.3.0` and 66 operations.
+Use [the move guide](docs/moving-objects.md) for supported layouts, reload
+behavior, deadlines and recovery. Moving is optional; existing create, update,
+delete, rename and import/export operations remain available.
+
+### Validation
+
+- 83 Python protocol/orchestration/lifecycle tests and Ruff passed.
+- Native MSBuild and 55 object-policy, 24 feedback/janitor and 40 relocation
+  checks passed, including failures between file and project edits, reopen
+  failures, external-edit preservation and recovery records.
+- Real stdio MCP-to-XAE 3.1.4026.26 checks passed moves of an FB with nested
+  members, a folder containing nine source files, empty folders and move-back.
+  Native bytes remained identical and subsequent compiler/artifact checks
+  passed. A forced deadline retained source bytes and recovery evidence while
+  expiring the context. No PLC login, activation or download was performed.
+
 ## 2.2.0 — 2026-10-28
 
 ### Capabilities and fixes

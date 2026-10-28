@@ -38,6 +38,15 @@ namespace TcAutomation.Commands
         void ExportPlcOpen(string file, string selection);
     }
 
+    public interface IPlcMoveSession
+    {
+        string ProjectFilePath { get; }
+        string FilePath(IPlcObjectNode node);
+        void CloseForMove();
+        void ReopenAfterMove();
+        void AbortMove();
+    }
+
     public static class PlcObjectsCommand
     {
         const int MaxNodes = 4096;
@@ -70,7 +79,18 @@ namespace TcAutomation.Commands
                 try { acquired = mutex.WaitOne(0); }
                 catch (AbandonedMutexException) { acquired = true; }
                 if (!acquired) throw new InvalidOperationException("Another worker is editing this solution.");
-                try { return Execute(new ComSession(vs, root), command, args); }
+                try
+                {
+                    var result = Execute(new ComSession(vs, plcName), command, args);
+                    if (!vs.IsOwnedProcessRunning)
+                    {
+                        result["success"] = false;
+                        result["outcomeUnknown"] = true;
+                        result["code"] = "worker_lost";
+                        if (!result.ContainsKey("errorMessage")) result["errorMessage"] = "The owned shell was lost; close the expired context before inspecting recovery state.";
+                    }
+                    return result;
+                }
                 finally { mutex.ReleaseMutex(); }
             }
             catch (Exception ex)
@@ -193,6 +213,7 @@ namespace TcAutomation.Commands
                     if (Children(parent).Any(n => n.Name.Equals(deletedName, StringComparison.OrdinalIgnoreCase)))
                         throw new InvalidOperationException("Deleted object still appears in the project tree.");
                 }
+                else if (command == "move-plc-object") Move(session, args, result);
                 else if (command == "import-plc-objects") Import(session, args, result);
                 else if (command == "export-plc-objects") Export(session, args, result);
                 else throw new ArgumentException("Unknown object command.");
@@ -205,6 +226,116 @@ namespace TcAutomation.Commands
                 result["outcomeUnknown"] = (bool)result["mutationAttempted"] || result.ContainsKey("fileWriteAttempted");
             }
             return result;
+        }
+
+        static void Move(IPlcObjectSession session, JsonElement args, Dictionary<string, object> result)
+        {
+            if (Required(args, "confirm") != "CONFIRM") throw new ArgumentException("Confirmation required.");
+            var mover = session as IPlcMoveSession ?? throw new InvalidOperationException("Session cannot relocate saved project files.");
+            var root = session.Root;
+            var node = Resolve(root, Required(args, "path"), false);
+            RequireEditable(root, node);
+            var parent = Resolve(root, Required(args, "newParentPath"), true);
+            bool ProjectFolder(IPlcObjectNode item) => item.Path == root.Path ||
+                (item.SubType == 601 && ProjectFolder(Resolve(root, item.Path.Substring(0, item.Path.LastIndexOf('^')), true)));
+            var oldParent = Resolve(root, node.Path.Substring(0, node.Path.LastIndexOf('^')), true);
+            if ((!NativeFileType(node.SubType) && node.SubType != 601) || !ProjectFolder(oldParent) || !ProjectFolder(parent))
+                throw new ArgumentException("Move supports top-level PLC objects and project folders; members move with their containing native object.");
+            if (oldParent.Path == parent.Path) throw new ArgumentException("Already in this parent; use rename_object to change its name.");
+            if (parent.Path == node.Path || parent.Path.StartsWith(node.Path + "^", StringComparison.Ordinal))
+                throw new ArgumentException("Cannot move a folder into itself or its descendants.");
+            NoConflict(parent, node.Name);
+            Match(node, Required(args, "expectedSha256"));
+            using var deadline = new OwnedDeadline(mover.AbortMove, Int(args, "timeoutSeconds", 180));
+            session.Save();
+            Match(node, Required(args, "expectedSha256"));
+            string originalPath = node.Path, movedPath = parent.Path + "^" + node.Name;
+            string content = ContentFingerprint(node);
+            long nativeBytes = 0;
+            var native = Walk(node).Where(n => NativeFileType(n.SubType)).Select(n =>
+            {
+                var bytes = n.ReadNativeFile();
+                nativeBytes += bytes.Length;
+                if (nativeBytes > 64 * 1024 * 1024) throw new InvalidOperationException("Native move snapshots exceed 64 MiB.");
+                return new { suffix = n.Path.Substring(originalPath.Length), bytes, path = mover.FilePath(n) };
+            }).ToArray();
+            string relative = originalPath.Substring(root.Path.Length + 1).Replace('^', Path.DirectorySeparatorChar);
+            if (node.SubType != 601) relative += System.IO.Path.GetExtension(mover.FilePath(node));
+            string destinationParent = parent.Path == root.Path ? "" : parent.Path.Substring(root.Path.Length + 1).Replace('^', Path.DirectorySeparatorChar);
+            var plan = new PlcObjectMove(mover.ProjectFilePath, relative, destinationParent, node.SubType == 601);
+            foreach (var file in native)
+            {
+                string expected = node.SubType == 601 ? System.IO.Path.Combine(plan.Source,
+                    file.suffix.TrimStart('^').Replace('^', Path.DirectorySeparatorChar) + System.IO.Path.GetExtension(file.path)) : plan.Source;
+                if (!System.IO.Path.GetFullPath(file.path).Equals(expected, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Linked or nonstandard source-file layouts cannot be moved.");
+                if (PlcObjectMove.Hash(ReadBounded(file.path)) != PlcObjectMove.Hash(file.bytes))
+                    throw new InvalidOperationException("Saved source differs from its native object snapshot.");
+            }
+            plan.Stage(SessionFile.SessionDir, originalPath, movedPath);
+            result["recoveryPath"] = plan.RecoveryPath;
+            result["originalPath"] = originalPath;
+            result["originalSha256"] = Required(args, "expectedSha256");
+            result["requestedPath"] = movedPath;
+            result["filesMoved"] = plan.Files.Length;
+            result["updatedProjectEntries"] = plan.UpdatedEntries;
+            result["saveAttempted"] = true;
+            bool closed = false;
+            try
+            {
+                plan.Record("closing_solution");
+                result["mutationAttempted"] = true;
+                mover.CloseForMove(); closed = true;
+                plan.Apply(); result["saved"] = true;
+                plan.Record("reopening_solution");
+                mover.ReopenAfterMove(); closed = false;
+                plan.Verify();
+                var moved = Resolve(session.Root, movedPath, false);
+                if (ContentFingerprint(moved) != content) throw new InvalidOperationException("Relocated source/subtree differs from the original.");
+                foreach (var file in native)
+                    if (PlcObjectMove.Hash(Resolve(session.Root, movedPath + file.suffix, false).ReadNativeFile()) != PlcObjectMove.Hash(file.bytes))
+                        throw new InvalidOperationException("Relocated native file differs; identity preservation could not be verified.");
+                if (Walk(session.Root).Any(n => n.Path == originalPath)) throw new InvalidOperationException("Original object remains registered.");
+                var description = Describe(moved);
+                plan.Record("verified");
+                deadline.Complete();
+                result["movedObjectPath"] = movedPath;
+                result["identityPreserved"] = true;
+                result["solutionReloaded"] = true;
+                result["object"] = description;
+            }
+            catch
+            {
+                result["phase"] = plan.Phase;
+                result["rollbackAttempted"] = false;
+                if (!deadline.Expired)
+                {
+                    try
+                    {
+                        result["rollbackAttempted"] = true;
+                        if (!closed) mover.CloseForMove();
+                        plan.Rollback();
+                        mover.ReopenAfterMove();
+                        result["rolledBack"] = true;
+                        result["saved"] = false;
+                    }
+                    catch (Exception ex) { result["rollbackError"] = ex.Message; }
+                }
+                throw;
+            }
+        }
+
+        static string ContentFingerprint(IPlcObjectNode node)
+        {
+            var text = new StringBuilder();
+            foreach (var item in Walk(node))
+            {
+                foreach (string part in new[] { item.Path.Substring(node.Path.Length), item.SubType.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    HasDeclaration(item.SubType) ? item.Declaration : "", HasImplementation(item.SubType) ? item.Implementation : "" })
+                    text.Append(part.Length).Append(':').Append(part);
+                if (text.Length > MaxText) throw new InvalidOperationException("Source snapshot exceeds 4 MiB.");
+            }
+            return Hash(text.ToString());
         }
 
         static void Import(IPlcObjectSession session, JsonElement args, Dictionary<string, object> result)
@@ -501,17 +632,23 @@ namespace TcAutomation.Commands
         static int Int(JsonElement args, string key, int fallback) => args.TryGetProperty(key, out var value) ? value.GetInt32() : fallback;
         static bool Bool(JsonElement args, string key, bool fallback) => args.TryGetProperty(key, out var value) ? value.GetBoolean() : fallback;
 
-        sealed class ComSession : IPlcObjectSession
+        sealed class ComSession : IPlcObjectSession, IPlcMoveSession
         {
             readonly VisualStudioInstance vs;
-            readonly ITcSmTreeItem root;
-            public ComSession(VisualStudioInstance vs, ITcSmTreeItem root) { this.vs = vs; this.root = root; }
+            readonly string plcName;
+            ITcSmTreeItem root => ((ITcProjectRoot)vs.GetSystemManager().LookupTreeItem("TIPC^" + plcName)).NestedProject;
+            public ComSession(VisualStudioInstance vs, string plcName) { this.vs = vs; this.plcName = plcName; }
             public IPlcObjectNode Root => new ComNode(root);
             public bool LoggedIn => MatchingLoginCommand.IsLoggedIn(root);
             public void EnsureExclusive() => vs.EnsureExclusiveSolution();
             public void Save() { vs.RecordSourceMutation(); vs.Dte.ExecuteCommand("File.SaveAll", ""); }
             public void ImportPlcOpen(string file, bool folders) => ((ITcPlcIECProject)root).PlcOpenImport(file, 0, "", folders);
             public void ExportPlcOpen(string file, string selection) => ((ITcPlcIECProject)root).PlcOpenExport(file, selection);
+            public string ProjectFilePath => BuildArtifacts.Capture(vs, plcName).Single().ProjectPath;
+            public string FilePath(IPlcObjectNode node) => ((ComNode)node).FilePath;
+            public void CloseForMove() => vs.CloseSolutionForMove();
+            public void ReopenAfterMove() { vs.LoadSolution(); vs.RecordSourceMutation(); }
+            public void AbortMove() => vs.KillOwnedProcess("object move deadline");
         }
         sealed class ComNode : IPlcObjectNode
         {
@@ -529,9 +666,16 @@ namespace TcAutomation.Commands
             public void Delete(string name) => item.DeleteChild(name);
             public byte[] ReadNativeFile()
             {
-                var projectItem = ((ITcSmTreeItem8)item).VSProjectItem as EnvDTE.ProjectItem;
-                if (projectItem == null || projectItem.FileCount < 1) throw new InvalidOperationException("XAE did not expose the saved native object file.");
-                return ReadBounded(projectItem.FileNames[1]);
+                return ReadBounded(FilePath);
+            }
+            public string FilePath
+            {
+                get
+                {
+                    var projectItem = ((ITcSmTreeItem8)item).VSProjectItem as EnvDTE.ProjectItem;
+                    if (projectItem == null || projectItem.FileCount < 1) throw new InvalidOperationException("XAE did not expose the saved native object file.");
+                    return projectItem.FileNames[1];
+                }
             }
         }
     }
