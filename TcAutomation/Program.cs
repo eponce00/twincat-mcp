@@ -955,7 +955,7 @@ namespace TcAutomation
             // and safely kills any still-alive host/DTE processes whose start-time
             // matches the recorded one. Emits a JSON summary for tooling.
             var reapCommand = new Command("reap-orphans", "Reap orphaned TwinCAT host/DTE processes from crashed MCP sessions (surgical: start-time verified)");
-            reapCommand.SetHandler(() =>
+            reapCommand.SetHandler((System.CommandLine.Invocation.InvocationContext invocation) =>
             {
                 SessionFile.ReapReport report;
                 try
@@ -965,7 +965,7 @@ namespace TcAutomation
                 catch (Exception ex)
                 {
                     Console.WriteLine(JsonSerializer.Serialize(new { success = false, error = ex.Message }, JsonOptions));
-                    Environment.ExitCode = 1;
+                    invocation.ExitCode = 1;
                     return;
                 }
                 // `reaped` counts records removed, `stopped` processes killed.
@@ -986,6 +986,7 @@ namespace TcAutomation
                     aborted = report.Aborted,
                     notes = report.Notes
                 }, reapJsonOptions));
+                invocation.ExitCode = report.Aborted ? 1 : 0;
             });
             rootCommand.AddCommand(reapCommand);
 

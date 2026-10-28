@@ -13,12 +13,12 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 62 operations. Individual operations are **not separate MCP tools**.
+The catalog contains 65 operations. Individual operations are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
 
-The application version is **2.1.0**. See the [release notes](CHANGELOG.md) for
+The application version is **2.2.0**. See the [release notes](CHANGELOG.md) for
 changes and upgrade instructions. The supported interface consists of
 the three public tools and the [operation catalog](docs/operations.md).
 
@@ -79,11 +79,11 @@ Call `twincat_execute`:
 ```
 
 The response contains a `jobHandle`, status and bounded progress. By default execute
-waits up to one second for completion; `waitSeconds` can be 0–2. Small final
-results are included inline. For unfinished work, call execute with:
+waits up to one second for completion; `waitSeconds` can be 0–120. Small final
+results are included inline. For unfinished work, wait without resubmitting:
 
 ```json
-{"operation": "job.get", "arguments": {"jobHandle": "<returned handle>"}}
+{"operation": "job.wait", "arguments": {"jobHandle": "<returned handle>", "waitSeconds": 120}}
 ```
 
 Large results remain in the receipt store. Read `job.result` using `offset` and
@@ -91,9 +91,13 @@ Large results remain in the receipt store. Read `job.result` using `offset` and
 with a 16,000-character maximum. No full schema catalog or unlimited log stream
 is sent to the model.
 
+`job.wait` returns the current receipt on timeout with `waitTimedOut:true`;
+`job.get` inspects it immediately. Cancelling a wait leaves the job running.
+
 Supply a **new UUID requestKey for each submitted operation**.
 `system.status`, `context.status`, `safety.revoke`, `job.get`, `job.result` and
-`job.cancel` return immediately and do not require a request key. After a lost
+`job.cancel` return immediately. These operations and `job.wait` do not require
+a request key. After a lost
 response, resend exactly the same operation, arguments and key: the original
 receipt is returned without executing again. A key with different arguments is
 rejected. Intentional repeats require new keys. The receipt store retains keys
@@ -123,6 +127,11 @@ previous server process expire; no implicit replacement login is attempted.
 
 Build with `engineering.build` and `{"contextHandle":"...","clean":false}`.
 Use `clean:false` when preserving compile information for online change.
+Build receipts include per-build output, compiler status and TMC artifact evidence.
+Use `workflow.build_verify` with expected symbols or types to verify generated
+content, and `engineering.symbols` to inspect it in pages. The
+[build feedback guide](docs/build-feedback.md) covers linking policy, retained
+artifacts and deadlines.
 [Online-change workflow](docs/online-change.md) documents the retained-state requirements.
 [Secure ADS route management](docs/ads-routes.md) documents fingerprint-verified
 route recovery and protected credential files.
@@ -162,6 +171,7 @@ Do not expose it as an unauthenticated network service.
 | `workflow.test` | Configure/run the TcUnit workflow and return its structured report. |
 | `workflow.sequence` | Validate up to 32 catalog steps before effects, then execute in order and stop on failure. |
 | `workflow.wait_state` | Poll runtime state with a configured interval and deadline. |
+| `workflow.build_verify` | Build and verify explicit symbol/type expectations against the selected PLC's TMC. |
 
 Sequences accept `steps:[{"operation":"...","arguments":{...}}]`; use catalog
 operation IDs, not raw CLI commands. All steps carry their own required handles.
@@ -201,7 +211,11 @@ Receipts are stored in `%LOCALAPPDATA%/twincat-mcp/jobs.sqlite3`. A server heart
 identifies abandoned work; after 30 seconds without its owner, unfinished jobs
 become `outcome_unknown`. They are never automatically replayed. Scope
 recordings also have explicit handles; stop them before closing the server.
-The native parent-death watchdog cleans owned engineering processes on interruption.
+On stdio EOF or client exit, the Python server closes its jobs and owned native
+resources. On Windows, its watchdog follows the client through the Python venv
+launcher and pins process identity. A healthy idle connection remains open.
+The native watchdog and session janitor clean owned engineering processes using
+verified process handles and start times. Unverified records are retained.
 
 The database includes diagnostic data, source excerpts and operation handles.
 It is local to the OS user. There is currently no automatic retention purge:
@@ -213,8 +227,10 @@ request-key deduplication history.
 | Variable | Purpose |
 | --- | --- |
 | `TWINCAT_AUTOMATION_EXE` | Explicit worker executable; invalid paths fail without fallback. |
-| `TWINCAT_MCP_STATE_DIR` | Override the receipt directory, useful for isolated tests. |
+| `TWINCAT_MCP_STATE_DIR` | Override the receipt and native session-record directory, useful for isolated tests. |
 | `TWINCAT_DISABLE_HOST=1` | Disable engineering/ADS worker dispatch; no CLI fallback. |
+| `TWINCAT_MCP_PARENT_WATCHDOG=0` | Disable client-exit monitoring; stdio EOF still closes the server. |
+| `TWINCAT_MCP_SHUTDOWN_GRACE_SECONDS` | Client-exit cleanup deadline, 1–120 seconds; default 60. |
 
 Targets are explicit; provide the AMS Net ID when opening a context or calling
 a runtime operation.
@@ -225,8 +241,8 @@ a runtime operation.
 .\scripts\test-mcp.ps1
 ```
 
-The automated suite uses fake workers and a real stdio subprocess; it never
-writes to a PLC. Inspector can invoke real operations, so choose an appropriate
+The automated suite uses fake workers, real stdio subprocesses and disposable
+test-owned processes; it never writes to a PLC. Inspector can invoke real operations, so choose an appropriate
 test target. Hardware qualification is separate from protocol tests.
 
 [Architecture](docs/architecture-v2.md) explains discovery,

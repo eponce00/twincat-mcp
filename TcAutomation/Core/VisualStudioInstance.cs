@@ -163,6 +163,11 @@ namespace TcAutomation.Core
 
             _solution = _dte.Solution;
             _solution.Open(_solutionFilePath);
+            LastBuildArtifacts.Clear();
+            LastBuildRun = null;
+            LastCompilerCheckSucceeded = null;
+            LastCheckedSourceRevision = null;
+            SourceRevision = 0;
 
             // Wait for solution to load and find TwinCAT project
             // TwinCAT projects can take a while to fully load
@@ -338,18 +343,23 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Build the solution. Uses async Build(false) + SpinWait on BuildState
-        /// to reliably wait until the build completes, matching the pattern used
-        /// by TcUnit-Runner. Synchronous Build(true) + Sleep is unreliable.
+        /// Source mutation revision observed by this loaded shell.
         /// </summary>
-        public void BuildSolution()
+        public long SourceRevision { get; private set; }
+        public bool? LastCompilerCheckSucceeded { get; set; }
+        public long? LastCheckedSourceRevision { get; set; }
+        public void RecordSourceMutation() { SourceRevision++; }
+        public string TwinCATProjectFilePath => _tcProject.FullName;
+        public Dictionary<string, ArtifactRecord> LastBuildArtifacts { get; } = new Dictionary<string, ArtifactRecord>(StringComparer.OrdinalIgnoreCase);
+        public BuildRun LastBuildRun { get; private set; }
+
+        /// <summary>Build with matching completion events and an owned deadline.</summary>
+        public void BuildSolution(int timeoutSeconds = 180)
         {
             if (_solution == null)
                 throw new InvalidOperationException("Solution not loaded.");
 
-            _solution.SolutionBuild.Build(false);
-            System.Threading.SpinWait.SpinUntil(
-                () => _solution.SolutionBuild.BuildState == EnvDTE.vsBuildState.vsBuildStateDone);
+            LastBuildRun = BuildRun.Execute(this, timeoutSeconds);
         }
 
         /// <summary>
@@ -366,21 +376,7 @@ namespace TcAutomation.Core
 
         public int LastBuildInfo => _solution.SolutionBuild.LastBuildInfo;
 
-        public string GetBuildOutput()
-        {
-            var output = new System.Text.StringBuilder();
-            foreach (EnvDTE.OutputWindowPane pane in _dte.ToolWindows.OutputWindow.OutputWindowPanes)
-            {
-                try
-                {
-                    var doc = pane.TextDocument;
-                    output.AppendLine("[" + pane.Name + "]");
-                    output.AppendLine(doc.StartPoint.CreateEditPoint().GetText(doc.EndPoint));
-                }
-                catch (System.Runtime.InteropServices.COMException) { }
-            }
-            return output.ToString();
-        }
+        public string GetBuildOutput() => LastBuildRun?.Output ?? "";
 
         /// <summary>
         /// Upper bound on COM teardown in Close(). A modal can block

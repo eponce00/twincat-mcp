@@ -208,7 +208,7 @@
   },
   {
     "id": "engineering.build",
-    "description": "Build the solution and return structured errors, warnings and timing. Set clean:false to preserve compile information for online change.",
+    "description": "Build with build-scoped output and bounded completion. Return per-PLC TMC/source fingerprints and artifact provenance. Optional expectedSymbols/expectedTypes fail verification when missing. Unreferenced objects may be stripped.",
     "kind": "operation",
     "command": "build",
     "engineering": true,
@@ -226,6 +226,36 @@
           "type": "string",
           "minLength": 1,
           "description": "Exclusive engineering context returned by context.open."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600,
+          "default": 180
+        },
+        "expectedSymbols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "description": "Exact TMC name, or a trailing * prefix match. Use symbols for runtime variables and types for DUT/FB definitions."
+        },
+        "expectedTypes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "description": "Exact TMC name, or a trailing * prefix match. Use symbols for runtime variables and types for DUT/FB definitions."
         }
       },
       "required": [
@@ -259,7 +289,7 @@
   },
   {
     "id": "engineering.clean",
-    "description": "Delete generated build artifacts from the solution. Invalidates retained compile information needed for online change.",
+    "description": "Run the IDE clean operation, invalidating retained compile information for online change. Report retained TMC paths; clean does not guarantee all generated files are removed.",
     "kind": "operation",
     "command": "clean",
     "engineering": true,
@@ -673,7 +703,7 @@
         },
         "timeoutMs": {
           "type": "integer",
-          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 \u00d7 timeoutMs.",
+          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 × timeoutMs.",
           "default": 2500
         }
       },
@@ -952,7 +982,7 @@
   },
   {
     "id": "engineering.check_all_objects",
-    "description": "Compile all PLC objects, including unused objects, and return structured diagnostics.",
+    "description": "Syntax-check all PLC objects, including unused objects, and honor the native compiler result. Does not generate code or prove runtime symbol inclusion.",
     "kind": "operation",
     "command": "check-all-objects",
     "engineering": true,
@@ -1204,7 +1234,7 @@
         },
         "contains": {
           "type": "string",
-          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise \u2014 e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
+          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise — e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
         },
         "contextHandle": {
           "type": "string",
@@ -1816,6 +1846,16 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "linkingPolicy": {
+          "type": "string",
+          "enum": [
+            "preserve",
+            "always",
+            "default"
+          ],
+          "default": "preserve",
+          "description": "Explicit compiler linking policy for program/function/FB/GVL declarations. always adds linkalways; default removes that pragma; preserve leaves source unchanged. Changes may affect generated code/data size."
         }
       },
       "required": [
@@ -1917,7 +1957,7 @@
   },
   {
     "id": "engineering.update_object",
-    "description": "Edit and save declaration and/or ST implementation offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains a separate operation.",
+    "description": "Edit and save declaration, ST implementation or explicit linking policy offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains separate.",
     "kind": "operation",
     "command": "update-plc-object",
     "engineering": true,
@@ -1953,6 +1993,16 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "linkingPolicy": {
+          "type": "string",
+          "enum": [
+            "preserve",
+            "always",
+            "default"
+          ],
+          "default": "preserve",
+          "description": "Explicit compiler linking policy for program/function/FB/GVL declarations. always adds linkalways; default removes that pragma; preserve leaves source unchanged. Changes may affect generated code/data size."
         }
       },
       "required": [
@@ -1974,6 +2024,19 @@
               "required": [
                 "implementation"
               ]
+            },
+            {
+              "required": [
+                "linkingPolicy"
+              ],
+              "properties": {
+                "linkingPolicy": {
+                  "enum": [
+                    "always",
+                    "default"
+                  ]
+                }
+              }
             }
           ]
         }
@@ -2225,6 +2288,123 @@
         "paths",
         "contextHandle",
         "grantHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "workflow.build_verify",
+    "description": "Build and verify expected TMC symbols and/or types in one operation. Compilation success and artifact verification are reported separately. Requires explicit expectations; preserves last-good artifacts on failure.",
+    "kind": "workflow",
+    "command": "build",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "clean": {
+          "type": "boolean",
+          "description": "Clean solution before building (default: true)",
+          "default": true
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exclusive engineering context returned by context.open."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600,
+          "default": 180
+        },
+        "expectedSymbols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "description": "Exact TMC name, or a trailing * prefix match. Use symbols for runtime variables and types for DUT/FB definitions."
+        },
+        "expectedTypes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "description": "Exact TMC name, or a trailing * prefix match. Use symbols for runtime variables and types for DUT/FB definitions."
+        }
+      },
+      "required": [
+        "contextHandle"
+      ],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "expectedSymbols"
+          ]
+        },
+        {
+          "required": [
+            "expectedTypes"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "engineering.symbols",
+    "description": "Read a bounded page of runtime symbols or data types from the selected PLC TMC. Returns file/source fingerprints and provenance of the last build observed in this context. Existing/stale files are not proof of a successful current build.",
+    "kind": "operation",
+    "command": "build-symbols",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "symbols",
+            "types"
+          ],
+          "default": "symbols"
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 512,
+          "default": ""
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 100
+        }
+      },
+      "required": [
+        "contextHandle"
       ],
       "additionalProperties": false
     }

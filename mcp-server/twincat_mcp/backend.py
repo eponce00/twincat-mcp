@@ -77,6 +77,8 @@ class Backend:
         if id == "engineering.configure_task" and "autostart" in args:
             args["autoStart"] = args.pop("autostart")
         timeout = max(1, int(args.get("timeoutMinutes", 20 if id == "workflow.deploy" else 10)))
+        if entry["command"] == "build":
+            timeout = max(timeout, (args.get("timeoutSeconds", 180) + 119) // 60)
         result, progress = run_shell_step(
             entry["command"],
             args,

@@ -35,6 +35,8 @@ namespace TcAutomation.Commands
 
         public class ErrorItem
         {
+            public int RawSeverity { get; set; }
+            public bool SeverityInferred { get; set; }
             public string FileName { get; set; }
             public int Line { get; set; }
             public int Column { get; set; }
@@ -144,8 +146,8 @@ namespace TcAutomation.Commands
 
                         if (iecProject2 != null)
                         {
-                            iecProject2.CheckAllObjects();
-                            plcResult.Success = true;
+                            plcResult.Success = iecProject2.CheckAllObjects();
+                            if (!plcResult.Success) plcResult.Error = "PLC compiler rejected one or more objects; inspect diagnostics.";
                         }
                         else
                         {
@@ -173,6 +175,9 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
+                bool allPlcsOk = result.PlcResults.TrueForAll(p => p.Success);
+                vsInstance.LastCompilerCheckSucceeded = allPlcsOk;
+                vsInstance.LastCheckedSourceRevision = vsInstance.SourceRevision;
                 System.Threading.Thread.Sleep(1000);
 
                 try
@@ -184,6 +189,9 @@ namespace TcAutomation.Commands
                         var item = errorItems.Item(i);
                         var errorItem = new ErrorItem
                         {
+                            RawSeverity = (int)item.ErrorLevel,
+                            SeverityInferred = item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium &&
+                                result.PlcResults.Exists(p => !p.Success) && !string.IsNullOrWhiteSpace(item.FileName),
                             FileName = item.FileName ?? "",
                             Line = item.Line,
                             Column = item.Column,
@@ -201,7 +209,9 @@ namespace TcAutomation.Commands
                             }
                         }
 
-                        if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                        if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh ||
+                            (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium &&
+                             result.PlcResults.Exists(p => !p.Success) && !string.IsNullOrWhiteSpace(errorItem.FileName)))
                         {
                             result.Errors.Add(errorItem);
                         }
@@ -215,13 +225,21 @@ namespace TcAutomation.Commands
                 {
                     result.Success = false;
                     result.ErrorMessage = $"Cannot verify CheckAllObjects diagnostics: {ex.Message}";
+                    if (!allPlcsOk && result.Errors.Count == 0)
+                        result.Errors.Add(new ErrorItem { Description = "PLC compiler rejected one or more objects.", SeverityInferred = true });
+                    result.ErrorCount = result.Errors.Count;
+                    result.WarningCount = result.Warnings.Count;
                     return result;
                 }
 
                 result.ErrorCount = result.Errors.Count;
                 result.WarningCount = result.Warnings.Count;
 
-                bool allPlcsOk = result.PlcResults.TrueForAll(p => p.Success);
+                if (!allPlcsOk && result.Errors.Count == 0)
+                {
+                    result.Errors.Add(new ErrorItem { Description = "PLC compiler rejected one or more objects.", SeverityInferred = true });
+                    result.ErrorCount = result.Errors.Count;
+                }
                 result.Success = allPlcsOk && result.ErrorCount == 0;
 
                 if (result.Success)

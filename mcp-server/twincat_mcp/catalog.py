@@ -102,6 +102,16 @@ class Catalog:
                 True,
             ),
             operation(
+                "job.wait",
+                "Wait up to 120 seconds for an existing job without resubmitting work. Timeout returns its current receipt with waitTimedOut=true. Cancelling this wait does not cancel the job. No request key required.",
+                {
+                    "jobHandle": HANDLE,
+                    "waitSeconds": {"type": "number", "minimum": 0, "maximum": 120, "default": 120},
+                },
+                ("jobHandle",),
+                True,
+            ),
+            operation(
                 "job.result",
                 "Read a bounded JSON text page. Concatenate pages by offset to reconstruct full output.",
                 {
@@ -188,6 +198,7 @@ class Catalog:
                 "context.status",
                 "safety.revoke",
                 "job.get",
+                "job.wait",
                 "job.result",
                 "job.cancel",
             }
@@ -196,6 +207,8 @@ class Catalog:
                 if immediate
                 else "Submitted work returns a durable job receipt; small final results are inline, larger results use job.result pages."
             )
+            if e["id"] == "job.wait":
+                e["result"] = "Waits for up to waitSeconds and returns the current durable receipt; no requestKey is required."
             example = example_for(e["inputSchema"])
             if e["id"] == "safety.grant":
                 example = dict(
@@ -216,6 +229,8 @@ class Catalog:
                 example["objectType"] = "functionBlock"
             if e["id"] == "engineering.update_object":
                 example["implementation"] = "// Updated ST implementation"
+            if e["id"] == "workflow.build_verify":
+                example["expectedSymbols"] = ["MAIN.*"]
             if e["id"] == "engineering.import_objects":
                 example["parentPath"] = "TIPC^PLC^PLC Project^POUs"
             if e["id"] in {"engineering.create_folder", "engineering.rename_object"}:

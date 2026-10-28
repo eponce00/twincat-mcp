@@ -1,13 +1,15 @@
 # Operation catalog
 
-The three public MCP tools expose the following 62 operations. Use
+The three public MCP tools expose the following 65 operations. Use
 `twincat_describe` for current full input schemas, defaults, limits, prerequisites
 and examples. This index summarizes the catalog; it does not replace validation.
 
 Submitted operations return jobs and require a request key. Immediate operations
-return directly without a request key. Each marked operation requires a scoped grant.
+return directly without a request key. `job.wait` waits on an existing receipt
+without a request key. Each marked operation requires a scoped grant.
 
 [PLC object and folder guide](plc-objects.md) covers source authoring and import/export.
+[Build feedback](build-feedback.md) covers compilation, TMC evidence and waits.
 
 ## Context
 
@@ -22,9 +24,9 @@ return directly without a request key. Each marked operation requires a scoped g
 | Operation | Purpose | Required arguments | Grant | Execution |
 | --- | --- | --- | --- | --- |
 | `engineering.activate` | Download and activate the configuration on the context target. Requires an operation-scoped grant and CONFIRM. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
-| `engineering.build` | Build the solution and return structured errors, warnings and timing. Set clean:false to preserve compile information for online change. | `contextHandle` | No | Job |
-| `engineering.check_all_objects` | Compile all PLC objects, including unused objects, and return structured diagnostics. | `contextHandle` | No | Job |
-| `engineering.clean` | Delete generated build artifacts from the solution. Invalidates retained compile information needed for online change. | `contextHandle` | No | Job |
+| `engineering.build` | Build with build-scoped output and bounded completion. Return per-PLC TMC/source fingerprints and artifact provenance. Optional expectedSymbols/expectedTypes fail verification when missing. Unreferenced objects may be stripped. | `contextHandle` | No | Job |
+| `engineering.check_all_objects` | Syntax-check all PLC objects, including unused objects, and honor the native compiler result. Does not generate code or prove runtime symbol inclusion. | `contextHandle` | No | Job |
+| `engineering.clean` | Run the IDE clean operation, invalidating retained compile information for online change. Report retained TMC paths; clean does not guarantee all generated files are removed. | `contextHandle` | No | Job |
 | `engineering.configure_rt` | Configure isolated real-time CPU count and load limit in the solution. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.configure_task` | Enable or disable a named real-time task or configure its autostart setting. | `taskName`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.create_folder` | Create and save one PLC project folder through Automation Interface. Use its returned path as parentPath for objects or nested folders. Offline only; no overwrite. | `parentPath`, `name`, `contextHandle`, `grantHandle` | Yes | Job |
@@ -50,7 +52,8 @@ return directly without a request key. Each marked operation requires a scoped g
 | `engineering.set_target` | Set the solution target to the AMS Net ID fixed by context.open. Does not activate. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.set_variant` | Get or set the solution variant. Requires TwinCAT XAE 4024 or newer; omit variantName to query. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.static_analysis` | Run TE1200 static analysis and return rule violations. Requires the appropriate license. | `contextHandle` | No | Job |
-| `engineering.update_object` | Edit and save declaration and/or ST implementation offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains a separate operation. | `path`, `expectedSha256`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.symbols` | Read a bounded page of runtime symbols or data types from the selected PLC TMC. Returns file/source fingerprints and provenance of the last build observed in this context. Existing/stale files are not proof of a successful current build. | `contextHandle` | No | Job |
+| `engineering.update_object` | Edit and save declaration, ST implementation or explicit linking policy offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains separate. | `path`, `expectedSha256`, `contextHandle`, `grantHandle` | Yes | Job |
 
 ## Job
 
@@ -59,6 +62,7 @@ return directly without a request key. Each marked operation requires a scoped g
 | `job.cancel` | Cancel queued work or stop before the next workflow step. Dispatched commands may finish; poll receipt. | `jobHandle` | No | Immediate |
 | `job.get` | Poll receipt and progress without repeating work. Use job.result for output. | `jobHandle` | No | Immediate |
 | `job.result` | Read a bounded JSON text page. Concatenate pages by offset to reconstruct full output. | `jobHandle` | No | Immediate |
+| `job.wait` | Wait up to 120 seconds for an existing job without resubmitting work. Timeout returns its current receipt with waitTimedOut=true. Cancelling this wait does not cancel the job. No request key required. | `jobHandle` | No | Wait |
 
 ## Runtime
 
@@ -106,6 +110,7 @@ return directly without a request key. Each marked operation requires a scoped g
 
 | Operation | Purpose | Required arguments | Grant | Execution |
 | --- | --- | --- | --- | --- |
+| `workflow.build_verify` | Build and verify expected TMC symbols and/or types in one operation. Compilation success and artifact verification are reported separately. Requires explicit expectations; preserves last-good artifacts on failure. | `contextHandle` | No | Job |
 | `workflow.deploy` | Build, prepare the boot project, activate configuration and restart the context target. Returns the native deployment receipt. dryRun previews the workflow. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
 | `workflow.sequence` | Run up to 32 validated catalog operations in order, stopping on first failure. Each step includes its handles. No rollback, nesting or replay. | `steps` | No | Job |
 | `workflow.test` | Build, configure the test task and boot project, optionally disable I/O, activate, restart and poll TcUnit results on the context target. Requires a grant even for local targets. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |

@@ -20,6 +20,7 @@ contracts or result semantics. Version 2.0.0 is a breaking application release.
    .\.venv\Scripts\python.exe -m pip install -r mcp-server/requirements-dev.txt
    .\.venv\Scripts\ruff.exe check mcp-server
    .\scripts\test-mcp-automated.ps1
+   .\scripts\test-plc-objects.ps1
    .\scripts\build.ps1
    git diff --check
    ```

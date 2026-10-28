@@ -94,7 +94,7 @@ class WireTests(unittest.TestCase):
         self.assertIn("2026-07-28", r["supportedVersions"])
         self.assertIn("ttlMs", r)
         self.assertIn("cacheScope", r)
-        self.assertEqual("2.1.0", r["_meta"]["io.modelcontextprotocol/serverInfo"]["version"])
+        self.assertEqual("2.2.0", r["_meta"]["io.modelcontextprotocol/serverInfo"]["version"])
 
     def test_modern_list_has_three_fixed_tools_and_cache_hints(self):
         r = self.request("tools/list")["result"]
@@ -197,4 +197,4 @@ class WireTests(unittest.TestCase):
     def test_read_only_status_does_not_need_request_key(self):
         r = self.call("twincat_execute", dict(operation="system.status", arguments={}))["result"]
         self.assertFalse(r["isError"])
-        self.assertEqual("2.1.0", r["structuredContent"]["version"])
+        self.assertEqual("2.2.0", r["structuredContent"]["version"])

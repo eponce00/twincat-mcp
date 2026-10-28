@@ -69,6 +69,8 @@ namespace TcAutomation.Core
         {
             get
             {
+                string isolated = Environment.GetEnvironmentVariable("TWINCAT_MCP_STATE_DIR");
+                if (!string.IsNullOrWhiteSpace(isolated)) return Path.GetFullPath(isolated);
                 string basePath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
                 if (string.IsNullOrEmpty(basePath))
                 {
@@ -288,9 +290,8 @@ namespace TcAutomation.Core
                     System.Globalization.DateTimeStyles.RoundtripKind,
                     out var parsed))
             {
-                utc = parsed.Kind == DateTimeKind.Unspecified
-                    ? DateTime.SpecifyKind(parsed, DateTimeKind.Utc)
-                    : parsed.ToUniversalTime();
+                if (parsed.Kind == DateTimeKind.Unspecified) return false;
+                utc = parsed.ToUniversalTime();
                 return true;
             }
             return false;
@@ -419,7 +420,7 @@ namespace TcAutomation.Core
                     return KillOutcome.SkippedUnverified;
                 }
                 // Same conversion as Process.StartTime, so it compares exactly.
-                var actual = DateTime.FromFileTime(created).ToUniversalTime();
+                var actual = DateTime.FromFileTimeUtc(created);
                 if (actual != recorded)
                 {
                     Console.Error.WriteLine($"[DEBUG] janitor: PID {pid} is PidReused at the kill; leaving it alone");

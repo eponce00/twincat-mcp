@@ -109,6 +109,8 @@
     <Compile Include="Core\VisualStudioInstance.cs" />
     <Compile Include="Core\DialogWatchdog.cs" />
     <Compile Include="Core\StepDispatcher.cs" />
+    <Compile Include="Core\BuildRun.cs" />
+    <Compile Include="Core\BuildArtifacts.cs" />
     <Compile Include="Core\SessionFile.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />

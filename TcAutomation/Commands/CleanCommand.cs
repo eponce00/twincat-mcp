@@ -51,15 +51,20 @@ namespace TcAutomation.Commands
         public static CleanResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath)
         {
             var result = new CleanResult { Solution = solutionPath };
+            using var deadline = new OwnedDeadline(() => vsInstance.KillOwnedProcess("clean operation deadline"), 180);
             try
             {
                 vsInstance.CleanSolution();
+                result.RetainedArtifacts = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(
+                    System.Linq.Enumerable.Where(BuildArtifacts.Capture(vsInstance), a => a.Exists), a => a.Path));
                 result.Success = true;
-                result.Message = "Solution cleaned successfully";
+                deadline.Complete();
+                result.Message = "Solution clean completed. Retained TMC files are listed; their presence does not prove a current successful build.";
             }
             catch (Exception ex)
             {
                 result.Success = false;
+                result.OutcomeUnknown = deadline.Expired;
                 result.ErrorMessage = $"Clean failed: {ex.Message}";
             }
             return result;
@@ -74,6 +79,8 @@ namespace TcAutomation.Commands
 
     public class CleanResult
     {
+        public bool OutcomeUnknown { get; set; }
+        public string[] RetainedArtifacts { get; set; } = new string[0];
         public bool Success { get; set; }
         public string Solution { get; set; } = "";
         public string? Message { get; set; }

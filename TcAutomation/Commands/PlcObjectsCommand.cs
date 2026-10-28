@@ -122,6 +122,7 @@ namespace TcAutomation.Commands
                     ValidateParent(root, parent, subType);
                     NoConflict(parent, name);
                     string declaration = Str(args, "declaration"), implementation = Str(args, "implementation");
+                    declaration = Linking(declaration, subType, Str(args, "linkingPolicy"));
                     if (kind == "folder" && (declaration != null || implementation != null))
                         throw new ArgumentException("Folders have no source sections.");
                     if (HasDeclaration(subType) && kind != "propertyGet" && kind != "propertySet" && declaration == null)
@@ -143,6 +144,8 @@ namespace TcAutomation.Commands
                     RequireEditable(root, node);
                     Match(node, Required(args, "expectedSha256"));
                     string declaration = Str(args, "declaration"), implementation = Str(args, "implementation");
+                    if (Str(args, "linkingPolicy") != null && Str(args, "linkingPolicy") != "preserve")
+                        declaration = Linking(declaration ?? node.Declaration, node.SubType, Str(args, "linkingPolicy"));
                     if (declaration == null && implementation == null) throw new ArgumentException("Supply declaration or implementation.");
                     if (declaration != null && !HasDeclaration(node.SubType)) throw new ArgumentException("This type has no declaration section.");
                     if (implementation != null && !HasImplementation(node.SubType)) throw new ArgumentException("This type has no implementation section.");
@@ -446,6 +449,16 @@ namespace TcAutomation.Commands
             if ((declaration != null && node.Declaration != declaration) || (implementation != null && node.Implementation != implementation))
                 throw new InvalidOperationException("Source readback differs from the requested text.");
         }
+        public static string Linking(string declaration, int type, string policy)
+        {
+            if (policy == null || policy == "preserve") return declaration;
+            if (policy != "always" && policy != "default") throw new ArgumentException("Invalid linkingPolicy.");
+            if (!new[] { 602, 603, 604, 615 }.Contains(type) || declaration == null)
+                throw new ArgumentException("Explicit linking policy requires a program, function, FB or GVL declaration.");
+            var pragma = new Regex(@"(?im)^\s*\{\s*attribute\s+'linkalways'\s*\}\s*\r?\n?", RegexOptions.CultureInvariant);
+            string text = pragma.Replace(declaration, "");
+            return policy == "always" ? "{attribute 'linkalways'}\n" + text : text;
+        }
         static void Save(IPlcObjectSession session, Dictionary<string, object> result)
         {
             result["saveAttempted"] = true;
@@ -496,7 +509,7 @@ namespace TcAutomation.Commands
             public IPlcObjectNode Root => new ComNode(root);
             public bool LoggedIn => MatchingLoginCommand.IsLoggedIn(root);
             public void EnsureExclusive() => vs.EnsureExclusiveSolution();
-            public void Save() => vs.Dte.ExecuteCommand("File.SaveAll", "");
+            public void Save() { vs.RecordSourceMutation(); vs.Dte.ExecuteCommand("File.SaveAll", ""); }
             public void ImportPlcOpen(string file, bool folders) => ((ITcPlcIECProject)root).PlcOpenImport(file, 0, "", folders);
             public void ExportPlcOpen(string file, string selection) => ((ITcPlcIECProject)root).PlcOpenExport(file, selection);
         }
