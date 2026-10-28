@@ -150,5 +150,6 @@ static class Program
         Check(!root.Items.Contains(folder), "Recursive delete");
         Console.WriteLine("PASS: " + cases + " PLC object policy cases; no XAE or PLC used.");
         FeedbackTests.Run();
+        MoveTests.Run();
     }
 }

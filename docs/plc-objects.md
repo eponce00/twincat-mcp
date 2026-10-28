@@ -33,6 +33,7 @@ No command logs in, downloads code, activates a configuration or restarts a targ
 | `engineering.create_object` | Create a typed object, assign its source, save and read it back. |
 | `engineering.update_object` | Update declaration, ST implementation or linking policy with a matching snapshot. |
 | `engineering.rename_object` | Rename an object or folder with a matching snapshot. |
+| `engineering.move_object` | Relocate a whole native object or project folder within the PLC with GUIDs and nested members preserved. Saves and reloads the owned solution. |
 | `engineering.delete_object` | Delete an object or folder with a matching snapshot and confirmation. |
 | `engineering.import_objects` | Import a verified native object or PLCopen XML file. |
 | `engineering.export_objects` | Export to a new file and return its SHA256. |
@@ -52,7 +53,10 @@ Folders are project-tree objects created through Automation Interface, not only
 directories on disk. `parentPath` selects their placement. Nested folders are
 supported; no parent is created implicitly. Names are bounded ASCII identifiers;
 folder names additionally allow spaces and hyphens. Existing names are never
-overwritten or automatically renamed.
+overwritten or automatically renamed. Existing whole objects and project
+folders can be relocated using `engineering.move_object`; see the
+[move guide](moving-objects.md) for offline reloads, supported layouts and
+recovery semantics.
 
 ## Create and edit
 

@@ -13,12 +13,12 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 65 operations. Individual operations are **not separate MCP tools**.
+The catalog contains 66 operations. Individual operations are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
 
-The application version is **2.2.0**. See the [release notes](CHANGELOG.md) for
+The application version is **2.3.0**. See the [release notes](CHANGELOG.md) for
 changes and upgrade instructions. The supported interface consists of
 the three public tools and the [operation catalog](docs/operations.md).
 
@@ -192,6 +192,11 @@ and source/tree hashes. Native TwinCAT and PLCopen import/export support reusabl
 objects and folder hierarchies. Authoring runs offline; the online-change source
 workflow remains separate.
 
+`engineering.move_object` relocates existing objects or project folders with
+native bytes, GUIDs and nested members preserved. It saves and reloads the owned
+solution, with recovery records and guarded rollback. See
+[moving objects](docs/moving-objects.md) for supported layouts and recovery.
+
 The [PLC object guide](docs/plc-objects.md) covers supported types, grants, nested
 folders, source updates, import/export formats, failure receipts and compilation.
 
@@ -227,7 +232,7 @@ request-key deduplication history.
 | Variable | Purpose |
 | --- | --- |
 | `TWINCAT_AUTOMATION_EXE` | Explicit worker executable; invalid paths fail without fallback. |
-| `TWINCAT_MCP_STATE_DIR` | Override the receipt and native session-record directory, useful for isolated tests. |
+| `TWINCAT_MCP_STATE_DIR` | Override the receipt, native session-record and move-recovery directory, useful for isolated tests. |
 | `TWINCAT_DISABLE_HOST=1` | Disable engineering/ADS worker dispatch; no CLI fallback. |
 | `TWINCAT_MCP_PARENT_WATCHDOG=0` | Disable client-exit monitoring; stdio EOF still closes the server. |
 | `TWINCAT_MCP_SHUTDOWN_GRACE_SECONDS` | Client-exit cleanup deadline, 1–120 seconds; default 60. |

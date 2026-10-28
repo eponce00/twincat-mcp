@@ -24,7 +24,7 @@ namespace TcAutomation.Core
             "build", "info", "clean",
             "set-target", "activate", "restart", "online-change", "matching-login", "read-plc-source", "edit-plc-source",
             "list-plc-objects", "read-plc-object", "create-plc-object", "create-plc-folder",
-            "build-symbols",
+            "build-symbols", "move-plc-object",
             "update-plc-object", "delete-plc-object", "rename-plc-object", "import-plc-objects", "export-plc-objects",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
@@ -100,6 +100,7 @@ namespace TcAutomation.Core
                     case "update-plc-object":
                     case "delete-plc-object":
                     case "rename-plc-object":
+                    case "move-plc-object":
                     case "import-plc-objects":
                     case "export-plc-objects":
                         return PlcObjectsCommand.ExecuteInSession(vsInstance,

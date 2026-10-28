@@ -336,6 +336,7 @@ def example_for(spec):
         "expectedSha256": "0" * 64,
         "expectedFileSha256": "0" * 64,
         "parentPath": "TIPC^PLC^PLC Project^POUs",
+        "newParentPath": "TIPC^PLC^PLC Project^Motion",
         "filePath": "C:/Exports/FB_Example.TcPOU",
         "paths": ["TIPC^PLC^PLC Project^POUs^FB_Example"],
         "cycleSymbol": "MAIN.cycles",

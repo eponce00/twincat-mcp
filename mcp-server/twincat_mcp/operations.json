@@ -2408,5 +2408,64 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "id": "engineering.move_object",
+    "description": "Relocate a top-level PLC object or project folder within the context PLC, preserving native bytes, GUIDs and nested members. Offline only; requires current subtree hash and CONFIRM. Saves and reloads the owned solution. Rejects conflicts, linked paths and member-only moves. Recovery records and rollback evidence are returned; no crash-atomicity or replay.",
+    "kind": "operation",
+    "command": "move-plc-object",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Exact Automation Interface path inside the context PLC. Obtain it from list_objects."
+        },
+        "expectedSha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "newParentPath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "Existing PLC project root or project folder in the same context; no implicit tree parents."
+        },
+        "confirm": {
+          "type": "string",
+          "const": "CONFIRM"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600,
+          "default": 180
+        }
+      },
+      "required": [
+        "path",
+        "expectedSha256",
+        "contextHandle",
+        "grantHandle",
+        "newParentPath",
+        "confirm"
+      ],
+      "additionalProperties": false
+    }
   }
 ]

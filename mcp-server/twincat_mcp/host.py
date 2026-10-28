@@ -246,6 +246,7 @@ class ShellHost:
                 "update-plc-object",
                 "delete-plc-object",
                 "rename-plc-object",
+            "move-plc-object",
                 "import-plc-objects",
                 "export-plc-objects",
                 "list-plcs",

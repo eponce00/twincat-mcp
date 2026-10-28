@@ -13,7 +13,7 @@ from .jobs import Jobs
 from .lifecycle import status as process_status
 from .safety import Grants
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 
 class Engine:

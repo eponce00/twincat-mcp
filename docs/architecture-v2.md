@@ -44,6 +44,7 @@ must be conservative. Descriptions disclose each operation's finer-grained effec
 | cli.py / scope.py | Bounded recording/export processes and owned Scope sessions. |
 | PlcObjectsCommand.cs | PLC tree traversal, typed creation, source snapshots, offline edits and native/PLCopen import/export. |
 | BuildRun.cs / BuildArtifacts.cs | Build-event completion, owned deadlines, scoped output and TMC/source evidence. |
+| PlcObjectMove.cs | Bounded offline file/project relocation, durable recovery records and guarded rollback. |
 | TcAutomation | Automation primitives and composite deployment/test workflows. |
 
 Native dictionaries become structured result data with explicit success and
@@ -103,7 +104,7 @@ backend tests cover target/grant isolation, source/session invariants, duplicate
 submissions, persistence, cancellation, sequence preflight and partial output.
 No PLC activation or deployment is performed by these tests.
 
-The protocol, orchestration and lifecycle suite contains 81 tests. ADS route qualification
+The protocol, orchestration and lifecycle suite contains 83 tests. ADS route qualification
 also exercises a grant-scoped local remove, fingerprint-verified secure upsert and
 live system-port probe against the dedicated bench. PLC deployment, online change
 and optional TE13xx Scope remain separate installation-specific checks.
@@ -121,3 +122,10 @@ compiler failures, explicit expectations, retained artifacts, source changes and
 bounded deadlines. Test-owned child processes exercise orphan cleanup; no
 unrelated process is terminated. Python EOF/client-exit tests include an
 independent process holding an inherited pipe open.
+
+Object relocation adds 40 native checks covering policy, byte/identity
+preservation, filesystem/project transactions and recovery. The operation
+closes only its owned offline solution for file edits and reopens it before
+tree/native-byte verification. It is one durable job with explicit partial
+failure evidence; it does not claim crash atomicity. See
+[moving objects](moving-objects.md).
