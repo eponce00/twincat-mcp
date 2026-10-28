@@ -557,6 +557,61 @@ namespace TcAutomation.Core
                 string.Equals(plain, alias + suffix, StringComparison.OrdinalIgnoreCase);
         }
 
+        public void EnsureExclusiveSolution()
+        {
+            IRunningObjectTable table = null;
+            IBindCtx context = null;
+            IEnumMoniker enumerator = null;
+            try
+            {
+                Marshal.ThrowExceptionForHR(GetRunningObjectTable(0, out table));
+                Marshal.ThrowExceptionForHR(CreateBindCtx(0, out context));
+                table.EnumRunning(out enumerator);
+                var monikers = new IMoniker[1];
+                while (enumerator.Next(1, monikers, IntPtr.Zero) == 0)
+                {
+                    object value = null;
+                    bool identifiedDte = false;
+                    try
+                    {
+                        monikers[0].GetDisplayName(context, null, out var name);
+                        if (name.IndexOf("DTE", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                        if (DteProcessId.HasValue && name.EndsWith(":" + DteProcessId.Value, StringComparison.Ordinal)) continue;
+                        identifiedDte = true;
+                        table.GetObject(monikers[0], out value);
+                        if (value is DTE2 other)
+                        {
+                            string solution = other.Solution.FullName;
+                            if (!string.IsNullOrWhiteSpace(solution) && string.Equals(Path.GetFullPath(solution),
+                                Path.GetFullPath(_solutionFilePath), StringComparison.OrdinalIgnoreCase))
+                                throw new InvalidOperationException("The solution is open in another IDE. Close that solution before offline object authoring.");
+                        }
+                    }
+                    catch (COMException ex)
+                    {
+                        if (!identifiedDte) continue;
+                        throw new InvalidOperationException("Could not inspect another IDE for conflicting solution access; retry after closing it.", ex);
+                    }
+                    catch (UnauthorizedAccessException ex)
+                    {
+                        if (!identifiedDte) continue;
+                        throw new InvalidOperationException("Cannot inspect a protected IDE for conflicting solution access; close it before authoring.", ex);
+                    }
+                    finally
+                    {
+                        if (value != null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value);
+                        Marshal.ReleaseComObject(monikers[0]);
+                    }
+                }
+            }
+            finally
+            {
+                if (enumerator != null) Marshal.ReleaseComObject(enumerator);
+                if (context != null) Marshal.ReleaseComObject(context);
+                if (table != null) Marshal.ReleaseComObject(table);
+            }
+        }
+
         private void ConfigureDte()
         {
             if (_dte == null) return;

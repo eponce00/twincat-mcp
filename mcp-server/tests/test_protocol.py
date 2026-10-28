@@ -94,7 +94,7 @@ class WireTests(unittest.TestCase):
         self.assertIn("2026-07-28", r["supportedVersions"])
         self.assertIn("ttlMs", r)
         self.assertIn("cacheScope", r)
-        self.assertEqual("2.0.0", r["_meta"]["io.modelcontextprotocol/serverInfo"]["version"])
+        self.assertEqual("2.1.0", r["_meta"]["io.modelcontextprotocol/serverInfo"]["version"])
 
     def test_modern_list_has_three_fixed_tools_and_cache_hints(self):
         r = self.request("tools/list")["result"]
@@ -120,6 +120,41 @@ class WireTests(unittest.TestCase):
 
     def test_unknown_tool_is_protocol_error(self):
         self.assertEqual(-32602, self.call("missing_tool", {})["error"]["code"])
+
+    def test_object_discovery_returns_contracts_with_three_public_tools(self):
+        detail = self.call(
+            "twincat_describe",
+            dict(
+                operations=[
+                    "engineering.create_folder",
+                    "engineering.create_object",
+                    "engineering.import_objects",
+                ]
+            ),
+        )["result"]
+        self.assertFalse(detail["isError"])
+        for entry in detail["structuredContent"]["operations"]:
+            self.assertTrue(entry["requiresGrant"])
+            self.assertIn("contextHandle", entry["inputSchema"]["required"])
+        self.assertEqual(3, len(self.request("tools/list")["result"]["tools"]))
+
+    def test_object_creation_without_grant_is_error_flagged(self):
+        result = self.call(
+            "twincat_execute",
+            dict(
+                operation="engineering.create_folder",
+                arguments=dict(
+                    parentPath="TIPC^PLC^PLC Project",
+                    name="Motion",
+                    contextHandle="unknown",
+                    grantHandle="invalid",
+                ),
+                requestKey="wire-denied-create-folder",
+            ),
+        )["result"]
+        self.assertTrue(result["isError"])
+        self.assertEqual("failed", result["structuredContent"]["state"])
+        self.assertEqual("grant_required", result["structuredContent"]["result"]["code"])
 
     def test_unknown_operation_is_error_flagged(self):
         r = self.call("twincat_execute", dict(operation="missing.operation", arguments={}))
@@ -162,4 +197,4 @@ class WireTests(unittest.TestCase):
     def test_read_only_status_does_not_need_request_key(self):
         r = self.call("twincat_execute", dict(operation="system.status", arguments={}))["result"]
         self.assertFalse(r["isError"])
-        self.assertEqual("2.0.0", r["structuredContent"]["version"])
+        self.assertEqual("2.1.0", r["structuredContent"]["version"])

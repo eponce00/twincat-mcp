@@ -1,9 +1,17 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 — 2026-10-28
 
 ### Capabilities
 
+- Added nine PLC object operations for browsing, source reads/updates, typed
+  creation, nested folders, renaming, guarded deletion and native/PLCopen
+  import/export. The three public MCP tools remain unchanged.
+- Offline authoring uses Automation Interface and rejects logged-in projects.
+  Mutations require context-scoped grants, and updates/deletion/renames require
+  current object/subtree hashes. Recursive folder deletion has a separate gate.
+- Native imports verify object GUIDs and file hashes; exports preserve saved
+  native bytes or produce PLCopen XML without overwriting destination files.
 - Added grant-scoped `system.route_upsert` and `system.route_remove` operations
   backed by Beckhoff's `TcXaeMgmt` PowerShell module.
 - Secure route creation requires the target certificate's SHA-256 fingerprint
@@ -12,9 +20,25 @@
 - `system.routes` now reports Beckhoff route metadata, Secure ADS mode,
   certificate fingerprints and current availability.
 
+### Upgrade
+
+Finish active operations and stop the MCP server before updating. Run
+`scripts/setup.ps1` to rebuild the native worker and install pinned dependencies,
+then restart the MCP server. `system.status` reports version `2.1.0` and 62
+operations. Existing v2 tool calls remain supported; object authoring uses the
+new catalog operations described in [the object guide](docs/plc-objects.md).
+
 ### Validation
 
-- The automated protocol and orchestration suite now covers 54 cases.
+- A real stdio MCP-to-XAE check passed scoped-grant creation, object read/delete,
+  duplicate-request receipt recovery and clean server shutdown.
+- Offline XAE 3.1.4026.26 qualification passed source creation for all supported
+  object kinds, nested folders and members, renaming, recursive deletion, native
+  POU/interface/GVL/DUT round trips and a PLCopen hierarchy round trip. Fresh builds
+  passed with zero errors or warnings and generated the expected new TMC symbols.
+  No PLC login, activation or download was performed.
+- The automated protocol and orchestration suite covers 66 cases, with a
+  separate 55-case native in-memory object-policy harness.
 - A dedicated Beckhoff bench passed local route removal, self-signed route
   recreation and an ADS system-port `Run` verification through the MCP engine.
 

@@ -2,6 +2,8 @@
 TcAutomation/bin/
 TcAutomation/obj/
 TcAutomation/publish/
+TcAutomation.Tests/bin/
+TcAutomation.Tests/obj/
 
 # Python
 mcp-server/__pycache__/

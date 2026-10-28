@@ -13,13 +13,13 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 53 operations. Individual operations are **not separate MCP tools**.
+The catalog contains 62 operations. Individual operations are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
 
-The application version is **2.0.0**. See the [release notes](CHANGELOG.md) for
-breaking changes and upgrade instructions. The supported interface consists of
+The application version is **2.1.0**. See the [release notes](CHANGELOG.md) for
+changes and upgrade instructions. The supported interface consists of
 the three public tools and the [operation catalog](docs/operations.md).
 
 ## Install
@@ -173,6 +173,18 @@ There is no arbitrary Python/JavaScript execution endpoint. Validated operations
 and named workflows provide composition without introducing another scripting
 runtime alongside PLC access.
 
+## PLC objects and folders
+
+Create and organize source through Automation Interface using
+`engineering.create_folder` and `engineering.create_object`. Browse with
+`engineering.list_objects`; read, update, rename and delete with explicit paths
+and source/tree hashes. Native TwinCAT and PLCopen import/export support reusable
+objects and folder hierarchies. Authoring runs offline; the online-change source
+workflow remains separate.
+
+The [PLC object guide](docs/plc-objects.md) covers supported types, grants, nested
+folders, source updates, import/export formats, failure receipts and compilation.
+
 ## Jobs, cancellation and shutdown
 
 Work runs on one bounded queue (64 waiting jobs) outside the protocol event loop.
@@ -209,6 +221,7 @@ a runtime operation.
 
 ```powershell
 .\scripts\test-mcp-automated.ps1
+.\scripts\test-plc-objects.ps1
 .\scripts\test-mcp.ps1
 ```
 

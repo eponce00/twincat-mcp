@@ -1,11 +1,13 @@
 # Operation catalog
 
-The three public MCP tools expose the following 51 operations. Use
+The three public MCP tools expose the following 62 operations. Use
 `twincat_describe` for current full input schemas, defaults, limits, prerequisites
 and examples. This index summarizes the catalog; it does not replace validation.
 
 Submitted operations return jobs and require a request key. Immediate operations
 return directly without a request key. Each marked operation requires a scoped grant.
+
+[PLC object and folder guide](plc-objects.md) covers source authoring and import/export.
 
 ## Context
 
@@ -25,21 +27,30 @@ return directly without a request key. Each marked operation requires a scoped g
 | `engineering.clean` | Delete generated build artifacts from the solution. Invalidates retained compile information needed for online change. | `contextHandle` | No | Job |
 | `engineering.configure_rt` | Configure isolated real-time CPU count and load limit in the solution. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.configure_task` | Enable or disable a named real-time task or configure its autostart setting. | `taskName`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.create_folder` | Create and save one PLC project folder through Automation Interface. Use its returned path as parentPath for objects or nested folders. Offline only; no overwrite. | `parentPath`, `name`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.create_object` | Create and save a PLC object through Automation Interface, then read back its source. Offline only. No compile, runtime download or overwrite. | `parentPath`, `name`, `objectType`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.delete_object` | Delete a PLC source object or folder offline. Requires current object/subtree hash and confirmation. A nonempty folder requires recursive=true and recursiveConfirm=DELETE_CONTENTS. No rollback. | `path`, `expectedSha256`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.disable_io` | Enable or disable top-level I/O devices in the solution configuration. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.edit_plc_source` | Edit and save one POU section only if expectedSha256 matches. Requires the existing logged-in engineering context. Does not compile or apply the edit. | `path`, `section`, `text`, `expectedSha256`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.export_objects` | Export selected PLC objects to a new absolute file. Native format exports one saved POU, DUT, GVL or interface including its nested members; PLCopen supports up to 32 paths. No destination overwrite. Requires a grant for filesystem writes. | `format`, `filePath`, `paths`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.generate_library` | Build and export the context PLC as a .library artifact. Existing outputs are backed up; dryRun previews the export. | `contextHandle` | No | Job |
 | `engineering.get_error_list` | Read the XAE Error List with severity and substring filters; waitSeconds permits a bounded delay for async messages. | `contextHandle` | No | Job |
+| `engineering.import_objects` | Import a SHA256-verified native TwinCAT object or PLCopen XML file offline through Automation Interface. Rejects name collisions; never replaces or silently renames. Max 4 MiB. Native import requires parentPath; PLCopen preserves exported folders at the root. | `format`, `filePath`, `expectedFileSha256`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.info` | Read solution, toolchain and PLC project information in the engineering context. | `contextHandle` | No | Job |
+| `engineering.list_objects` | Browse one PLC project folder or object. Omit path to discover the selected PLC root. Returns bounded child metadata and nextOffset. | `contextHandle` | No | Job |
 | `engineering.list_plcs` | List PLC projects, configured ADS ports and boot-project settings in the solution. | `contextHandle` | No | Job |
 | `engineering.list_tasks` | List configured real-time tasks with cycle times, priorities and enabled state. | `contextHandle` | No | Job |
 | `engineering.matching_login` | Log into the unchanged baseline in this engineering context. Requires retained compile information, matching configuration/platform, configured ADS port and a RUN application. Rejects download/change prompts. | `port`, `configuration`, `platform`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.online_change` | Apply one online change in the already logged-in matching PLC context. Verify one counter increment and advancing cycles. Never substitute download, activate, restart or boot-project update. | `port`, `contextFile`, `cycleSymbol`, `expectedOnlineChangeCount`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.read_object` | Read PLC object metadata and supported source sections. sha256 covers its path, source and descendants; use it for update/delete/rename. | `path`, `contextHandle` | No | Job |
 | `engineering.read_plc_source` | Read a POU declaration or implementation and its exact UTF-8 SHA256 from the engineering context. | `path`, `section`, `contextHandle` | No | Job |
+| `engineering.rename_object` | Rename one object or folder offline using XAE. Requires current object/subtree hash. References in other source are not automatically rewritten; inspect and compile afterward. | `path`, `expectedSha256`, `name`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.restart` | Restart the TwinCAT runtime on the context target. Requires an operation-scoped grant and CONFIRM. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
 | `engineering.set_boot_project` | Configure autostart and generate the selected PLC boot project on the context target. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.set_target` | Set the solution target to the AMS Net ID fixed by context.open. Does not activate. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.set_variant` | Get or set the solution variant. Requires TwinCAT XAE 4024 or newer; omit variantName to query. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.static_analysis` | Run TE1200 static analysis and return rule violations. Requires the appropriate license. | `contextHandle` | No | Job |
+| `engineering.update_object` | Edit and save declaration and/or ST implementation offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains a separate operation. | `path`, `expectedSha256`, `contextHandle`, `grantHandle` | Yes | Job |
 
 ## Job
 
@@ -87,7 +98,7 @@ return directly without a request key. Each marked operation requires a scoped g
 | --- | --- | --- | --- | --- |
 | `system.reap_orphans` | Clean dead-parent workers recorded in session files using PID start-time verification. | None | No | Job |
 | `system.route_remove` | Remove one exact ADS route locally, or from both systems when removeRemote is true. Remote removal requires a DPAPI-protected PSCredential file. | `amsNetId`, `confirm`, `grantHandle` | Yes | Job |
-| `system.route_upsert` | Create or replace one fingerprint-verified self-signed Secure ADS route using Beckhoff TcXaeMgmt, then verify the target ADS port. | `amsNetId`, `ipOrHostName`, `name`, `credentialPath`, `fingerprint`, `confirm`, `grantHandle` | Yes | Job |
+| `system.route_upsert` | Create or replace one fingerprint-verified self-signed Secure ADS route using Beckhoff TcXaeMgmt, then verify the target ADS port. Reads the target credential from a DPAPI-protected PSCredential file; plaintext passwords are not accepted. | `amsNetId`, `ipOrHostName`, `name`, `credentialPath`, `fingerprint`, `confirm`, `grantHandle` | Yes | Job |
 | `system.routes` | List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode, certificate fingerprint and current online status. | None | No | Job |
 | `system.status` | Application version and queue status. Does not start TwinCAT. | None | No | Immediate |
 
