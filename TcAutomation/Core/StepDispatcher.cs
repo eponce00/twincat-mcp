@@ -24,6 +24,7 @@ namespace TcAutomation.Core
             "build", "info", "clean",
             "set-target", "activate", "restart", "online-change", "matching-login", "read-plc-source", "edit-plc-source",
             "list-plc-objects", "read-plc-object", "create-plc-object", "create-plc-folder",
+            "build-symbols",
             "update-plc-object", "delete-plc-object", "rename-plc-object", "import-plc-objects", "export-plc-objects",
             "list-plcs", "set-boot-project", "disable-io", "set-variant",
             "list-tasks", "configure-task", "configure-rt",
@@ -88,6 +89,10 @@ namespace TcAutomation.Core
 
                 switch (command.ToLowerInvariant())
                 {
+                    case "build-symbols":
+                        return BuildArtifacts.Query(vsInstance,
+                            GetString(argsElement, "plcName", hasArgs), GetString(argsElement, "kind", hasArgs) ?? "symbols",
+                            GetString(argsElement, "query", hasArgs), GetInt(argsElement, "offset", hasArgs) ?? 0, GetInt(argsElement, "limit", hasArgs) ?? 100);
                     case "list-plc-objects":
                     case "read-plc-object":
                     case "create-plc-object":
@@ -103,7 +108,11 @@ namespace TcAutomation.Core
                     case "build":
                     {
                         bool clean = GetBool(argsElement, "clean", hasArgs) ?? true;
-                        return BuildCommand.ExecuteInSession(vsInstance, clean);
+                        string[] names(string key) => hasArgs && argsElement.TryGetProperty(key, out var values)
+                            ? System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(values.EnumerateArray(), e => e.GetString())) : null;
+                        return BuildCommand.ExecuteInSession(vsInstance, clean,
+                            GetString(argsElement, "plcName", hasArgs), names("expectedSymbols"), names("expectedTypes"),
+                            GetInt(argsElement, "timeoutSeconds", hasArgs) ?? 180);
                     }
                     case "info":
                     {

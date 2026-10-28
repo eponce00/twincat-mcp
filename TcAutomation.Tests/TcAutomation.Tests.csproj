@@ -25,6 +25,7 @@
       <Name>TcAutomation</Name>
     </ProjectReference>
     <Compile Include="Program.cs" />
+    <Compile Include="FeedbackTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

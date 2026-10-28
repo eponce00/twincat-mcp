@@ -167,6 +167,19 @@ class Jobs:
                 totalCharacters=len(text),
             )
 
+    def wait(self, handle, seconds=120, cancelled=None):
+        """Wait outside the execution queue and release the database lock between polls."""
+        deadline = time.monotonic() + seconds
+        stop = cancelled or threading.Event()
+        while True:
+            receipt = self.get(handle)
+            terminal = receipt["state"] in TERMINAL
+            expired = time.monotonic() >= deadline
+            if terminal or expired or stop.is_set() or self.closing.is_set():
+                receipt["waitTimedOut"] = expired and not terminal
+                return receipt
+            stop.wait(min(0.2, max(0, deadline - time.monotonic())))
+
     def cancel(self, handle):
         with self.lock:
             row = self._row(handle)

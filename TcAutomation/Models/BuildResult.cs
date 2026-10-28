@@ -9,6 +9,11 @@ namespace TcAutomation.Models
     {
         public bool Success { get; set; }
         public int FailedProjectCount { get; set; }
+        public bool CompilerSuccess { get; set; }
+        public bool OutcomeUnknown { get; set; }
+        public string Phase { get; set; } = "prepare";
+        public TcAutomation.Core.BuildRun Build { get; set; }
+        public List<TcAutomation.Core.ArtifactRecord> Artifacts { get; set; } = new List<TcAutomation.Core.ArtifactRecord>();
         public string BuildOutput { get; set; } = "";
         public string BuildTime { get; set; } = "";
         public int ErrorCount { get; set; }
@@ -24,6 +29,8 @@ namespace TcAutomation.Models
     /// </summary>
     public class BuildError
     {
+        public int RawSeverity { get; set; }
+        public bool SeverityInferred { get; set; }
         public string Code { get; set; } = "";
         public string Description { get; set; } = "";
         public string FileName { get; set; } = "";

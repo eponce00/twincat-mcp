@@ -37,11 +37,13 @@ must be conservative. Descriptions disclose each operation's finer-grained effec
 | catalog.py / operations.json | Search, operation contracts, prerequisites, validated examples. |
 | engine.py | Explicit contexts, grants, workflow orchestration and preflight checks. |
 | jobs.py | SQLite receipts, deduplication, serialized queue, cancellation, bounded result pages. |
+| lifecycle.py | Client identity and Python shutdown, including Windows venv launchers. |
 | safety.py | Scoped grants with fixed monotonic expiration. |
 | backend.py / routes.py | Structured adapters between operation arguments, native commands and Beckhoff's fixed ADS-route cmdlets. |
 | dispatch.py / host.py | One native dispatch; COM serialization and process ownership. |
 | cli.py / scope.py | Bounded recording/export processes and owned Scope sessions. |
 | PlcObjectsCommand.cs | PLC tree traversal, typed creation, source snapshots, offline edits and native/PLCopen import/export. |
+| BuildRun.cs / BuildArtifacts.cs | Build-event completion, owned deadlines, scoped output and TMC/source evidence. |
 | TcAutomation | Automation primitives and composite deployment/test workflows. |
 
 Native dictionaries become structured result data with explicit success and
@@ -65,6 +67,12 @@ request-key receipt. Repeating a key with identical canonical arguments returns
 that receipt; different arguments conflict. No retry occurs after loss of a native
 reply. Queued work is cancelled before dispatch; in-flight native work may finish.
 Partial workflow receipts record what completed.
+
+Execute and `job.wait` support waits of up to 120 seconds without blocking
+discovery or job inspection. Cancelling a waiter does not cancel the job.
+Build receipts separate compiler success from explicit symbol/type verification;
+artifact provenance is limited to the current context's observed builds and
+saved source manifests. See [build feedback](build-feedback.md).
 
 Jobs are an application API exposed through execute. They are **not** advertised
 as the optional MCP Tasks extension. That distinction avoids depending on Tasks
@@ -95,7 +103,7 @@ backend tests cover target/grant isolation, source/session invariants, duplicate
 submissions, persistence, cancellation, sequence preflight and partial output.
 No PLC activation or deployment is performed by these tests.
 
-The protocol and orchestration suite contains 66 tests. ADS route qualification
+The protocol, orchestration and lifecycle suite contains 81 tests. ADS route qualification
 also exercises a grant-scoped local remove, fingerprint-verified secure upsert and
 live system-port probe against the dedicated bench. PLC deployment, online change
 and optional TE13xx Scope remain separate installation-specific checks.
@@ -107,9 +115,9 @@ Source object metadata uses the 600-series `ItemType` IDs returned by XAE; these
 are the values accepted as the creation API's `SubType` parameter. See the
 [object guide](plc-objects.md) for supported operations and limits.
 
-PLC object policy is also checked by a native in-memory harness. XAE integration
-qualification covers creation, nested folders, offline source edits, renaming,
-recursive deletion, native and PLCopen round trips, reopening and fresh compilation.
-Source object metadata uses the 600-series `ItemType` IDs returned by XAE; these
-are the values accepted as the creation API's `SubType` parameter. See the
-[object guide](plc-objects.md) for supported operations and limits.
+The native harness adds 24 build-output, TMC verification, linking and process
+identity checks to 55 object-policy cases. Real stdio/XAE qualification covers
+compiler failures, explicit expectations, retained artifacts, source changes and
+bounded deadlines. Test-owned child processes exercise orphan cleanup; no
+unrelated process is terminated. Python EOF/client-exit tests include an
+independent process holding an inherited pipe open.

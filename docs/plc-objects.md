@@ -31,7 +31,7 @@ No command logs in, downloads code, activates a configuration or restarts a targ
 | `engineering.read_object` | Read metadata, supported source sections and a SHA256 snapshot. |
 | `engineering.create_folder` | Create and save one folder below a project, folder or supported POU. |
 | `engineering.create_object` | Create a typed object, assign its source, save and read it back. |
-| `engineering.update_object` | Update declaration, ST implementation or both with a matching snapshot. |
+| `engineering.update_object` | Update declaration, ST implementation or linking policy with a matching snapshot. |
 | `engineering.rename_object` | Rename an object or folder with a matching snapshot. |
 | `engineering.delete_object` | Delete an object or folder with a matching snapshot and confirmation. |
 | `engineering.import_objects` | Import a verified native object or PLCopen XML file. |
@@ -137,8 +137,13 @@ or `I_Axis.TcIO`; use `.xml` for PLCopen exports.
 Creation saves source and confirms tree/source readback. It does not prove the
 object has compiled or appears in generated symbols. Reference new code from
 the application as appropriate, run `engineering.check_all_objects`, build, and
-inspect diagnostics and fresh output. Unreferenced objects may need an explicit
-linking policy; missing TMC symbols alone do not establish registration failure.
+inspect diagnostics and fresh output. Create/update accept `linkingPolicy`:
+`preserve` (default), `always` (add `linkalways`), or `default` (remove the
+standalone pragma), for programs, functions, FBs and GVLs. Policy-only updates
+still require the current object hash and grant. See the
+[build feedback guide](build-feedback.md) for compiler versus artifact success,
+`workflow.build_verify`, paged `engineering.symbols`, and unused-object behavior.
+Missing TMC symbols alone do not establish registration failure or a reference count.
 
 `workflow.sequence` can compose known object paths and build/check operations;
 each step needs its own required handles. It stops on failure and does not roll

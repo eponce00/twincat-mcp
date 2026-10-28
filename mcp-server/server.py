@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import os
+import threading
 from contextlib import asynccontextmanager
 
+import anyio
 from jsonschema import Draft202012Validator
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -12,6 +15,7 @@ from mcp.types import CallToolResult, ListToolsResult, Tool
 from twincat_mcp.catalog import schema
 from twincat_mcp.engine import VERSION, Engine
 from twincat_mcp.errors import OperationError
+from twincat_mcp.lifecycle import ParentWatchdog
 
 OUTPUT_SCHEMA = {"type": "object"}
 TOOLS = [
@@ -60,13 +64,13 @@ TOOLS = [
     ),
     Tool(
         name="twincat_execute",
-        description="Execute a catalog operation with schema-validated arguments. May modify PLCs/projects. Work is queued; provide a unique requestKey and reuse it unchanged after response loss. Poll job.get/read job.result. context.open establishes engineering scope; safety.grant authorizes named operations after host user approval.",
+        description="Execute a catalog operation with schema-validated arguments. May modify PLCs/projects. Work is queued; provide a unique requestKey and reuse it unchanged after response loss. Wait up to 120 seconds, use job.wait for existing jobs and job.result for paged output. context.open establishes engineering scope; safety.grant authorizes named operations after host user approval.",
         input_schema=schema(
             {
                 "operation": {"type": "string", "minLength": 1, "maxLength": 128},
                 "arguments": {"type": "object"},
                 "requestKey": {"type": "string", "minLength": 8, "maxLength": 128},
-                "waitSeconds": {"type": "number", "minimum": 0, "maximum": 2, "default": 1},
+                "waitSeconds": {"type": "number", "minimum": 0, "maximum": 120, "default": 1},
             },
             ("operation", "arguments"),
         ),
@@ -123,13 +127,23 @@ def create_server(engine_factory=Engine):
                 return result(engine.catalog.search(**args))
             if params.name == "twincat_describe":
                 return result(engine.catalog.describe(args["operations"]))
-            receipt = await asyncio.to_thread(
-                engine.execute, args["operation"], args["arguments"], args.get("requestKey")
-            )
+            wait_cancel = threading.Event()
+            try:
+                receipt = await asyncio.to_thread(
+                    engine.execute,
+                    args["operation"],
+                    args["arguments"],
+                    args.get("requestKey"),
+                    wait_cancel,
+                )
+            finally:
+                # Cancelling a waiter never cancels the underlying durable job.
+                wait_cancel.set()
             if "jobHandle" in receipt and args["operation"] not in {
                 "job.get",
                 "job.result",
                 "job.cancel",
+                "job.wait",
             }:
                 deadline = asyncio.get_running_loop().time() + args.get("waitSeconds", 1)
                 while (
@@ -160,8 +174,36 @@ server = create_server()
 
 
 async def main():
-    async with stdio_server() as (read, write):
-        await server.run(read, write, server.create_initialization_options())
+    loop = asyncio.get_running_loop()
+    client_lost = asyncio.Event()
+    grace = min(120, max(1, float(os.environ.get("TWINCAT_MCP_SHUTDOWN_GRACE_SECONDS", "60"))))
+    watchdog = ParentWatchdog(lambda: loop.call_soon_threadsafe(client_lost.set), grace)
+    watchdog.start()
+    try:
+        async with stdio_server() as (read, write):
+            send, receive = anyio.create_memory_object_stream(0)
+
+            async def forward():
+                async with send:
+                    async for message in read:
+                        await send.send(message)
+
+            forwarding = asyncio.create_task(forward())
+            serving = asyncio.create_task(
+                server.run(receive, write, server.create_initialization_options())
+            )
+            lost = asyncio.create_task(client_lost.wait())
+            try:
+                await asyncio.wait({serving, lost, forwarding}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                serving.cancel()
+                lost.cancel()
+                forwarding.cancel()
+                await asyncio.gather(serving, lost, forwarding, return_exceptions=True)
+            if not serving.cancelled() and serving.exception() is not None:
+                raise serving.exception()
+    finally:
+        watchdog.close()
 
 
 if __name__ == "__main__":

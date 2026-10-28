@@ -468,6 +468,14 @@ namespace TcAutomation.Commands
             bool isShell = StepDispatcher.IsShellCommand(command);
             bool isAds = StepDispatcher.IsAdsCommand(command);
 
+            if (isShell && _vsInstance != null && !_vsInstance.IsOwnedProcessRunning)
+            {
+                EmitResponse(new { id = requestId, ok = false, command,
+                    error = "The owned XAE shell was lost. Close the expired context; no replacement shell was opened.",
+                    result = new { success = false, code = "worker_lost", outcomeUnknown = true, dispatched = false } });
+                return;
+            }
+
             if (isShell && (_vsInstance == null || !_vsInstance.IsSolutionLoaded))
             {
                 EmitError(requestId, $"Shell command '{command}' requires ensure-solution to run first", sw);

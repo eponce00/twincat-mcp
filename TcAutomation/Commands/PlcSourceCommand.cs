@@ -31,6 +31,7 @@ namespace TcAutomation.Commands
                     if (!string.Equals(Hash(current), expectedSha256, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("Source changed since it was read; expected SHA256 mismatch.");
                     result.EditAttempted = true;
+                    vs.RecordSourceMutation();
                     if (section == "declaration") ((ITcPlcDeclaration)pou).DeclarationText = newText;
                     else ((ITcPlcImplementation)pou).ImplementationText = newText;
                     vs.Dte.ExecuteCommand("File.SaveAll", "");

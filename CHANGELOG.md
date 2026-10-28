@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.2.0 — 2026-10-28
+
+### Capabilities and fixes
+
+- Added `workflow.build_verify` for explicit TMC symbol/type expectations and
+  paged `engineering.symbols` inspection. Build receipts separate compiler
+  success from artifact verification, include source/artifact hashes and
+  identify files retained after compiler failure. The catalog has 65 operations;
+  the three public MCP tools remain unchanged.
+- Builds wait for their own DTE completion events, capture output after dispatch
+  preparation and enforce a 1–600-second deadline (default 180). An expired
+  deadline terminates the owned shell, records an uncertain outcome and expires
+  the context. Clean reports retained TMC files without deleting them manually.
+- `check_all_objects` honors the native compiler's Boolean result. Failed
+  compilation cannot return zero errors merely because XAE labels source
+  diagnostics as medium severity; inferred classifications retain raw severity.
+- Object create/update accept an explicit `linkingPolicy` for POUs and GVLs.
+  The default preserves source. Verification distinguishes unused-object
+  elimination from missing expected generated content.
+- Execute supports waits up to 120 seconds. `job.wait` waits on an existing
+  receipt without resubmission; cancelling a waiter leaves the job running.
+- Python shutdown responds to stdio EOF and client exit, including Windows
+  virtual-environment launchers. Idle healthy clients remain connected.
+- Fixed TcXaeShell 15.0 launch registration and COM ownership, prompt session
+  publication, bounded close and host cache invalidation. A lost owned shell
+  cannot silently become a replacement engineering session.
+- Hardened native orphan cleanup with strict process fingerprints, pinned
+  handles, atomic session publication and explicit unresolved-record reporting.
+  Unverified processes are left untouched. State-directory isolation now includes
+  native session records.
+
+### Upgrade
+
+Finish active operations, stop the MCP server, run `scripts/setup.ps1`, and
+restart it through the client. Verify `system.status` reports application
+version `2.2.0` and 65 operations. Open new contexts and grants after restart.
+See [build feedback](docs/build-feedback.md) for artifact interpretation,
+linking policy, deadlines and process-lifetime controls.
+
+### Validation
+
+- 81 Python protocol, orchestration and lifecycle tests passed, including real
+  subprocess client-exit/EOF checks with inherited pipes.
+- The native harness passed 55 object-policy cases and 24 build-output,
+  artifact, linking-policy and janitor checks using test-owned child processes.
+- Real stdio MCP-to-XAE qualification on TwinCAT 3.1.4026.26 passed immediate
+  referenced/explicitly linked object builds, missing-symbol failures and type expectations,
+  source-change detection, failed compiler diagnostics and retained-TMC evidence.
+  A forced deadline returned an uncertain receipt and expired the context.
+  No PLC login, activation or download was performed.
+- A blanket post-edit compiler-cache failure was not reproduced in these
+  application tests. Library-specific compiler behavior, PLC deployment, online
+  change and optional TE13xx Scope require separate qualification.
+
 ## 2.1.0 — 2026-10-28
 
 ### Capabilities

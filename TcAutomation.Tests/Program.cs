@@ -149,5 +149,6 @@ static class Program
         Call(s, "delete-plc-object", new { path = folder.Path, expectedSha256 = Sha(s, folder), confirm = "CONFIRM", recursive = true, recursiveConfirm = "DELETE_CONTENTS" });
         Check(!root.Items.Contains(folder), "Recursive delete");
         Console.WriteLine("PASS: " + cases + " PLC object policy cases; no XAE or PLC used.");
+        FeedbackTests.Run();
     }
 }

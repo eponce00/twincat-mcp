@@ -113,7 +113,7 @@ class ObjectCatalogTests(unittest.TestCase):
                 patch.object(host, "_call_raw_locked", return_value={"result": {"success": True}}),
             ):
                 host.execute_step(command, {}, "fixture.sln", None)
-                ensure.assert_called_once_with("fixture.sln", None, timeout=120.0)
+                ensure.assert_called_once_with("fixture.sln", None)
 
     def test_adapter_injects_context_and_preserves_partial_receipts(self):
         receipt = dict(

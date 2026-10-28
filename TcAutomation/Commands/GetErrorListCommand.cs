@@ -16,6 +16,9 @@ namespace TcAutomation.Commands
     {
         public class ErrorListResult
         {
+            public long SourceRevision { get; set; }
+            public long? CheckedSourceRevision { get; set; }
+            public bool? CompilerCheckSucceeded { get; set; }
             public bool Success { get; set; }
             public string? ErrorMessage { get; set; }
             public int ErrorCount { get; set; }
@@ -27,6 +30,8 @@ namespace TcAutomation.Commands
 
         public class ErrorListItem
         {
+            public int RawSeverity { get; set; }
+            public bool SeverityInferred { get; set; }
             public string Level { get; set; } = "";  // "Error", "Warning", "Message"
             public string Description { get; set; } = "";
             public string FileName { get; set; } = "";
@@ -135,8 +140,10 @@ namespace TcAutomation.Commands
                     var item = errorItems.Item(i);
                     string level;
                     bool include = false;
+                    bool inferred = item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelMedium &&
+                        vsInstance.LastCompilerCheckSucceeded == false && !string.IsNullOrWhiteSpace(item.FileName);
 
-                    if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                    if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh || inferred)
                     {
                         level = "Error";
                         include = includeErrors;
@@ -167,6 +174,8 @@ namespace TcAutomation.Commands
 
                     result.Items.Add(new ErrorListItem
                     {
+                        RawSeverity = (int)item.ErrorLevel,
+                        SeverityInferred = inferred,
                         Level = level,
                         Description = description,
                         FileName = item.FileName ?? "",
@@ -177,6 +186,9 @@ namespace TcAutomation.Commands
                 }
 
                 result.TotalCount = result.Items.Count;
+                result.SourceRevision = vsInstance.SourceRevision;
+                result.CheckedSourceRevision = vsInstance.LastCheckedSourceRevision;
+                result.CompilerCheckSucceeded = vsInstance.LastCompilerCheckSucceeded;
                 result.Success = true;
             }
             catch (Exception ex)

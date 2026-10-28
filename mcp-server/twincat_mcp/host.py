@@ -229,6 +229,7 @@ class ShellHost:
             # Only shell commands need a loaded solution; ADS commands don't.
             shell_commands = {
                 "build",
+                "build-symbols",
                 "info",
                 "clean",
                 "set-target",

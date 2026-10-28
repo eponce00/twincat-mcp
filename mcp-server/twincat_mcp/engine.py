@@ -10,9 +10,10 @@ from .backend import Backend
 from .catalog import Catalog
 from .errors import OperationError
 from .jobs import Jobs
+from .lifecycle import status as process_status
 from .safety import Grants
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 
 class Engine:
@@ -44,12 +45,14 @@ class Engine:
             )
         return ctx
 
-    def execute(self, operation, arguments, request_key=None):
+    def execute(self, operation, arguments, request_key=None, wait_cancel=None):
         args = self.catalog.validate(operation, arguments)
         if operation == "safety.revoke":
             return dict(success=True, **self.grants.revoke(args["grantHandle"]))
         if operation == "job.get":
             return self.jobs.get(args["jobHandle"])
+        if operation == "job.wait":
+            return self.jobs.wait(args["jobHandle"], args["waitSeconds"], wait_cancel)
         if operation == "job.result":
             return self.jobs.result(args["jobHandle"], args["offset"], args["limit"])
         if operation == "job.cancel":
@@ -61,6 +64,7 @@ class Engine:
                 operations=len(self.catalog.entries),
                 queued=self.jobs.pending.qsize(),
                 protocol="2026-07-28",
+                lifecycle=process_status(),
             )
         if operation == "context.status":
             with self.lock:
