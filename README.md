@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="img/banner.png" alt="TwinCAT MCP Server" width="800"/>
+</p>
+
 # TwinCAT MCP Server v2
 
 TwinCAT engineering, runtime diagnostics and workflows through three MCP tools.
