@@ -141,7 +141,7 @@ class Catalog:
             ),
             operation(
                 "workflow.sequence",
-                "Run up to 32 validated catalog operations in order, stopping on first failure. Each step includes its handles. No rollback, nesting or replay.",
+                "Run up to 32 validated catalog operations in order, stopping on first failure. Each step includes its handles. No rollback, nesting or replay. Submit runtime.record as a separate job.",
                 {
                     "steps": {
                         "type": "array",

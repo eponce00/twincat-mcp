@@ -50,7 +50,7 @@ class Backend:
         self.scope.close()
         self.close_context()
 
-    def run(self, entry, arguments, context=None):
+    def run(self, entry, arguments, context=None, progress=None):
         args = dict(arguments)
         for key in ("contextHandle", "grantHandle", "confirm", "recordingHandle"):
             if key == "confirm" and entry["id"] in {
@@ -74,7 +74,7 @@ class Backend:
         if id.startswith("scope."):
             return self.scope_run(id, args)
         if id == "runtime.record":
-            return self.record(args)
+            return self.record(args, progress)
         if id == "runtime.write_var_list":
             args["variables"] = json.dumps(args["variables"])
         if id == "engineering.set_variant":
@@ -102,7 +102,7 @@ class Backend:
             result["progress"] = progress[-50:]
         return result
 
-    def record(self, args):
+    def record(self, args, progress=None):
         output = args.get("outputPath") or str(
             Path(tempfile.gettempdir()) / ("ads-" + uuid.uuid4().hex + ".csv")
         )
@@ -120,7 +120,9 @@ class Backend:
             if key in args:
                 cli += [flag, str(args[key])]
         timeout = int((args.get("durationSec", 0) + args.get("maxTimeSec", 60) + 30) / 60) + 1
-        result, _ = run_tc_automation_with_progress("ads-record", cli, timeout)
+        result, _ = run_tc_automation_with_progress(
+            "ads-record", cli, timeout, progress_callback=progress
+        )
         return normalize(result)
 
     def scope_run(self, id, args):

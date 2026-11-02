@@ -1403,7 +1403,7 @@
   },
   {
     "id": "runtime.record",
-    "description": "Record numeric scalar PLC variables into a new .csv file with target-scoped grant. Bounded to 100000 rows and 1000000 cells; limit exhaustion returns failure with collected data retained.",
+    "description": "Record numeric scalar PLC variables into a new .csv file with target-scoped grant. Bounded to 100000 rows and 1000000 cells; limit exhaustion returns failure with collected data retained. Poll job.get for RECORD_READY channels=<count> timestamp=<ISO-8601>, emitted when all channels have valid initial values and the first complete row is captured. With startTrigger, readiness follows the trigger. Submit as a separate job, outside workflow.sequence.",
     "kind": "operation",
     "command": "ads-record",
     "engineering": false,

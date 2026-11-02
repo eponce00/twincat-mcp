@@ -36,7 +36,7 @@ must be conservative. Descriptions disclose each operation's finer-grained effec
 | server.py | Only MCP types, public schemas, request validation and lifecycle. |
 | catalog.py / operations.json | Search, operation contracts, prerequisites, validated examples. |
 | engine.py | Explicit contexts, grants, workflow orchestration and preflight checks. |
-| jobs.py | SQLite receipts, deduplication, serialized queue, cancellation, bounded result pages. |
+| jobs.py | SQLite receipts, deduplication, serial normal/recording queues, cancellation, bounded result pages. |
 | lifecycle.py | Client identity and Python shutdown, including Windows venv launchers. |
 | safety.py | Scoped grants with fixed monotonic expiration. |
 | backend.py / routes.py | Structured adapters between operation arguments, native commands and Beckhoff's fixed ADS-route cmdlets. |
@@ -59,9 +59,14 @@ recordings and jobs therefore have opaque handles. The persistent shell is an
 implementation resource behind an exclusive engineering context; it is not
 identified by transport state. Contexts fix solution/target/PLC/version.
 
-The worker queue serializes native operations; discovery and receipt queries run
-independently. Preflight validates an entire sequence before effects and rechecks
-authorization at every step. Source hashes, matching-login prerequisites and
+Normal native operations are serialized; `runtime.record` uses its own serial
+worker so recordings do not block ordinary ADS jobs. Both queues share a limit
+of 64 waiting jobs and the existing durable receipts. New recording sequences
+are rejected; submit recordings as separate jobs. Discovery and receipt queries
+run independently. Recording progress reaches `job.get` while acquisition runs;
+`RECORD_READY` follows the first complete valid snapshot, after any start trigger.
+Preflight validates an entire sequence before effects and rechecks authorization
+at every step. Source hashes, matching-login prerequisites and
 online-change counters remain enforced by the C# implementation.
 
 Every submitted operation, including context/grant creation, has a durable

@@ -11,6 +11,7 @@ namespace TcAutomation.Core
         readonly object gate = new object();
         public int MaxRows { get; }
         public bool LimitReached { get; private set; }
+        public event Action<DateTimeOffset> FirstRowCaptured;
         public ConcurrentQueue<(DateTimeOffset Timestamp, double[] Values)> Rows { get; } = new ConcurrentQueue<(DateTimeOffset, double[])>();
         public RecordingSamples(int channels)
         {
@@ -24,6 +25,8 @@ namespace TcAutomation.Core
         }
         public bool Update(int index, double value, DateTimeOffset timestamp)
         {
+            if (timestamp == DateTimeOffset.MinValue) throw new ArgumentException("Recording requires a valid timestamp.");
+            if (double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentException("Recording requires finite numeric values.");
             lock (gate)
             {
                 latest[index] = value;
@@ -34,11 +37,16 @@ namespace TcAutomation.Core
         public bool Add(DateTimeOffset timestamp, double[] values)
         {
             if (values.Length != channels) throw new ArgumentException("Channel count mismatch.");
+            if (timestamp == DateTimeOffset.MinValue) throw new ArgumentException("Recording requires a valid timestamp.");
+            foreach (double value in values)
+                if (double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentException("Recording requires finite numeric values.");
             lock (gate)
             {
                 if (count >= MaxRows) { LimitReached = true; return false; }
                 var copy = (double[])values.Clone();
-                Rows.Enqueue((timestamp, copy)); count++; return true;
+                Rows.Enqueue((timestamp, copy)); count++;
+                if (count == 1) FirstRowCaptured?.Invoke(timestamp);
+                return true;
             }
         }
     }
