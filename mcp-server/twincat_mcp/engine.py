@@ -62,7 +62,7 @@ class Engine:
                 success=True,
                 version=VERSION,
                 operations=len(self.catalog.entries),
-                queued=self.jobs.pending.qsize(),
+                queued=self.jobs.pending.qsize() + self.jobs.record_pending.qsize(),
                 protocol="2026-07-28",
                 lifecycle=process_status(),
                 unavailableOperations=[
@@ -219,7 +219,11 @@ class Engine:
         try:
             checkpoint()
             progress("Dispatching " + operation)
-            result = self.backend.run(entry, args, context)
+            result = (
+                self.backend.run(entry, args, context, progress=progress)
+                if operation == "runtime.record"
+                else self.backend.run(entry, args, context)
+            )
             if not isinstance(result, dict):
                 raise OperationError(
                     "invalid_backend_result", "Backend must return a structured object."
@@ -275,5 +279,5 @@ class Engine:
 
     def close(self):
         self.jobs.close()
-        if not self.jobs.worker.is_alive():
+        if not self.jobs.worker.is_alive() and not self.jobs.record_worker.is_alive():
             self.backend.close()

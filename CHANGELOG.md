@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- ADS recordings report `RECORD_READY` after the first complete, valid snapshot;
+  `job.get` exposes it while the recording is running.
+- Recordings use a separate serial worker without blocking ordinary ADS jobs.
+  The aggregate queue capacity, artifact grants, output protections and recording
+  limits are retained. Submit recordings separately from `workflow.sequence`.
+- Reject malformed/non-finite initial notification values before readiness.
+
 ## 3.0.0 — 2026-10-28
 
 ### Safety corrections and breaking contracts

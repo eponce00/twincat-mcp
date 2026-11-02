@@ -1,4 +1,4 @@
-"""Durable receipts and a bounded, single-worker queue.
+"""Durable receipts with serial normal and recording queues.
 
 The transport never owns an operation lifetime. Closing an MCP request leaves its
 job inspectable. No execution is retried; request keys deduplicate submissions.
@@ -39,11 +39,18 @@ class Jobs:
         self.db.execute("INSERT INTO owners VALUES (?,?)", (self.owner, time.time()))
         self.db.commit()
         self.pending = queue.Queue(maxsize=64)
+        self.record_pending = queue.Queue(maxsize=64)
         self.events = {}
         self.closing = threading.Event()
-        self.worker = threading.Thread(target=self._work, daemon=True, name="twincat-operations")
+        self.worker = threading.Thread(
+            target=self._work, args=(self.pending,), daemon=True, name="twincat-operations"
+        )
+        self.record_worker = threading.Thread(
+            target=self._work, args=(self.record_pending,), daemon=True, name="twincat-recording"
+        )
         self.pulse = threading.Thread(target=self._heartbeat, daemon=True, name="twincat-receipts")
         self.worker.start()
+        self.record_worker.start()
         self.pulse.start()
 
     def _heartbeat(self):
@@ -59,6 +66,7 @@ class Jobs:
             [operation, arguments], sort_keys=True, separators=(",", ":"), ensure_ascii=False
         )
         fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
+        pending = self.record_pending if operation == "runtime.record" else self.pending
         with self.lock:
             if self.closing.is_set():
                 raise OperationError("shutting_down", "Server is shutting down.")
@@ -76,7 +84,16 @@ class Jobs:
                         )
                     self.db.commit()
                     return self.get(old[0])
-                if self.pending.full():
+                # Deduplicate historical sequence receipts before rejecting new
+                # recordings that would otherwise occupy the normal worker.
+                if operation == "workflow.sequence" and any(
+                    step["operation"] == "runtime.record" for step in arguments["steps"]
+                ):
+                    raise OperationError(
+                        "invalid_step", "Submit runtime.record as a separate job, outside sequences."
+                    )
+                # Preserve the existing aggregate limit of 64 waiting jobs.
+                if self.pending.qsize() + self.record_pending.qsize() >= self.pending.maxsize:
                     raise OperationError(
                         "queue_full",
                         "Queue is full; retry submission later using the same requestKey.",
@@ -105,7 +122,7 @@ class Jobs:
                 raise
             event = threading.Event()
             self.events[handle] = event
-            self.pending.put_nowait((handle, operation, arguments, event))
+            pending.put_nowait((handle, operation, arguments, event))
             return self.get(handle)
 
     def _row(self, handle):
@@ -212,10 +229,10 @@ class Jobs:
             )
             self.db.commit()
 
-    def _work(self):
-        while not self.closing.is_set() or not self.pending.empty():
+    def _work(self, pending):
+        while not self.closing.is_set() or not pending.empty():
             try:
-                handle, operation, arguments, event = self.pending.get(timeout=0.2)
+                handle, operation, arguments, event = pending.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
@@ -277,7 +294,7 @@ class Jobs:
                     )
                     self.db.commit()
                 self.events.pop(handle, None)
-            self.pending.task_done()
+            pending.task_done()
 
     def close(self):
         self.closing.set()
@@ -298,7 +315,8 @@ class Jobs:
             self.db.execute("UPDATE owners SET heartbeat=0 WHERE id=?", (self.owner,))
             self.db.commit()
         self.worker.join(timeout=2)
+        self.record_worker.join(timeout=2)
         self.pulse.join(timeout=2)
-        # A native command may still finish; its durable receipt remains unknown.
-        if not self.worker.is_alive():
+        # Either dispatched command may still finish; retain its database connection.
+        if not self.worker.is_alive() and not self.record_worker.is_alive():
             self.db.close()

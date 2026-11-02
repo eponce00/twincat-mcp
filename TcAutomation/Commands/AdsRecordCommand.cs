@@ -112,6 +112,12 @@ namespace TcAutomation.Commands
 
                     // Shared state for notification handling
                     var samples = new RecordingSamples(variables.Length);
+                    samples.FirstRowCaptured += timestamp =>
+                    {
+                        Console.Error.WriteLine($"[PROGRESS] RECORD_READY channels={variables.Length} timestamp={timestamp:o}");
+                        Console.Error.Flush();
+                    };
+                    var notificationsRegistered = 0;
                     var rows = samples.Rows;
                     var handles = new uint[variables.Length];
                     var handleToIndex = new ConcurrentDictionary<uint, int>();
@@ -159,7 +165,8 @@ namespace TcAutomation.Commands
                         }
 
                         // Data channel
-                        if (Volatile.Read(ref recording) != 1)
+                        if (Volatile.Read(ref recording) != 1 || stopSignal.IsSet ||
+                            Volatile.Read(ref notificationsRegistered) != 1)
                             return;
 
                         if (!handleToIndex.TryGetValue(e.Handle, out int idx)) return;
@@ -209,6 +216,8 @@ namespace TcAutomation.Commands
                             handles[i] = handle;
                             handleToIndex.TryAdd(handle, i);
                         }
+
+                        Volatile.Write(ref notificationsRegistered, 1);
 
                         // === Trigger-wait phase ===
                         // maxTimeSec caps only how long we wait for the start trigger.

@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 # -----------------------------------------------------------------------------
@@ -46,11 +47,55 @@ def run_tc_automation(command: str, args: list[str]) -> dict:
     return result
 
 
-def run_tc_automation_with_progress(command: str, args: list[str], timeout_minutes: int = 10):
-    return _run(command, args, timeout_minutes * 60 + 180)
+def run_tc_automation_with_progress(
+    command: str, args: list[str], timeout_minutes: int = 10, progress_callback=None
+):
+    return _run(command, args, timeout_minutes * 60 + 180, progress_callback)
 
 
-def _run(command, args, timeout):
+def _record_output(proc, timeout, progress_callback):
+    """Drain both pipes while forwarding flushed recording progress before exit."""
+    stdout, stderr, errors = [], [], []
+
+    def read_stdout():
+        try:
+            stdout.append(proc.stdout.read())
+        except Exception as exc:
+            errors.append(exc)
+
+    def read_stderr():
+        try:
+            for line in proc.stderr:
+                stderr.append(line)
+                if progress_callback and line.startswith("[PROGRESS]"):
+                    try:
+                        progress_callback(line.removeprefix("[PROGRESS]").strip()[:1000])
+                    except Exception as exc:
+                        # Keep draining even if persistence of a progress event fails.
+                        errors.append(exc)
+        except Exception as exc:
+            errors.append(exc)
+
+    readers = [threading.Thread(target=read_stdout), threading.Thread(target=read_stderr)]
+    for reader in readers:
+        reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        for reader in readers:
+            reader.join()
+        proc.stdout.close()
+        proc.stderr.close()
+    if errors:
+        raise errors[0]
+    return "".join(stdout), "".join(stderr)
+
+
+def _run(command, args, timeout, progress_callback=None):
     exe = find_tc_automation_exe()
     try:
         proc = subprocess.Popen(
@@ -65,10 +110,14 @@ def _run(command, args, timeout):
     except OSError as exc:
         return dict(success=False, dispatched=False, errorMessage=str(exc)), []
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        if command == "ads-record":
+            stdout, stderr = _record_output(proc, timeout, progress_callback)
+        else:
+            stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
+        if command != "ads-record":
+            proc.kill()
+            proc.communicate()
         return dict(
             success=False, outcomeUnknown=True, errorMessage="CLI timed out; no replay occurred."
         ), []

@@ -211,9 +211,36 @@ folders, source updates, import/export formats, failure receipts and compilation
 
 ## Jobs, cancellation and shutdown
 
-Work runs on one bounded queue (64 waiting jobs) outside the protocol event loop.
-Discovery and job inspection remain responsive while the worker is busy.
-The native shell serializes solution selection and command dispatch together.
+Normal operations run serially outside the protocol event loop. ADS recordings
+(`runtime.record`) run serially on a separate worker, so a running recording does
+not block ADS reads or other normal jobs. The aggregate limit remains 64 waiting
+jobs across both queues; `system.status.queued` includes both. The native shell
+still serializes solution selection and command dispatch together. Discovery
+and job inspection remain responsive while either worker is busy.
+
+### ADS recording readiness
+
+Submit `runtime.record` as its own job, outside `workflow.sequence`, with its
+existing target-scoped grant. New sequences containing a recording are rejected
+before dispatch; existing request keys still retrieve their historical receipts.
+Poll `job.get` until its progress contains
+`RECORD_READY channels=<count> timestamp=<ISO-8601>`. The recorder emits and
+flushes this message to stderr after all notifications are registered, every
+channel has a valid initial numeric value, and the first complete snapshot has
+been accepted. With `startTrigger`, this happens only after the trigger fires.
+Missing/invalid values and a trigger timeout never imply readiness. CSV values
+remain latest-per-channel snapshots, not atomic simultaneous PLC samples.
+
+The CLI drains stdout and stderr concurrently and persists progress while the
+recording job is still running; it does not wait for the final JSON result.
+Readiness confirms data capture, not successful file publication: CSV output is
+still written at completion with atomic new-file creation and the existing
+type, duration, row/cell, path and spreadsheet-header protections. Always inspect
+the final job result as well. Normal and recording workers share the existing
+durable receipts, deduplication, grant checks and cancellation/shutdown rules.
+After updating Python/native files, restart the MCP server to load both versions.
+
+### Cancellation and durable receipts
 
 `job.cancel` cancels queued work or stops a workflow before its next dispatch.
 An already dispatched native command may finish and cannot be rolled back.
