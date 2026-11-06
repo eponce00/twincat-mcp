@@ -61,8 +61,8 @@ namespace TcAutomation.Commands
                     automationInterface.TargetNetId = amsNetId;
                 }
 
-                // Wait for the target to finish switching to Config mode and
-                // writing its boot configuration instead of a fixed sleep.
+                // Verify that the activation reached the target (re-activating
+                // once on a local target if it did not) instead of a fixed sleep.
                 var activation = ActivationWait.ActivateAndWait(
                     targetNetId,
                     automationInterface.ActivateConfiguration,

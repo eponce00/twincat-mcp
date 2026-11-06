@@ -193,8 +193,9 @@ namespace TcAutomation.Commands
 
                 if (!dryRun)
                 {
-                    // Restarting before the activation has landed starts the PLC
-                    // against the previous boot configuration, so wait for it.
+                    // Restarting before the activation has landed starts the new
+                    // PLC boot files against the previous CurrentConfig.xml, so
+                    // verify it first and never restart when it did not land.
                     var activation = ActivationWait.ActivateAndWait(
                         amsNetId,
                         automationInterface.ActivateConfiguration,
