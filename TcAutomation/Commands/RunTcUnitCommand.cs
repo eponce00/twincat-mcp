@@ -55,6 +55,7 @@ namespace TcAutomation.Commands
             // TcUnit emits via AdsLogStr.
             public List<TcUnitFailure> Failures { get; set; } = new List<TcUnitFailure>();
             public string Summary { get; set; } = "";
+            public ActivationWaitResult? Activation { get; set; }
         }
 
         // TcUnit result markers
@@ -331,8 +332,17 @@ namespace TcAutomation.Commands
 
                 // Activate configuration
                 Progress("activate", "Activating configuration on target...");
-                sysManager.ActivateConfiguration();
-                Thread.Sleep(10000);
+                var activation = ActivationWait.ActivateAndWait(
+                    amsNetId,
+                    sysManager.ActivateConfiguration,
+                    message => Progress("activate", message));
+                result.Activation = activation;
+                if (!activation.Completed)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = activation.ErrorMessage;
+                    return result;
+                }
                 Progress("activate", "Configuration activated");
 
                 // Clean the solution AFTER activation to clear Error List of build messages

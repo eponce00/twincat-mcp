@@ -20,6 +20,7 @@
     <Reference Include="System.Xml" />
     <Reference Include="System.Xml.Linq" />
     <PackageReference Include="System.Text.Json"><Version>8.0.5</Version></PackageReference>
+    <PackageReference Include="Beckhoff.TwinCAT.Ads"><Version>7.0.317</Version></PackageReference>
     <ProjectReference Include="..\TcAutomation\TcAutomation.csproj">
       <Project>{E8F7D9B5-3A2C-4D1E-9F8B-6C7A5E4D3B2A}</Project>
       <Name>TcAutomation</Name>
@@ -28,6 +29,7 @@
     <Compile Include="FeedbackTests.cs" />
     <Compile Include="MoveTests.cs" />
     <Compile Include="ReviewTests.cs" />
+    <Compile Include="ActivationWaitTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

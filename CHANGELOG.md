@@ -1,5 +1,68 @@
 # Changelog
 
+## 3.0.1 — 2026-11-05
+
+### Fixes
+
+- `engineering.activate`, `workflow.deploy` and `workflow.test` now verify that
+  the activation reached the target before continuing, instead of sleeping a
+  fixed 5–10 s. On a local user-mode runtime, XAE 3.1.4026 reported a
+  successful activation that never reached the runtime: it had already replaced
+  the PLC boot files, but `Boot\CurrentConfig.xml` still held the previous
+  project. The deploy then restarted TwinCAT anyway. The PLC reported a
+  mismatched symbol description, and the user-mode system service could crash.
+- For targets whose boot folder is on this PC, completion now requires a
+  rewritten, complete and stable `CurrentConfig.xml`, plus a settled system
+  service (ADS port 10000). A rewrite of only the PLC boot files does not count.
+  If `CurrentConfig.xml` is not rewritten within 30 s, the same activation is
+  dispatched once more, the documented manual recovery, and verified again.
+- If the activation still does not land (final attempt timeout 120 s,
+  `TWINCAT_MCP_ACTIVATION_TIMEOUT_SECONDS`), the operation fails, names the
+  missing signal and does not restart TwinCAT. The error warns that the target
+  may already hold the new PLC boot files.
+- A landed activation is not visible over ADS. Remote targets therefore wait for
+  a settled system service and are reported as unverified, with a warning. If
+  nothing is readable, a fixed 20 s delay applies, also unverified.
+- Results include an `activation` receipt (verified, signal, attempts, elapsed
+  time, before/after state and boot configuration, observations). Deploy step 7
+  records the verdict. See [activation completion](docs/activation.md).
+
+### Upgrade
+
+Stop the server, pull, run `scripts/setup.ps1` (rebuilds the native worker) and
+restart the MCP connection. Verify application version `3.0.1`. Operation
+schemas, the three public tools, MCP 2026-07-28 and Python SDK 2.2.0 are
+unchanged. A local activation can take up to 30 s plus the final timeout before
+it fails. Remote activations report `verified:false`; check the target's boot
+configuration if the PLC reports a symbol mismatch.
+
+### Validation
+
+47 new scripted-probe activation cases and the existing 162 native checks
+passed. They cover a PLC-only rewrite, a second attempt that lands, bounded
+retries, partial and churning boot files, and remote, ReadState-only and
+unreadable targets. 91 Python tests and Ruff passed.
+
+Qualified live on a local UmRT (XAE/XAR 3.1.4026.26) with a StationHmi
+solution, with a read-only ADS/boot-folder probe running alongside:
+
+- **The first activation after loading the solution** did not reach the
+  runtime in all four XAE sessions. In the two builds of this change without
+  a second attempt, `CurrentConfig.xml` was not rewritten within 180 s, and the
+  system service stayed in Run (restart index 60). XAE still replaced
+  `Plc\Port_851.*`. The wait timed out and did not restart TwinCAT.
+- **The second activation in the same session** rewrote `CurrentConfig.xml`
+  during the call (about 4–6 s) in both sessions that dispatched one. The
+  system service state and restart index did not change.
+- **The released `deploy` (build, boot project, activate, restart).** Attempt 1
+  was not rewritten within 30 s, and attempt 2 landed and was verified (33.4 s
+  in total). The restart then took the runtime through Stop to Run (restart
+  index 60→64). Ports 10000 and 851 were in Run, and `CurrentConfig.xml` named
+  the new project.
+
+Local XAR registry discovery and remote targets were not qualified on a bench.
+`workflow.test` uses the same verification but was not run live.
+
 ## 3.0.0 — 2026-10-28
 
 ### Safety corrections and breaking contracts

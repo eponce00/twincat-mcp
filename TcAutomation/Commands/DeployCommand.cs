@@ -193,10 +193,27 @@ namespace TcAutomation.Commands
 
                 if (!dryRun)
                 {
-                    automationInterface.ActivateConfiguration();
-                    System.Threading.Thread.Sleep(5000);
+                    // Restarting before the activation has landed starts the new
+                    // PLC boot files against the previous CurrentConfig.xml, so
+                    // verify it first and never restart when it did not land.
+                    var activation = ActivationWait.ActivateAndWait(
+                        amsNetId,
+                        automationInterface.ActivateConfiguration,
+                        message => Console.Error.WriteLine($"[PROGRESS] activate: {message}"));
+                    result.Activation = activation;
+                    if (!activation.Completed)
+                    {
+                        steps.Add(new { step = 7, action = "Configuration activation did not complete; TwinCAT not restarted", activation });
+                        result.Success = false;
+                        result.ErrorMessage = activation.ErrorMessage;
+                        return result;
+                    }
+                    steps.Add(new { step = 7, action = "Configuration activated", dryRun, verified = activation.Verified, signal = activation.Signal, attempts = activation.Attempts, elapsedMs = activation.ElapsedMs, warning = activation.Warning });
                 }
-                steps.Add(new { step = 7, action = "Configuration activated", dryRun = dryRun });
+                else
+                {
+                    steps.Add(new { step = 7, action = "Configuration activated", dryRun = dryRun });
+                }
 
                 if (!dryRun)
                 {
@@ -294,5 +311,6 @@ namespace TcAutomation.Commands
         public string? Message { get; set; }
         public string? ErrorMessage { get; set; }
         public List<object>? BuildErrors { get; set; }
+        public ActivationWaitResult? Activation { get; set; }
     }
 }
