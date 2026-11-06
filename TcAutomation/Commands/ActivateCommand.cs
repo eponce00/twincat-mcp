@@ -61,12 +61,26 @@ namespace TcAutomation.Commands
                     automationInterface.TargetNetId = amsNetId;
                 }
 
-                automationInterface.ActivateConfiguration();
-                System.Threading.Thread.Sleep(5000);
+                // Wait for the target to finish switching to Config mode and
+                // writing its boot configuration instead of a fixed sleep.
+                var activation = ActivationWait.ActivateAndWait(
+                    targetNetId,
+                    automationInterface.ActivateConfiguration,
+                    message => Console.Error.WriteLine($"[PROGRESS] activate: {message}"));
 
                 result.TargetNetId = targetNetId;
-                result.Success = true;
-                result.Message = $"Configuration activated on {targetNetId}";
+                result.Activation = activation;
+                result.Success = activation.Completed;
+                if (activation.Completed)
+                {
+                    result.Message = activation.Verified
+                        ? $"Configuration activated on {targetNetId} (verified by {activation.Signal} after {activation.ElapsedMs / 1000.0:0.0} s)"
+                        : $"Configuration activated on {targetNetId} (completion unverified)";
+                }
+                else
+                {
+                    result.ErrorMessage = activation.ErrorMessage;
+                }
             }
             catch (Exception ex)
             {
@@ -90,5 +104,6 @@ namespace TcAutomation.Commands
         public string TargetNetId { get; set; } = "";
         public string? Message { get; set; }
         public string? ErrorMessage { get; set; }
+        public ActivationWaitResult? Activation { get; set; }
     }
 }

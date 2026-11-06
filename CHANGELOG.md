@@ -1,5 +1,38 @@
 # Changelog
 
+## 3.0.1 — 2026-11-05
+
+### Fixes
+
+- `engineering.activate`, `workflow.deploy` and `workflow.test` now wait for the
+  activation to land before continuing, instead of sleeping a fixed 5–10 s.
+  Previously, on targets that apply a configuration slowly (a local user-mode
+  runtime takes 10–15 s), the deploy restarted TwinCAT while the previous
+  `Boot\CurrentConfig.xml` was still in place. The PLC then loaded a mismatched
+  symbol description and the runtime could crash.
+- One shared wait checks the target system service (ADS port 10000) for a
+  state/restart-index change that settles in Config, Run or Stop. For runtimes
+  whose boot folder is on this PC, it also requires a rewritten, complete and
+  stable `CurrentConfig.xml`. On timeout (default 180 s,
+  `TWINCAT_MCP_ACTIVATION_TIMEOUT_SECONDS`), the operation fails, names the
+  missing signal and does not restart TwinCAT. If no signal is readable, it
+  waits a fixed 20 s and reports the activation as unverified.
+- Results include an `activation` receipt (signal, elapsed time, before/after
+  state and boot configuration, observations). See
+  [activation completion](docs/activation.md).
+
+### Upgrade
+
+Stop the server, pull, run `scripts/setup.ps1` (rebuilds the native worker) and
+restart the MCP connection. Verify application version `3.0.1`. Operation
+schemas, the three public tools, MCP 2026-07-28 and Python SDK 2.2.0 are
+unchanged. The successful activate/deploy/test path now takes as long as the
+target needs, so allow for that in fixed external timeouts.
+
+### Validation
+
+VALIDATION_PLACEHOLDER
+
 ## 3.0.0 — 2026-10-28
 
 ### Safety corrections and breaking contracts

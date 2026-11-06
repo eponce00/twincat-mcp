@@ -152,5 +152,6 @@ static class Program
         FeedbackTests.Run();
         MoveTests.Run();
         ReviewTests.Run();
+        ActivationWaitTests.Run();
     }
 }

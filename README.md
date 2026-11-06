@@ -20,7 +20,7 @@ Search does not dynamically register tools or change `tools/list`. The public ex
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
 
-The application version is **3.0.0**. See the [release notes](CHANGELOG.md) for
+The application version is **3.0.1**. See the [release notes](CHANGELOG.md) for
 changes and upgrade instructions. The supported interface consists of
 the three public tools and the [operation catalog](docs/operations.md).
 
@@ -181,6 +181,10 @@ Do not expose it as an unauthenticated network service.
 | `workflow.sequence` | Validate up to 32 catalog steps before effects, then execute in order and stop on failure. |
 | `workflow.wait_state` | Poll runtime state with a configured interval and deadline. |
 | `workflow.build_verify` | Build and verify explicit symbol/type expectations against the selected PLC's TMC. |
+
+Activation waits until the target has applied the new configuration before any
+restart, instead of sleeping a fixed time; see
+[activation completion](docs/activation.md) for the signals, timeout and receipt.
 
 Sequences accept `steps:[{"operation":"...","arguments":{...}}]`; use catalog
 operation IDs, not raw CLI commands. All steps carry their own required handles.

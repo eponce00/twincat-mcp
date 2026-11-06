@@ -116,6 +116,7 @@
     <Compile Include="Core\AdsValues.cs" />
     <Compile Include="Core\RecordingSamples.cs" />
     <Compile Include="Core\SessionFile.cs" />
+    <Compile Include="Core\ActivationWait.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
     <Compile Include="Commands\CleanCommand.cs" />
