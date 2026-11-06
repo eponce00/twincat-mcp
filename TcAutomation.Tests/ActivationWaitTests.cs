@@ -21,117 +21,153 @@ static class ActivationWaitTests
         public void Sleep(TimeSpan d) => Now += d;
     }
 
-    /// <summary>Probe whose readings are functions of the fake time in seconds.</summary>
+    /// <summary>
+    /// Target whose readings are functions of the fake time in seconds and of
+    /// how many activations were dispatched (and when the last one was).
+    /// </summary>
     sealed class ScriptedProbe : IActivationProbe
     {
         public Clock Clock = new Clock();
         public string? BootDirectory { get; set; }
+        public int Activations;
+        public double LastActivation;
         public Func<double, SystemStateSample?> State = _ => null;
-        public Func<double, BootConfigSample?> Boot = _ => null;
+        public Func<double, int, BootConfigSample?> Boot = (_, __) => null;
         public SystemStateSample? ReadSystemState() => State(Clock.Now.TotalSeconds);
-        public BootConfigSample? ReadBootConfig() => BootDirectory == null ? null : Boot(Clock.Now.TotalSeconds);
+        public BootConfigSample? ReadBootConfig() => BootDirectory == null ? null : Boot(Clock.Now.TotalSeconds, Activations);
+        public void Activate() { Activations++; LastActivation = Clock.Now.TotalSeconds; }
     }
 
     static SystemStateSample S(AdsState state, int? restart = 60) => new SystemStateSample { State = state, RestartIndex = restart };
-    static BootConfigSample B(string stamp, string? createTime = "2026-11-05T18:32:12") =>
-        new BootConfigSample { Exists = true, Stamp = stamp, CreateTime = createTime, LastWriteUtc = new DateTime(2026, 11, 5) };
 
-    static ActivationWaitOptions Options(double timeout = 120) => new ActivationWaitOptions
+    /// <summary>Boot sample: config is the CurrentConfig.xml stamp, plc the PLC boot files.</summary>
+    static BootConfigSample B(string config, string plc = "plc-old", string? createTime = null) => new BootConfigSample
+    {
+        Exists = true,
+        ConfigStamp = config,
+        Stamp = config + ";" + plc,
+        CreateTime = createTime ?? (config == "old" ? "2026-11-05T18:32:12" : "2026-11-05T19:13:51"),
+        LastWriteUtc = new DateTime(2026, 11, 5),
+    };
+
+    static ActivationWaitOptions Options(double timeout = 120, int attempts = 2) => new ActivationWaitOptions
     {
         Timeout = TimeSpan.FromSeconds(timeout),
         PollInterval = TimeSpan.FromMilliseconds(500),
         SettleTime = TimeSpan.FromSeconds(3),
         UnverifiedDelay = TimeSpan.FromSeconds(20),
+        RetryAfter = TimeSpan.FromSeconds(30),
+        MaxAttempts = attempts,
     };
 
-    static ActivationWaitResult Run(ScriptedProbe probe, ActivationWaitOptions? options = null)
-    {
-        var baseline = ActivationWait.Capture(probe);
-        return ActivationWait.Wait(probe, baseline, options ?? Options(), null, probe.Clock.Read, probe.Clock.Sleep);
-    }
+    static ActivationWaitResult Run(ScriptedProbe probe, ActivationWaitOptions? options = null) =>
+        ActivationWait.ActivateAndWait(probe, probe.Activate, options ?? Options(), null, probe.Clock.Read, probe.Clock.Sleep);
 
     public static void Run()
     {
-        // The reported race: the runtime is already in Config after ~5 s, but the
-        // UmRT rewrites CurrentConfig.xml only at ~12 s. The waiter must not
-        // return (and the caller must not restart) before the rewrite has settled.
-        var local = new ScriptedProbe { BootDirectory = @"C:\Boot" };
-        local.State = t => t < 2 ? S(AdsState.Run) : t < 5 ? S(AdsState.Reconfig) : S(AdsState.Config, 61);
-        local.Boot = t => t < 12 ? B("old") : t < 13 ? B("new", null) : B("new", "2026-11-05T19:00:00");
-        var result = Run(local);
-        Check(result.Completed && result.Verified && result.Signal == "bootConfig+systemState", "Local activation verified by both signals: " + result.ErrorMessage);
-        Check(result.ElapsedMs >= 16000, "No completion before CurrentConfig.xml is rewritten, complete and settled: " + result.ElapsedMs);
-        Check(result.ElapsedMs < 17000, "Completion follows the settle time without a fixed long sleep: " + result.ElapsedMs);
-        Check(result.Observations.Any(o => o.Contains("Reconfig")) && result.SystemStateAfter!.StartsWith("Config"), "State transitions are recorded");
+        // Observed on the UmRT (2026-11-05): a landed activation rewrites
+        // CurrentConfig.xml and leaves the system service in Run with the same
+        // restart index. Completion follows the settle time, not a fixed sleep.
+        var landed = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        landed.State = _ => S(AdsState.Run);
+        landed.Boot = (t, n) => t < 2 ? B("old") : t < 4 ? new BootConfigSample { Exists = true, ConfigStamp = "new", Stamp = "partial", CreateTime = null } : B("new", "plc-new");
+        var result = Run(landed);
+        Check(result.Completed && result.Verified && result.Signal == "bootConfig" && result.Attempts == 1 && landed.Activations == 1, "Landed activation verified: " + result.ErrorMessage);
+        Check(result.ElapsedMs >= 7000 && result.ElapsedMs < 8000, "Completion waits for a complete, settled CurrentConfig.xml: " + result.ElapsedMs);
+        Check(result.BootConfigRewritten == true && result.SystemStateAfter == "Run (restart index 60)", "Receipt records the rewrite and the unchanged state");
 
-        // Boot configuration never rewritten: time out, report it, do not complete.
-        var stale = new ScriptedProbe { BootDirectory = @"C:\Boot" };
-        stale.State = t => t < 3 ? S(AdsState.Run) : S(AdsState.Config, 61);
-        stale.Boot = _ => B("old");
-        result = Run(stale, Options(30));
-        Check(!result.Completed && result.ErrorMessage!.Contains("was not rewritten") && result.ErrorMessage.Contains("not restarted"), "Stale boot configuration times out: " + result.ErrorMessage);
+        // Observed regression: XAE replaces the PLC boot files even when the
+        // activation never lands. That alone must not count as landed.
+        var plcOnly = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        plcOnly.State = _ => S(AdsState.Run);
+        plcOnly.Boot = (t, n) => t < 2 ? B("old") : B("old", "plc-new");
+        result = Run(plcOnly, Options(30, 1));
+        Check(!result.Completed && result.BootConfigRewritten == false && result.ErrorMessage!.Contains("was not rewritten")
+            && result.ErrorMessage.Contains("not restarted") && result.ErrorMessage.Contains("do not restart"), "PLC-only rewrite is not a landed activation: " + result.ErrorMessage);
         Check(result.ElapsedMs >= 30000 && result.ElapsedMs < 31000, "Timeout is honoured");
 
-        // A rewrite that keeps changing (still being written) is not complete.
-        var churn = new ScriptedProbe { BootDirectory = @"C:\Boot" };
-        churn.State = t => S(AdsState.Config, t < 1 ? 60 : 61);
-        churn.Boot = t => t < 1 ? B("old") : B("write-" + (int)(t * 2));
-        result = Run(churn, Options(20));
-        Check(!result.Completed && result.ErrorMessage!.Contains("still changing"), "Continuously changing boot files never settle: " + result.ErrorMessage);
+        // Observed pattern: the first activation after loading a solution does
+        // not reach the target; the second does. The waiter re-activates once.
+        var second = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        second.State = _ => S(AdsState.Run);
+        second.Boot = (t, n) => n < 2 ? B("old", t < 1 ? "plc-old" : "plc-new") : t - second.LastActivation < 6 ? B("old", "plc-new") : B("new", "plc-newer");
+        result = Run(second);
+        Check(result.Completed && result.Verified && result.Attempts == 2 && second.Activations == 2, "Second activation lands: " + result.ErrorMessage);
+        Check(result.ElapsedMs >= 39000 && result.ElapsedMs < 40000, "Retry after 30 s, then verify: " + result.ElapsedMs);
+        Check(result.Observations.Any(o => o.StartsWith("attempt 2:")), "Observations name the attempt");
 
-        // System state that never settles (stuck in Reconfig) blocks completion.
+        // Neither attempt lands: fail after two dispatches, never restart.
+        var never = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        never.State = _ => S(AdsState.Run);
+        never.Boot = (t, n) => B("old", "plc-new");
+        result = Run(never, Options(40));
+        Check(!result.Completed && result.Attempts == 2 && never.Activations == 2 && result.ErrorMessage!.StartsWith("2 activation attempts:")
+            && result.ErrorMessage.Contains("was not rewritten"), "Retries are bounded: " + result.ErrorMessage);
+        Check(result.ElapsedMs >= 70000 && result.ElapsedMs < 71000, "Retry window plus final timeout: " + result.ElapsedMs);
+
+        // A rewrite in progress is never re-dispatched; it gets the full timeout.
+        var churn = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        churn.State = _ => S(AdsState.Config);
+        churn.Boot = (t, n) => t < 1 ? B("old") : B("write-" + (int)(t * 2));
+        result = Run(churn, Options(45));
+        Check(!result.Completed && churn.Activations == 1 && result.ErrorMessage!.Contains("still changing") && result.ElapsedMs >= 45000, "Continuously changing boot files never settle: " + result.ErrorMessage);
+
+        // A local target whose system service is stuck transitioning is not done.
         var stuck = new ScriptedProbe { BootDirectory = @"C:\Boot" };
         stuck.State = t => t < 1 ? S(AdsState.Run) : S(AdsState.Reconfig);
-        stuck.Boot = t => t < 2 ? B("old") : B("new");
+        stuck.Boot = (t, n) => t < 2 ? B("old") : B("new");
         result = Run(stuck, Options(20));
-        Check(!result.Completed && result.ErrorMessage!.Contains("did not settle"), "Unsettled system state times out: " + result.ErrorMessage);
+        Check(!result.Completed && stuck.Activations == 1 && result.ErrorMessage!.Contains("did not settle"), "Unsettled system state times out: " + result.ErrorMessage);
 
-        // Remote target: no boot folder. The restart index and Config state verify it.
-        var remote = new ScriptedProbe();
-        remote.State = t => t < 4 ? S(AdsState.Run, 7) : t < 9 ? S(AdsState.Reconfig, 7) : S(AdsState.Config, 8);
-        result = Run(remote);
-        Check(result.Completed && result.Verified && result.Signal == "systemState" && result.ElapsedMs >= 12000, "Remote activation verified by system state: " + result.ElapsedMs);
-
-        // Remote Config -> Config: the restart index alone proves the reconfiguration.
-        var configToConfig = new ScriptedProbe();
-        configToConfig.State = t => S(AdsState.Config, t < 6 ? 7 : 8);
-        result = Run(configToConfig);
-        Check(result.Completed && result.ElapsedMs >= 9000, "Config to Config detected by restart index: " + result.ElapsedMs);
-
-        // Remote target that never reacts: fail with a clear message, no restart.
-        var idle = new ScriptedProbe();
-        idle.State = _ => S(AdsState.Config, 7);
-        result = Run(idle, Options(25));
-        Check(!result.Completed && result.ErrorMessage!.Contains("never left Config"), "No reaction on the target times out: " + result.ErrorMessage);
-
-        // Older targets answer only ReadState (no restart index): a state change still counts.
-        var legacy = new ScriptedProbe();
-        legacy.State = t => t < 3 ? S(AdsState.Run, null) : S(AdsState.Config, null);
-        result = Run(legacy);
-        Check(result.Completed && result.Signal == "systemState", "ReadState-only targets are supported");
-
-        // ADS drops while the system service reconfigures: unreadable is not settled.
-        var drop = new ScriptedProbe();
-        drop.State = t => t < 2 ? S(AdsState.Run, 7) : t < 8 ? null : S(AdsState.Config, 8);
+        // Connection loss while the boot configuration lands delays completion.
+        var drop = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        drop.State = t => t < 2 ? S(AdsState.Run) : t < 8 ? null : S(AdsState.Run);
+        drop.Boot = (t, n) => t < 3 ? B("old") : B("new");
         result = Run(drop);
-        Check(result.Completed && result.ElapsedMs >= 11000 && result.Observations.Any(o => o.Contains("unreadable")), "Connection loss delays completion: " + result.ElapsedMs);
+        Check(result.Completed && result.ElapsedMs >= 11000 && result.Observations.Any(o => o.Contains("unreadable")), "Unreadable state is not settled: " + result.ElapsedMs);
 
         // Probe exceptions are treated like unreadable signals.
-        var throwing = new ScriptedProbe();
-        throwing.State = t => t < 3 ? throw new InvalidOperationException("router") : S(AdsState.Config, 9);
+        var throwing = new ScriptedProbe { BootDirectory = @"C:\Boot" };
+        throwing.State = t => t < 3 ? throw new InvalidOperationException("router") : S(AdsState.Run);
+        throwing.Boot = (t, n) => t < 5 ? throw new IOException("locked") : B("new");
         result = Run(throwing);
         Check(result.Completed && result.Verified, "Probe exceptions do not escape");
 
         // Local folder but system service unreadable: boot configuration alone verifies, with a warning.
         var bootOnly = new ScriptedProbe { BootDirectory = @"C:\Boot" };
-        bootOnly.Boot = t => t < 6 ? B("old") : B("new");
+        bootOnly.Boot = (t, n) => t < 6 ? B("old") : B("new");
         result = Run(bootOnly);
         Check(result.Completed && result.Verified && result.Signal == "bootConfig" && result.Warning != null && result.ElapsedMs >= 9000, "Boot-only verification");
+
+        // Remote target: a landed activation is invisible over ADS. Settle, then
+        // report unverified; never re-dispatch without a way to verify.
+        var remote = new ScriptedProbe();
+        remote.State = _ => S(AdsState.Run, 7);
+        result = Run(remote);
+        Check(result.Completed && !result.Verified && result.Signal == "systemState" && remote.Activations == 1
+            && result.Warning!.Contains("not visible over ADS") && result.ElapsedMs >= 3000 && result.ElapsedMs < 4000, "Remote activation reported unverified");
+        Check(result.BootConfigRewritten == null, "Remote receipt has no boot verdict");
+
+        var remoteDrop = new ScriptedProbe();
+        remoteDrop.State = t => t < 2 ? S(AdsState.Run, 7) : t < 8 ? null : S(AdsState.Config, 8);
+        result = Run(remoteDrop);
+        Check(result.Completed && result.ElapsedMs >= 11000, "Remote waits for the system service to settle after a drop: " + result.ElapsedMs);
+
+        var remoteStuck = new ScriptedProbe();
+        remoteStuck.State = _ => S(AdsState.Reconfig, 7);
+        result = Run(remoteStuck, Options(25));
+        Check(!result.Completed && remoteStuck.Activations == 1 && result.ErrorMessage!.Contains("did not settle"), "Remote stuck in Reconfig times out");
+
+        // Older targets answer only ReadState (no restart index).
+        var legacy = new ScriptedProbe();
+        legacy.State = _ => S(AdsState.Run, null);
+        result = Run(legacy);
+        Check(result.Completed && result.Signal == "systemState" && result.SystemStateAfter == "Run", "ReadState-only targets are supported");
 
         // Nothing readable at all: graceful fixed-delay fallback, flagged unverified.
         var blind = new ScriptedProbe();
         result = Run(blind);
-        Check(result.Completed && !result.Verified && result.Signal == "none" && result.Warning!.Contains("could not be verified"), "Unverified fallback");
+        Check(result.Completed && !result.Verified && result.Signal == "none" && result.Warning!.Contains("could not be verified") && blind.Activations == 1, "Unverified fallback");
         Check(result.ElapsedMs >= 20000 && result.ElapsedMs < 21000, "Unverified fallback waits the fixed delay");
 
         CheckBootFiles();
@@ -153,6 +189,10 @@ static class ActivationWaitTests
             var before = ActivationWait.ReadBootConfig(dir);
             Check(before.Exists && before.CreateTime == "2026-11-05T18:32:12" && before.Stamp.Contains("Port_851.app"), "Boot fingerprint and CreateTime");
             Check(!ActivationWait.BootChanged(before, ActivationWait.ReadBootConfig(dir)), "Unchanged boot configuration");
+            System.Threading.Thread.Sleep(20);
+            File.WriteAllText(Path.Combine(dir, "Plc", "Port_851.app"), "new app");
+            var plcOnly = ActivationWait.ReadBootConfig(dir);
+            Check(plcOnly.Stamp != before.Stamp && !ActivationWait.BootChanged(before, plcOnly), "PLC boot files alone do not count as rewritten");
 
             File.WriteAllText(config, "<?xml version=\"1.0\"?><TcBootProject CreateTime=\"2026-11-05T19:00:00\"><System>");
             Check(ActivationWait.ReadBootConfig(dir).CreateTime == null, "Partially written CurrentConfig.xml is incomplete");
@@ -164,7 +204,7 @@ static class ActivationWaitTests
             File.WriteAllText(config, "<?xml version=\"1.0\"?><TcBootProject CreateTime=\"2026-11-05T19:00:00\"><System/></TcBootProject>");
             var after = ActivationWait.ReadBootConfig(dir);
             Check(ActivationWait.BootChanged(before, after) && after.CreateTime == "2026-11-05T19:00:00", "Rewritten boot configuration detected");
-            var sameContent = new BootConfigSample { Exists = true, Stamp = before.Stamp, CreateTime = "2026-11-05T19:00:00" };
+            var sameContent = new BootConfigSample { Exists = true, ConfigStamp = before.ConfigStamp, Stamp = before.Stamp, CreateTime = "2026-11-05T19:00:00" };
             Check(ActivationWait.BootChanged(before, sameContent), "A new CreateTime alone counts as rewritten");
             Check(ActivationWait.BootChanged(null, after) && ActivationWait.BootChanged(new BootConfigSample { Exists = false }, after), "First boot configuration counts as rewritten");
         }
@@ -211,7 +251,7 @@ static class ActivationWaitTests
         try
         {
             Environment.SetEnvironmentVariable(ActivationWaitOptions.TimeoutEnvironmentVariable, null);
-            Check(ActivationWaitOptions.FromEnvironment().Timeout == TimeSpan.FromSeconds(180), "Default timeout");
+            Check(ActivationWaitOptions.FromEnvironment().Timeout == TimeSpan.FromSeconds(120), "Default timeout");
             Environment.SetEnvironmentVariable(ActivationWaitOptions.TimeoutEnvironmentVariable, "300");
             Check(ActivationWaitOptions.FromEnvironment().Timeout == TimeSpan.FromSeconds(300), "Timeout override");
             Environment.SetEnvironmentVariable(ActivationWaitOptions.TimeoutEnvironmentVariable, "1");
@@ -219,7 +259,7 @@ static class ActivationWaitTests
             Environment.SetEnvironmentVariable(ActivationWaitOptions.TimeoutEnvironmentVariable, "999999");
             Check(ActivationWaitOptions.FromEnvironment().Timeout == TimeSpan.FromSeconds(1800), "Timeout upper bound");
             Environment.SetEnvironmentVariable(ActivationWaitOptions.TimeoutEnvironmentVariable, "abc");
-            Check(ActivationWaitOptions.FromEnvironment().Timeout == TimeSpan.FromSeconds(180), "Invalid override ignored");
+            Check(ActivationWaitOptions.FromEnvironment().Timeout == TimeSpan.FromSeconds(120), "Invalid override ignored");
         }
         finally { Environment.SetEnvironmentVariable(ActivationWaitOptions.TimeoutEnvironmentVariable, previous); }
     }

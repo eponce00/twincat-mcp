@@ -36,6 +36,9 @@ namespace TcAutomation.Core
     public sealed class BootConfigSample
     {
         public bool Exists { get; set; }
+        /// <summary>CurrentConfig.xml write time and length.</summary>
+        public string ConfigStamp { get; set; } = "";
+        /// <summary>CurrentConfig.xml and the files written with it, for stability checks.</summary>
         public string Stamp { get; set; } = "";
         public DateTime LastWriteUtc { get; set; }
         public string? CreateTime { get; set; }
@@ -59,13 +62,20 @@ namespace TcAutomation.Core
     {
         public const string TimeoutEnvironmentVariable = "TWINCAT_MCP_ACTIVATION_TIMEOUT_SECONDS";
 
-        /// <summary>Maximum time to wait for the activation to land.</summary>
-        public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(180);
+        /// <summary>Maximum time the final activation attempt may take to land.</summary>
+        public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(120);
         public TimeSpan PollInterval { get; set; } = TimeSpan.FromMilliseconds(500);
         /// <summary>Signals must stay unchanged for this long before the activation counts as complete.</summary>
         public TimeSpan SettleTime { get; set; } = TimeSpan.FromSeconds(3);
-        /// <summary>Fixed delay used only when no completion signal can be read at all.</summary>
+        /// <summary>Fixed delay used only when no signal can be read at all.</summary>
         public TimeSpan UnverifiedDelay { get; set; } = TimeSpan.FromSeconds(20);
+        /// <summary>
+        /// Local targets only: when CurrentConfig.xml has not been rewritten at
+        /// all within this time, the activation did not reach the target and is
+        /// dispatched again (up to MaxAttempts in total).
+        /// </summary>
+        public TimeSpan RetryAfter { get; set; } = TimeSpan.FromSeconds(30);
+        public int MaxAttempts { get; set; } = 2;
 
         /// <summary>Defaults, with the timeout optionally overridden (10–1800 s) by the environment.</summary>
         public static ActivationWaitOptions FromEnvironment()
@@ -80,7 +90,7 @@ namespace TcAutomation.Core
         }
     }
 
-    /// <summary>State captured immediately before ActivateConfiguration is dispatched.</summary>
+    /// <summary>State captured immediately before the first ActivateConfiguration is dispatched.</summary>
     public sealed class ActivationBaseline
     {
         public SystemStateSample? SystemState { get; set; }
@@ -92,12 +102,16 @@ namespace TcAutomation.Core
     {
         /// <summary>True when the caller may continue (restart, poll, report success).</summary>
         public bool Completed { get; set; }
-        /// <summary>True when completion was observed on the target rather than assumed after a fixed delay.</summary>
+        /// <summary>True when the rewritten boot configuration was observed on the target.</summary>
         public bool Verified { get; set; }
-        /// <summary>bootConfig+systemState, bootConfig, systemState or none.</summary>
+        /// <summary>bootConfig (verified), systemState (remote, unverified) or none (nothing readable).</summary>
         public string Signal { get; set; } = "none";
+        /// <summary>ActivateConfiguration calls dispatched.</summary>
+        public int Attempts { get; set; } = 1;
         public long ElapsedMs { get; set; }
         public string? BootDirectory { get; set; }
+        /// <summary>Local targets: whether CurrentConfig.xml differs from the baseline.</summary>
+        public bool? BootConfigRewritten { get; set; }
         public string? SystemStateBefore { get; set; }
         public string? SystemStateAfter { get; set; }
         public string? BootConfigBefore { get; set; }
@@ -108,20 +122,23 @@ namespace TcAutomation.Core
     }
 
     /// <summary>
-    /// Waits for ActivateConfiguration to land on the target before the caller
-    /// restarts TwinCAT. The XAE call can return while the target is still
-    /// switching to Config mode and writing its boot configuration; restarting
-    /// in that window starts the PLC against the previous configuration.
+    /// Verifies that ActivateConfiguration reached the target before the caller
+    /// restarts TwinCAT. XAE can report a successful activation that never
+    /// reached the target, or that is still being written; restarting then
+    /// starts the PLC (whose boot files XAE already replaced) against the
+    /// previous Boot\CurrentConfig.xml.
     ///
-    /// Completion requires every readable signal to agree:
-    /// - local targets: Boot\CurrentConfig.xml (and the files written with it)
-    ///   differ from the baseline, parse as a complete TcBootProject, and stay
-    ///   unchanged for the settle time;
-    /// - all targets: the system service (port 10000) left its baseline
-    ///   (restart index or state changed) and has stayed in a settled state
-    ///   (Config, Run or Stop) for the settle time.
-    /// When neither signal is readable, the waiter falls back to a fixed delay
-    /// and reports the activation as unverified.
+    /// Local targets (boot folder on this PC) are verified: CurrentConfig.xml
+    /// must differ from the pre-activation baseline (file stamp or CreateTime),
+    /// parse as a complete TcBootProject, and stay unchanged, together with the
+    /// files written with it, for the settle time; a readable system service
+    /// (port 10000) must also be in a settled state. If CurrentConfig.xml has
+    /// not changed at all after RetryAfter, the activation is dispatched once
+    /// more (the documented manual recovery). A landed activation does not
+    /// change the system service state or restart index, so remote targets
+    /// cannot be verified over ADS: the wait requires a settled state and
+    /// reports the activation as unverified. With nothing readable it waits a
+    /// fixed delay, also unverified.
     /// </summary>
     public static class ActivationWait
     {
@@ -135,31 +152,76 @@ namespace TcAutomation.Core
             BootConfig = SafeRead(probe.ReadBootConfig),
         };
 
-        /// <summary>Production entry point: build the probe, capture, activate, wait.</summary>
+        /// <summary>Production entry point: probe the real target, activate, verify.</summary>
         public static ActivationWaitResult ActivateAndWait(string? targetNetId, Action activate, Action<string>? progress = null)
         {
             using var probe = new TargetActivationProbe(targetNetId);
+            return ActivateAndWait(probe, activate, ActivationWaitOptions.FromEnvironment(), progress);
+        }
+
+        public static ActivationWaitResult ActivateAndWait(
+            IActivationProbe probe,
+            Action activate,
+            ActivationWaitOptions options,
+            Action<string>? progress = null,
+            Func<TimeSpan>? clock = null,
+            Action<TimeSpan>? sleep = null)
+        {
             var baseline = Capture(probe);
             progress?.Invoke(Describe(probe, baseline));
-            activate();
-            return Wait(probe, baseline, ActivationWaitOptions.FromEnvironment(), progress);
+            var observations = new List<string>();
+            long elapsed = 0;
+            int attempt = 0;
+            ActivationWaitResult result;
+            while (true)
+            {
+                attempt++;
+                activate();
+                bool canRetry = probe.BootDirectory != null && attempt < options.MaxAttempts;
+                result = Wait(probe, baseline, options, progress, clock, sleep, canRetry ? options.RetryAfter : (TimeSpan?)null);
+                elapsed += result.ElapsedMs;
+                int current = attempt;
+                observations.AddRange(result.Observations.Select(o => options.MaxAttempts > 1 ? $"attempt {current}: {o}" : o));
+                if (result.Completed || !canRetry || result.BootConfigRewritten != false)
+                {
+                    break;
+                }
+                progress?.Invoke($"Boot\\CurrentConfig.xml was not rewritten within {options.RetryAfter.TotalSeconds:0} s; the activation did not reach the target. Activating again (attempt {attempt + 1} of {options.MaxAttempts}).");
+            }
+
+            result.Attempts = attempt;
+            result.ElapsedMs = elapsed;
+            result.Observations = observations;
+            if (!result.Completed && attempt > 1)
+            {
+                result.ErrorMessage = $"{attempt} activation attempts: " + result.ErrorMessage;
+            }
+            return result;
         }
 
         public static string Describe(IActivationProbe probe, ActivationBaseline baseline)
         {
             var parts = new List<string>();
             parts.Add(baseline.SystemState != null ? $"system state {baseline.SystemState}" : "system state unreadable");
-            parts.Add(probe.BootDirectory != null ? $"local boot folder {probe.BootDirectory}" : "no local boot folder (remote target)");
+            parts.Add(probe.BootDirectory != null
+                ? $"local boot folder {probe.BootDirectory}, {baseline.BootConfig?.ToString() ?? "boot configuration unreadable"}"
+                : "no local boot folder (remote target)");
             return "Before activation: " + string.Join("; ", parts);
         }
 
+        /// <summary>
+        /// Waits for one dispatched activation. With retryAfter set, returns
+        /// early (not completed, BootConfigRewritten=false) when CurrentConfig.xml
+        /// has not changed at all by then.
+        /// </summary>
         public static ActivationWaitResult Wait(
             IActivationProbe probe,
             ActivationBaseline baseline,
             ActivationWaitOptions options,
             Action<string>? progress = null,
             Func<TimeSpan>? clock = null,
-            Action<TimeSpan>? sleep = null)
+            Action<TimeSpan>? sleep = null,
+            TimeSpan? retryAfter = null)
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
             clock ??= () => watch.Elapsed;
@@ -173,7 +235,8 @@ namespace TcAutomation.Core
 
             bool bootAvailable = probe.BootDirectory != null;
             bool stateEverReadable = baseline.SystemState != null;
-            bool stateTransitionSeen = false;
+            bool rewritten = false;
+            bool bootDone = false, stateSettled = false;
             string? lastState = null;
             string? lastBootStamp = null;
             TimeSpan bootStableSince = TimeSpan.Zero, stateStableSince = TimeSpan.Zero;
@@ -195,17 +258,7 @@ namespace TcAutomation.Core
                     lastState = stateKey;
                     stateStableSince = now;
                 }
-                if (state != null)
-                {
-                    stateEverReadable = true;
-                    if (baseline.SystemState == null
-                        || state.State != baseline.SystemState.State
-                        || state.RestartIndex != baseline.SystemState.RestartIndex
-                        || !IsSettled(state.State))
-                    {
-                        stateTransitionSeen = true;
-                    }
-                }
+                if (state != null) stateEverReadable = true;
 
                 string bootKey = boot == null ? "unreadable" : boot.Exists ? boot.Stamp + "|" + boot.CreateTime : "missing";
                 if (bootAvailable && bootKey != lastBootStamp)
@@ -217,34 +270,51 @@ namespace TcAutomation.Core
                     lastBootStamp = bootKey;
                     bootStableSince = now;
                 }
+                if (boot != null && BootChanged(baseline.BootConfig, boot)) rewritten = true;
 
-                bool bootDone = !bootAvailable || (boot != null && boot.Exists && boot.CreateTime != null
+                stateSettled = state != null && IsSettled(state.State) && now - stateStableSince >= options.SettleTime;
+                bootDone = boot != null && boot.Exists && boot.CreateTime != null
                     && BootChanged(baseline.BootConfig, boot)
-                    && now - bootStableSince >= options.SettleTime);
-                bool stateDone = !stateEverReadable || (state != null && stateTransitionSeen && IsSettled(state.State)
-                    && now - stateStableSince >= options.SettleTime);
+                    && now - bootStableSince >= options.SettleTime;
 
-                if (!bootAvailable && !stateEverReadable)
+                if (bootAvailable)
                 {
-                    if (now - start >= options.UnverifiedDelay)
+                    if (bootDone && (stateSettled || !stateEverReadable))
                     {
                         result.Completed = true;
-                        result.Verified = false;
-                        result.Signal = "none";
-                        result.Warning = $"Activation completion could not be verified: the target system service (port 10000) was unreadable and no local boot folder is known. Waited a fixed {options.UnverifiedDelay.TotalSeconds:0} s.";
+                        result.Verified = true;
+                        result.Signal = "bootConfig";
+                        if (!stateEverReadable)
+                        {
+                            result.Warning = "System service state (port 10000) was unreadable; completion was verified from the local boot configuration only.";
+                        }
                         break;
                     }
                 }
-                else if (bootDone && stateDone)
+                else if (stateEverReadable)
+                {
+                    if (stateSettled)
+                    {
+                        result.Completed = true;
+                        result.Verified = false;
+                        result.Signal = "systemState";
+                        result.Warning = $"Remote target: a landed activation is not visible over ADS, so it was not verified. The system service settled in {state}. If the PLC reports a symbol mismatch after the restart, check Boot\\CurrentConfig.xml on the target.";
+                        break;
+                    }
+                }
+                else if (now - start >= options.UnverifiedDelay)
                 {
                     result.Completed = true;
-                    result.Verified = true;
-                    result.Signal = bootAvailable && stateEverReadable ? "bootConfig+systemState"
-                        : bootAvailable ? "bootConfig" : "systemState";
-                    if (!stateEverReadable)
-                    {
-                        result.Warning = "System service state (port 10000) was unreadable; completion was verified from the local boot configuration only.";
-                    }
+                    result.Verified = false;
+                    result.Signal = "none";
+                    result.Warning = $"Activation could not be verified: the target system service (port 10000) was unreadable and no local boot folder is known. Waited a fixed {options.UnverifiedDelay.TotalSeconds:0} s.";
+                    break;
+                }
+
+                if (bootAvailable && retryAfter.HasValue && !rewritten && now - start >= retryAfter.Value)
+                {
+                    result.Completed = false;
+                    result.ErrorMessage = $"Boot\\CurrentConfig.xml in {probe.BootDirectory} was not rewritten within {retryAfter.Value.TotalSeconds:0} s.";
                     break;
                 }
 
@@ -254,17 +324,15 @@ namespace TcAutomation.Core
                     var pending = new List<string>();
                     if (bootAvailable && !bootDone)
                     {
-                        pending.Add(boot == null || !boot.Exists || !BootChanged(baseline.BootConfig, boot)
+                        pending.Add(!rewritten
                             ? $"Boot\\CurrentConfig.xml in {probe.BootDirectory} was not rewritten ({boot?.ToString() ?? "unreadable"})"
                             : $"Boot\\CurrentConfig.xml in {probe.BootDirectory} is still changing or incomplete");
                     }
-                    if (stateEverReadable && !stateDone)
+                    if (stateEverReadable && !stateSettled)
                     {
-                        pending.Add(!stateTransitionSeen
-                            ? $"system service never left {baseline.SystemState} after activation"
-                            : $"system service did not settle (last {stateKey})");
+                        pending.Add($"system service did not settle (last {stateKey})");
                     }
-                    result.ErrorMessage = $"Activation did not complete within {options.Timeout.TotalSeconds:0} s: {string.Join("; ", pending)}. TwinCAT was not restarted. Check the target and retry; raise {ActivationWaitOptions.TimeoutEnvironmentVariable} for slow targets.";
+                    result.ErrorMessage = $"Activation did not complete within {options.Timeout.TotalSeconds:0} s: {string.Join("; ", pending)}. TwinCAT was not restarted. The target may already hold the new PLC boot files next to the previous configuration; do not restart it until an activation has landed. Activate again, or raise {ActivationWaitOptions.TimeoutEnvironmentVariable} for slow targets.";
                     break;
                 }
 
@@ -277,19 +345,31 @@ namespace TcAutomation.Core
             }
 
             result.ElapsedMs = (long)(clock() - start).TotalMilliseconds;
+            result.BootConfigRewritten = bootAvailable ? rewritten : (bool?)null;
             result.SystemStateAfter = state?.ToString();
             result.BootConfigAfter = boot?.ToString();
-            progress?.Invoke(result.Completed
-                ? $"Activation landed after {result.ElapsedMs / 1000.0:0.0} s (signal: {result.Signal}{(result.Verified ? "" : ", unverified")})"
-                : result.ErrorMessage!);
+            if (result.Completed)
+            {
+                progress?.Invoke(result.Verified
+                    ? $"Activation landed: {boot} ({result.ElapsedMs / 1000.0:0.0} s)"
+                    : $"Activation not verified ({result.Signal}): {result.Warning}");
+            }
+            else if (!retryAfter.HasValue || rewritten)
+            {
+                progress?.Invoke(result.ErrorMessage!);
+            }
             return result;
         }
 
+        /// <summary>
+        /// Whether CurrentConfig.xml itself was rewritten. PLC boot files are
+        /// excluded: XAE replaces them even when the activation never lands.
+        /// </summary>
         public static bool BootChanged(BootConfigSample? before, BootConfigSample after)
         {
             if (!after.Exists) return false;
             if (before == null || !before.Exists) return true;
-            return before.Stamp != after.Stamp || before.CreateTime != after.CreateTime;
+            return before.ConfigStamp != after.ConfigStamp || before.CreateTime != after.CreateTime;
         }
 
         static T? SafeRead<T>(Func<T?> read) where T : class
@@ -310,7 +390,7 @@ namespace TcAutomation.Core
         public static BootConfigSample ReadBootConfig(string bootDirectory)
         {
             var config = new FileInfo(Path.Combine(bootDirectory, "CurrentConfig.xml"));
-            if (!config.Exists) return new BootConfigSample { Exists = false, Stamp = "missing" };
+            if (!config.Exists) return new BootConfigSample { Exists = false, Stamp = "missing", ConfigStamp = "missing" };
 
             var parts = new List<string>();
             foreach (var name in BootFiles)
@@ -330,6 +410,7 @@ namespace TcAutomation.Core
             return new BootConfigSample
             {
                 Exists = true,
+                ConfigStamp = $"{config.LastWriteTimeUtc.Ticks}:{config.Length}",
                 Stamp = string.Join(";", parts),
                 LastWriteUtc = config.LastWriteTimeUtc,
                 CreateTime = ReadCreateTime(config.FullName),

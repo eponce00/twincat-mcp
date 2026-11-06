@@ -182,9 +182,10 @@ Do not expose it as an unauthenticated network service.
 | `workflow.wait_state` | Poll runtime state with a configured interval and deadline. |
 | `workflow.build_verify` | Build and verify explicit symbol/type expectations against the selected PLC's TMC. |
 
-Activation waits until the target has applied the new configuration before any
-restart, instead of sleeping a fixed time; see
-[activation completion](docs/activation.md) for the signals, timeout and receipt.
+Activation is verified before any restart: on a local runtime the boot
+configuration must be rewritten (one automatic second attempt if it is not), and
+a failed activation never restarts the target. See
+[activation completion](docs/activation.md) for signals, limits and the receipt.
 
 Sequences accept `steps:[{"operation":"...","arguments":{...}}]`; use catalog
 operation IDs, not raw CLI commands. All steps carry their own required handles.

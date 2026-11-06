@@ -207,7 +207,7 @@ namespace TcAutomation.Commands
                         result.ErrorMessage = activation.ErrorMessage;
                         return result;
                     }
-                    steps.Add(new { step = 7, action = "Configuration activated", dryRun, verified = activation.Verified, signal = activation.Signal, elapsedMs = activation.ElapsedMs });
+                    steps.Add(new { step = 7, action = "Configuration activated", dryRun, verified = activation.Verified, signal = activation.Signal, attempts = activation.Attempts, elapsedMs = activation.ElapsedMs, warning = activation.Warning });
                 }
                 else
                 {
