@@ -153,5 +153,6 @@ static class Program
         MoveTests.Run();
         ReviewTests.Run();
         ActivationWaitTests.Run();
+        HmiTests.Run();
     }
 }

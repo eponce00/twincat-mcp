@@ -8,6 +8,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 
 from .errors import OperationError
+from .hmi import target_url
 
 HANDLE = {"type": "string", "minLength": 1, "maxLength": 256}
 TARGET = {"type": "string", "pattern": r"^(?:\d{1,3}\.){5}\d{1,3}$"}
@@ -50,6 +51,16 @@ class Catalog:
                     "tcVersion": {"type": "string", "minLength": 1},
                 },
                 ("solutionPath", "amsNetId", "plcName"),
+            ),
+            operation(
+                "context.open_hmi",
+                "Reserve an exclusive HMI engineering context for a solution, exact HMI project and HTTPS server URL. No PLC target or restart.",
+                {
+                    "solutionPath": {"type": "string", "minLength": 1},
+                    "projectPath": {"type": "string", "minLength": 1},
+                    "targetUrl": {"type": "string", "minLength": 1},
+                },
+                ("solutionPath", "projectPath", "targetUrl"),
             ),
             operation(
                 "context.close",
@@ -187,7 +198,12 @@ class Catalog:
         for e in entries:
             Draft202012Validator.check_schema(e["inputSchema"])
             e["prerequisites"] = (
-                ["context.open: retain contextHandle"] if e["engineering"] else []
+                [
+                    ("context.open_hmi" if e["id"].startswith("hmi.") else "context.open")
+                    + ": retain contextHandle"
+                ]
+                if e["engineering"]
+                else []
             ) + (
                 ["safety.grant: scope grantHandle to this operation and target/context"]
                 if e["requiresGrant"]
@@ -271,6 +287,8 @@ class Catalog:
                 "invalid_arguments",
                 "credentialPath is required when removeRemote is true.",
             )
+        if id == "context.open_hmi":
+            value["targetUrl"] = target_url(value["targetUrl"])
         if id == "workflow.sequence":
             for step in value["steps"]:
                 child = self.get(step["operation"])
@@ -331,6 +349,10 @@ class Catalog:
 def example_for(spec):
     examples = {
         "solutionPath": "C:/Projects/Machine/Machine.sln",
+        "projectPath": "C:/Projects/Machine/HMI/HMI.hmiproj",
+        "targetUrl": "https://127.0.0.1:1020/",
+        "profileName": "LocalHil",
+        "expectedFingerprint": "0" * 64,
         "amsNetId": "1.2.3.4.1.1",
         "plcName": "PLC",
         "contextHandle": "<context handle>",

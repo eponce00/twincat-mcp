@@ -59,7 +59,10 @@ class Backend:
             }:
                 continue
             args.pop(key, None)
-        if context:
+        if context and context.get("kind") == "hmi":
+            args["projectPath"] = context["projectPath"]
+            args["targetUrl"] = context["targetUrl"]
+        elif context:
             args["amsNetId"] = context["amsNetId"]
             args["plcName"] = context["plcName"]
         id = entry["id"]
@@ -82,14 +85,17 @@ class Backend:
         if id == "engineering.configure_task" and "autostart" in args:
             args["autoStart"] = args.pop("autostart")
         timeout = max(1, int(args.get("timeoutMinutes", 20 if id == "workflow.deploy" else 10)))
-        if entry["command"] in {"build", "move-plc-object"}:
+        if entry["command"] in {"build", "move-plc-object"} or id.startswith("hmi."):
             timeout = max(timeout, (args.get("timeoutSeconds", 180) + 119) // 60)
+        if id.startswith("hmi."):
+            timeout = (args.get("timeoutSeconds", 180) + 59) // 60
         result, progress = run_shell_step(
             entry["command"],
             args,
             solution_path=context["solutionPath"] if context else None,
             tc_version=context.get("tcVersion") if context else None,
             timeout_minutes=timeout,
+            **({"hmi_only": True} if id.startswith("hmi.") else {}),
         )
         result = normalize(result)
         # CLI info and other plain metadata results have no Success property.

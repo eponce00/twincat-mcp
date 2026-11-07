@@ -117,6 +117,8 @@
     <Compile Include="Core\RecordingSamples.cs" />
     <Compile Include="Core\SessionFile.cs" />
     <Compile Include="Core\ActivationWait.cs" />
+    <Compile Include="Commands\HmiCommand.cs" />
+    <Compile Include="Core\HmiPolicy.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
     <Compile Include="Commands\CleanCommand.cs" />

@@ -30,6 +30,7 @@ TOOLS = [
                     "enum": [
                         "context",
                         "engineering",
+                        "hmi",
                         "runtime",
                         "scope",
                         "workflow",

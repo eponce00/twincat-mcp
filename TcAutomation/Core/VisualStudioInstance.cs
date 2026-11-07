@@ -105,8 +105,11 @@ namespace TcAutomation.Core
         /// </summary>
         public string SolutionFilePath => _solutionFilePath;
 
-        public VisualStudioInstance(string solutionFilePath, string tcVersion, string? forceTcVersion = null)
+        public bool HmiOnly { get; }
+
+        public VisualStudioInstance(string solutionFilePath, string tcVersion, string? forceTcVersion = null, bool hmiOnly = false)
         {
+            HmiOnly = hmiOnly;
             _solutionFilePath = solutionFilePath;
             _tcVersion = tcVersion;
             _forceTcVersion = NormalizeOverride(forceTcVersion);
@@ -148,7 +151,7 @@ namespace TcAutomation.Core
                     System.IO.Path.GetDirectoryName(_solutionFilePath) ?? "",
                     ".vs",
                     System.IO.Path.GetFileNameWithoutExtension(_solutionFilePath));
-                if (System.IO.Directory.Exists(suoDir))
+                if (!HmiOnly && System.IO.Directory.Exists(suoDir))
                 {
                     foreach (var suo in System.IO.Directory.GetFiles(suoDir, "*.suo", System.IO.SearchOption.AllDirectories))
                     {
@@ -169,6 +172,14 @@ namespace TcAutomation.Core
             LastCompilerCheckSucceeded = null;
             LastCheckedSourceRevision = null;
             SourceRevision = 0;
+
+            if (HmiOnly)
+            {
+                // The HMI command selects its exact project through the HMI API.
+                _loaded = true;
+                HideMainWindow();
+                return;
+            }
 
             // Wait for solution to load and find TwinCAT project
             // TwinCAT projects can take a while to fully load
@@ -611,7 +622,7 @@ namespace TcAutomation.Core
             try
             {
                 ConfigureDte();
-                LoadTwinCATVersion();
+                if (!HmiOnly) LoadTwinCATVersion();
             }
             catch
             {

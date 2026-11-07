@@ -9,11 +9,12 @@ from pathlib import Path
 from .backend import Backend
 from .catalog import Catalog
 from .errors import OperationError
+from .hmi import project_path, target_url
 from .jobs import Jobs
 from .lifecycle import status as process_status
 from .safety import Grants
 
-VERSION = "3.0.1"
+VERSION = "3.1.0"
 
 
 class Engine:
@@ -31,9 +32,9 @@ class Engine:
         )
         self.jobs = Jobs(root / "jobs.sqlite3", self.run)
 
-    def context_for(self, handle):
+    def context_for(self, handle, allow_invalid=False):
         ctx = self.context
-        if not ctx or ctx["handle"] != handle or ctx["invalid"]:
+        if not ctx or ctx["handle"] != handle or (ctx["invalid"] and not allow_invalid):
             raise OperationError(
                 "expired_context",
                 "Unknown or expired engineering context. Close an expired context before opening a replacement.",
@@ -77,8 +78,15 @@ class Engine:
                 return dict(
                     success=True,
                     solutionPath=ctx["solutionPath"],
-                    amsNetId=ctx["amsNetId"],
-                    plcName=ctx["plcName"],
+                    **(
+                        {
+                            "projectPath": ctx["projectPath"],
+                            "targetUrl": ctx["targetUrl"],
+                            "kind": "hmi",
+                        }
+                        if ctx.get("kind") == "hmi"
+                        else {"amsNetId": ctx["amsNetId"], "plcName": ctx["plcName"]}
+                    ),
                     valid=not ctx["invalid"],
                     workerAlive=self.backend.alive(),
                 )
@@ -103,7 +111,13 @@ class Engine:
             self.grants.check(operation, args)
         if entry["engineering"]:
             with self.lock:
-                self.context_for(args["contextHandle"])
+                ctx = self.context_for(
+                    args["contextHandle"], allow_invalid=operation == "hmi.status"
+                )
+                if operation.startswith("hmi.") != (ctx.get("kind") == "hmi"):
+                    raise OperationError(
+                        "wrong_context_kind", "Use the context type required by this operation."
+                    )
         if operation == "scope.start" and self.recording:
             raise OperationError(
                 "recording_busy", "Stop the existing recording using its handle first."
@@ -116,7 +130,7 @@ class Engine:
             )
 
     def control(self, operation, args):
-        if operation == "context.open":
+        if operation in {"context.open", "context.open_hmi"}:
             with self.lock:
                 if self.context:
                     raise OperationError(
@@ -127,6 +141,13 @@ class Engine:
                 if not path.is_absolute() or not path.is_file() or path.suffix.lower() != ".sln":
                     raise OperationError(
                         "invalid_solution", "solutionPath must name an existing absolute .sln file."
+                    )
+                if operation == "context.open_hmi":
+                    args = dict(
+                        args,
+                        projectPath=project_path(args["projectPath"]),
+                        targetUrl=target_url(args["targetUrl"]),
+                        kind="hmi",
                     )
                 handle = secrets.token_urlsafe(32)
                 self.context = dict(
@@ -139,8 +160,11 @@ class Engine:
                 return dict(
                     success=True,
                     contextHandle=handle,
-                    target=args["amsNetId"],
-                    plcName=args["plcName"],
+                    **(
+                        {"projectPath": args["projectPath"], "targetUrl": args["targetUrl"]}
+                        if operation == "context.open_hmi"
+                        else {"target": args["amsNetId"], "plcName": args["plcName"]}
+                    ),
                 )
         if operation == "context.close":
             with self.lock:
@@ -214,7 +238,11 @@ class Engine:
         entry = self.catalog.get(operation)
         with self.lock:
             context = (
-                dict(self.context_for(args["contextHandle"])) if entry["engineering"] else None
+                dict(
+                    self.context_for(args["contextHandle"], allow_invalid=operation == "hmi.status")
+                )
+                if entry["engineering"]
+                else None
             )
         try:
             checkpoint()

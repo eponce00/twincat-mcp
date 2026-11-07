@@ -21,6 +21,7 @@ namespace TcAutomation.Core
         /// </summary>
         public static readonly HashSet<string> ShellCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
+            "hmi-inspect", "hmi-preflight", "hmi-build", "hmi-publish", "hmi-status",
             "build", "info", "clean",
             "set-target", "activate", "restart", "online-change", "matching-login", "read-plc-source", "edit-plc-source",
             "list-plc-objects", "read-plc-object", "create-plc-object", "create-plc-folder",
@@ -87,6 +88,10 @@ namespace TcAutomation.Core
                         $"Step '{command}' requires Visual Studio but no shell was opened");
                 }
 
+                if (command.StartsWith("hmi-", StringComparison.OrdinalIgnoreCase))
+                    return HmiCommand.ExecuteInSession(vsInstance, command, argsElement);
+                if (vsInstance.HmiOnly)
+                    throw new InvalidOperationException("PLC operations are not allowed in an HMI context.");
                 switch (command.ToLowerInvariant())
                 {
                     case "build-symbols":

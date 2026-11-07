@@ -247,6 +247,7 @@ namespace TcAutomation.Commands
         {
             bool hasParams = paramsEl.ValueKind == JsonValueKind.Object;
             string? solutionPath = StepDispatcher.GetString(paramsEl, "solutionPath", hasParams);
+            bool hmiOnly = (StepDispatcher.GetBool(paramsEl, "hmiOnly", hasParams) ?? false);
             string? tcVersionOverride = StepDispatcher.GetString(paramsEl, "tcVersion", hasParams);
             // A blank override is absent, as in VisualStudioInstance. Otherwise
             // the shell loads the project version but the host records the blank.
@@ -264,28 +265,32 @@ namespace TcAutomation.Commands
                 return;
             }
 
-            string tcProjectPath = TcFileUtilities.FindTwinCATProjectFile(solutionPath);
-            if (string.IsNullOrEmpty(tcProjectPath))
+            string projectTcVersion = "";
+            if (!hmiOnly)
             {
-                EmitError(requestId, "No TwinCAT project (.tsproj) found in solution", sw);
-                return;
+                string tcProjectPath = TcFileUtilities.FindTwinCATProjectFile(solutionPath);
+                if (string.IsNullOrEmpty(tcProjectPath))
+                {
+                    EmitError(requestId, "No TwinCAT project (.tsproj) found in solution", sw);
+                    return;
+                }
+                projectTcVersion = TcFileUtilities.GetTcVersion(tcProjectPath);
+                if (string.IsNullOrEmpty(projectTcVersion))
+                {
+                    EmitError(requestId, "Could not determine TwinCAT version from project", sw);
+                    return;
+                }
             }
-            string projectTcVersion = TcFileUtilities.GetTcVersion(tcProjectPath);
-            if (string.IsNullOrEmpty(projectTcVersion))
-            {
-                EmitError(requestId, "Could not determine TwinCAT version from project", sw);
-                return;
-            }
-            string effectiveTcVersion = string.IsNullOrEmpty(tcVersionOverride)
-                ? projectTcVersion
-                : tcVersionOverride;
+            string effectiveTcVersion = hmiOnly ? "HMI" : (tcVersionOverride ?? projectTcVersion);
+            if (_vsInstance != null && _vsInstance.HmiOnly != hmiOnly)
+                DiscardShell(_vsInstance, "engineering context kind changed");
 
             bool openedFresh = false;
             bool reloaded = false;
 
             if (_vsInstance == null)
             {
-                OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion);
+                OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion, hmiOnly);
                 openedFresh = true;
             }
             else if (!PathsEqual(_vsInstance.SolutionFilePath, solutionPath)
@@ -310,7 +315,7 @@ namespace TcAutomation.Commands
                     // cannot change version, so replace it.
                     EmitProgress($"host: {ex.Message} Restarting the shell ...");
                     DiscardShell(_vsInstance, "version change");
-                    OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion);
+                    OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion, hmiOnly);
                     openedFresh = true;
                 }
             }
@@ -394,7 +399,7 @@ namespace TcAutomation.Commands
         /// unconfirmed, it stays listed and blocks the next launch.
         /// </summary>
         private static void OpenFreshShell(string solutionPath, string projectTcVersion, string? tcVersionOverride,
-            string effectiveTcVersion)
+            string effectiveTcVersion, bool hmiOnly = false)
         {
             // Retry any shell whose earlier termination was not confirmed.
             foreach (var stale in ListedShells())
@@ -408,7 +413,7 @@ namespace TcAutomation.Commands
 
             EmitProgress($"host: opening TwinCAT shell for {Path.GetFileName(solutionPath)} ...");
             var openSw = Stopwatch.StartNew();
-            var vs = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersionOverride)
+            var vs = new VisualStudioInstance(solutionPath, projectTcVersion, tcVersionOverride, hmiOnly)
             {
                 // Record the shell at once. The DTE wait alone takes up to 2 min,
                 // and a worker killed meanwhile must not leave an unrecorded shell.

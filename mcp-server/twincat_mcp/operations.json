@@ -703,7 +703,7 @@
         },
         "timeoutMs": {
           "type": "integer",
-          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 × timeoutMs.",
+          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 \u00d7 timeoutMs.",
           "default": 2500
         }
       },
@@ -1240,7 +1240,7 @@
         },
         "contains": {
           "type": "string",
-          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise — e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
+          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise \u2014 e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
         },
         "contextHandle": {
           "type": "string",
@@ -2499,6 +2499,190 @@
         "grantHandle",
         "newParentPath",
         "confirm"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "hmi.inspect",
+    "description": "Read HMI readiness, SDK entry point and sanitized publish profile names. No credentials or server writes.",
+    "kind": "operation",
+    "command": "hmi-inspect",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        }
+      },
+      "required": [
+        "contextHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "hmi.preflight",
+    "description": "Validate a named HMI profile against the context HTTPS target and non-destructive settings; fingerprint the source and configuration.",
+    "kind": "operation",
+    "command": "hmi-preflight",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "profileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        }
+      },
+      "required": [
+        "contextHandle",
+        "profileName"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "hmi.build",
+    "description": "Build only the selected HMI project through its native engineering API. Does not build or restart a PLC.",
+    "kind": "operation",
+    "command": "hmi-build",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "string",
+          "const": "CONFIRM"
+        }
+      },
+      "required": [
+        "contextHandle",
+        "grantHandle",
+        "confirm"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "hmi.publish",
+    "description": "Publish once through the native HMI API using a matching preflight fingerprint. Preserve server files and extension data; never retry an uncertain submission.",
+    "kind": "operation",
+    "command": "hmi-publish",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "profileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expectedFingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "string",
+          "const": "CONFIRM"
+        }
+      },
+      "required": [
+        "contextHandle",
+        "profileName",
+        "expectedFingerprint",
+        "grantHandle",
+        "confirm"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "hmi.status",
+    "description": "Read native publish status and the last attempt in this HMI context, including after an uncertain reply. Never submits a publish.",
+    "kind": "operation",
+    "command": "hmi-status",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        }
+      },
+      "required": [
+        "contextHandle"
       ],
       "additionalProperties": false
     }
