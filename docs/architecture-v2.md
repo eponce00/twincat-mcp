@@ -142,3 +142,14 @@ The native review harness adds 43 checks for single-call non-installing library
 export, no-effect preview, output preservation, batch failure semantics, strict
 values, recording limits, process leases and atomic session-record deletion.
 See [the contributor security review](contributor-security-review.md).
+
+## HMI contexts (3.1)
+
+`context.open_hmi` reserves an exact HMI project and HTTPS server URL without a
+PLC target. It uses the same exclusive context/owned COM worker, with a distinct
+HMI-only loader. The engine and native dispatcher both prevent cross-kind calls.
+`HmiCommand` calls only the installed public TE2000 automation interfaces;
+`HmiPolicy` bounds source traversal, checks profile policy and hashes inputs.
+A publish is one durable, grant-scoped mutation with a matching preflight hash.
+Uncertain submissions are never retried; `hmi.status` remains readable while
+that same worker is alive. See [HMI publishing](hmi-publishing.md).

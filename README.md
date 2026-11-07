@@ -13,16 +13,27 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 66 operation contracts; 62 are discoverable. Scope capture,
+The catalog contains 72 operation contracts; 68 are discoverable. Scope capture,
 status, stop and export are disabled pending qualification. Individual operations
 are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
 authorization is enforced by the server.
 
-The application version is **3.0.1**. See the [release notes](CHANGELOG.md) for
+The application version is **3.1.0**. See the [release notes](CHANGELOG.md) for
 changes and upgrade instructions. The supported interface consists of
 the three public tools and the [operation catalog](docs/operations.md).
+
+## HMI publishing
+
+TE2000 HMI Engineering is optional. With it installed, use `context.open_hmi`
+with an exact `.hmiproj` and HTTPS server URL, then `hmi.inspect`, `hmi.build`,
+`hmi.preflight`, `hmi.publish` and `hmi.status`. Publication uses Beckhoff's native
+HMI automation API and saved local credentials. It does not deploy or restart a PLC,
+copy files into a live web directory, or use screen automation.
+
+See [HMI publishing](docs/hmi-publishing.md) for grants, fingerprints, supported
+profiles, completion receipts and qualification.
 
 ## Install
 

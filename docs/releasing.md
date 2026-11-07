@@ -42,3 +42,8 @@ For native artifacts, `scripts/publish.ps1` builds and copies the executable
 and its dependencies to `TcAutomation/publish`. This script prepares local
 artifacts only. Keep DLLs and configuration files together; Python server
 sources and pinned requirements must also be available to the installation.
+
+For releases with HMI changes, qualify the stdio/native path on an explicitly
+approved server using `scripts/qualify-hmi.py`; see [HMI publishing](hmi-publishing.md).
+Verify the reported installed version over a fresh stdio connection after updating.
+Existing client processes retain the version they loaded until they reconnect.

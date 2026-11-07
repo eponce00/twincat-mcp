@@ -116,3 +116,17 @@ describe supported behavior and limits.
 | `workflow.sequence` | Run up to 32 validated catalog operations in order, stopping on first failure. Each step includes its handles. No rollback, nesting or replay. | `steps` | No | Job |
 | `workflow.test` | Build, configure the test task and boot project, optionally disable I/O, activate, restart and poll TcUnit results on the context target. Requires a grant even for local targets. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
 | `workflow.wait_state` | Poll runtime state until expectedState or timeout; returns final observation and attempt count. | `amsNetId`, `expectedState` | No | Job |
+
+## HMI
+
+| Operation | Required inputs | Grant |
+| --- | --- | --- |
+| `context.open_hmi` | `solutionPath`, `projectPath`, `targetUrl` | No |
+| `hmi.inspect` | `contextHandle` | No |
+| `hmi.build` | `contextHandle`, `grantHandle`, `confirm` | Context |
+| `hmi.preflight` | `contextHandle`, `profileName` | No |
+| `hmi.publish` | `contextHandle`, `grantHandle`, `confirm`, `profileName`, `expectedFingerprint` | Context |
+| `hmi.status` | `contextHandle` | No |
+
+See [the HMI workflow](hmi-publishing.md) for native SDK prerequisites, preserved
+server data, completion semantics, deadlines and supported source layout.
