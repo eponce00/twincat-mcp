@@ -1,0 +1,4 @@
+<Project>
+  <!-- The no-VS build of the test harness needs the same compiler and reference assemblies. -->
+  <Import Project="..\TcAutomation\Directory.Build.props" />
+</Project>

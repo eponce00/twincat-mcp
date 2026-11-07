@@ -1,0 +1,27 @@
+<Project>
+  <!--
+    Opt-in build for machines with TcXaeShell and no Visual Studio. Enabled by
+    /p:NoVisualStudioBuild=true (scripts\build-no-vs.ps1). A no-op otherwise.
+    NuGet supplies what TcXaeShell's MSBuild 15.9 lacks:
+      - Microsoft.Net.Compilers 3.4.0: Roslyn with C# 8.
+      - .NET 4.7.2 reference assemblies, so no targeting pack is needed.
+      - EnvDTE/EnvDTE80 PIAs, so no TlbImp or Windows SDK is needed.
+    TCatSysManagerLib comes from gen-interop.ps1 (see Directory.Build.targets).
+  -->
+  <PropertyGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <!-- Its own restore output, so a later Visual Studio build never reuses it. -->
+    <BaseIntermediateOutputPath>obj\no-vs\</BaseIntermediateOutputPath>
+    <!-- Otherwise Microsoft.Net.Compilers 3.4.0 calls an MSBuild 16 item function (MSB4184). -->
+    <DiscoverEditorConfigFiles>false</DiscoverEditorConfigFiles>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Net.Compilers" Version="3.4.0">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="envdte" Version="17.13.40008" />
+    <PackageReference Include="envdte80" Version="17.13.40008" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,4 @@
+<Project>
+  <!-- Same compiler package as the worker, so the same override. Nothing queries the harness after its build today. -->
+  <Import Project="..\TcAutomation\NoVsCompilerCheck.targets" Condition="'$(NoVisualStudioBuild)' == 'true'" />
+</Project>

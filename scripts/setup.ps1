@@ -1,7 +1,15 @@
 # First-time setup script
-# Usage: .\scripts\setup.ps1
+# Usage: .\scripts\setup.ps1 [-NoVisualStudio [-MsBuildPath <MSBuild.exe>]]
+
+param(
+    # Build with TcXaeShell only, through build-no-vs.ps1.
+    [switch]$NoVisualStudio,
+    # Passed to build-no-vs.ps1 when TcXaeShell is not in its default folder.
+    [string]$MsBuildPath
+)
 
 $ErrorActionPreference = "Stop"
+if ($MsBuildPath -and -not $NoVisualStudio) { throw "-MsBuildPath applies only with -NoVisualStudio." }
 
 Write-Host "=== TwinCAT MCP Server Setup ===" -ForegroundColor Cyan
 Write-Host ""
@@ -9,40 +17,44 @@ Write-Host ""
 # Check prerequisites
 Write-Host "Checking prerequisites..." -ForegroundColor Yellow
 
-# Check Visual Studio / MSBuild
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (Test-Path $vswhere) {
-    $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-    if (-not $vsPath) {
-        $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath
-    }
-    if ($vsPath) {
-        $msbuild = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-        if (Test-Path $msbuild) {
-            Write-Host "✅ MSBuild found: $msbuild" -ForegroundColor Green
+if ($NoVisualStudio) {
+    Write-Host "Skipping Visual Studio and targeting pack checks (-NoVisualStudio)" -ForegroundColor Gray
+} else {
+    # Check Visual Studio / MSBuild
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+        if (-not $vsPath) {
+            $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath
+        }
+        if ($vsPath) {
+            $msbuild = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+            if (Test-Path $msbuild) {
+                Write-Host "✅ MSBuild found: $msbuild" -ForegroundColor Green
+            } else {
+                Write-Host "❌ MSBuild.exe not found in VS installation" -ForegroundColor Red
+                exit 1
+            }
         } else {
-            Write-Host "❌ MSBuild.exe not found in VS installation" -ForegroundColor Red
+            Write-Host "❌ Visual Studio with MSBuild not found" -ForegroundColor Red
+            Write-Host "   Install Visual Studio 2022 (or newer) with '.NET desktop development' workload" -ForegroundColor Gray
             exit 1
         }
     } else {
-        Write-Host "❌ Visual Studio with MSBuild not found" -ForegroundColor Red
-        Write-Host "   Install Visual Studio 2022 (or newer) with '.NET desktop development' workload" -ForegroundColor Gray
+        Write-Host "❌ Visual Studio Installer not found" -ForegroundColor Red
+        Write-Host "   Install Visual Studio 2022 Community (free) or newer" -ForegroundColor Gray
         exit 1
     }
-} else {
-    Write-Host "❌ Visual Studio Installer not found" -ForegroundColor Red
-    Write-Host "   Install Visual Studio 2022 Community (free) or newer" -ForegroundColor Gray
-    exit 1
-}
 
-# Check .NET Framework targeting pack
-$targetingPackPath = "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2"
-if (Test-Path $targetingPackPath) {
-    Write-Host "✅ .NET Framework 4.7.2 Targeting Pack installed" -ForegroundColor Green
-} else {
-    Write-Host "❌ .NET Framework 4.7.2 Targeting Pack not found" -ForegroundColor Red
-    Write-Host "   Download from: https://dotnet.microsoft.com/download/dotnet-framework" -ForegroundColor Gray
-    exit 1
+    # Check .NET Framework targeting pack
+    $targetingPackPath = "${env:ProgramFiles(x86)}\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2"
+    if (Test-Path $targetingPackPath) {
+        Write-Host "✅ .NET Framework 4.7.2 Targeting Pack installed" -ForegroundColor Green
+    } else {
+        Write-Host "❌ .NET Framework 4.7.2 Targeting Pack not found" -ForegroundColor Red
+        Write-Host "   Download from: https://dotnet.microsoft.com/download/dotnet-framework" -ForegroundColor Gray
+        exit 1
+    }
 }
 
 # Check Python
@@ -83,9 +95,15 @@ if ($tcXaeMgmt) {
 Write-Host ""
 Write-Host "Building TcAutomation..." -ForegroundColor Yellow
 
-# Build using MSBuild (NOT dotnet - COM references require MSBuild.exe)
-$projectPath = Join-Path $PSScriptRoot "..\TcAutomation\TcAutomation.csproj"
-& $msbuild $projectPath /p:Configuration=Release /p:Platform=x64 /restore /v:minimal
+if ($NoVisualStudio) {
+    $noVsArgs = @{}
+    if ($MsBuildPath) { $noVsArgs.MsBuildPath = $MsBuildPath }
+    & (Join-Path $PSScriptRoot "build-no-vs.ps1") @noVsArgs
+} else {
+    # Build using MSBuild (NOT dotnet - COM references require MSBuild.exe)
+    $projectPath = Join-Path $PSScriptRoot "..\TcAutomation\TcAutomation.csproj"
+    & $msbuild $projectPath /p:Configuration=Release /p:Platform=x64 /restore /v:minimal
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Build failed" -ForegroundColor Red

@@ -2,6 +2,7 @@
 TcAutomation/bin/
 TcAutomation/obj/
 TcAutomation/publish/
+TcAutomation/interop/
 TcAutomation.Tests/bin/
 TcAutomation.Tests/obj/
 
