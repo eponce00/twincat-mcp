@@ -1,0 +1,9 @@
+<Project>
+  <!--
+    Imported only with /p:NoVisualStudioBuild=true. Replaces the MSBuild 16.3 check of
+    Microsoft.Net.Compilers 3.4.0, which the package attributes to editorconfig support.
+    Directory.Build.props disables that support. MSBuild 15.9 fails the check when
+    another project queries this one after its build.
+  -->
+  <Target Name="ValidateMSBuildToolsVersion" />
+</Project>

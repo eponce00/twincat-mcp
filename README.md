@@ -39,6 +39,7 @@ profiles, completion receipts and qualification.
 
 Requires Windows, Python 3.10+, TwinCAT XAE, Visual Studio MSBuild, the .NET
 Framework 4.7.2 targeting pack and Beckhoff's `TcXaeMgmt` PowerShell module.
+Without Visual Studio, see [Build without Visual Studio](#build-without-visual-studio).
 Optional Scope configuration creation requires TE13xx and a worker built with
 Scope support. Scope capture/export is disabled; use `runtime.record` for bounded
 ADS recording without TE13xx.
@@ -64,6 +65,29 @@ For any stdio MCP client, use absolute paths:
 
 Use `install-mcp.ps1 -Workspace` to merge the entry into the current workspace's
 VS Code configuration. Other server entries are preserved.
+
+### Build without Visual Studio
+
+On a machine with TwinCAT XAE (TcXaeShell) and no Visual Studio, run setup with
+`-NoVisualStudio`. The .NET Framework 4.7.2 targeting pack is not needed then.
+
+```powershell
+.\scripts\setup.ps1 -NoVisualStudio
+.\scripts\install-mcp.ps1
+```
+
+This builds with the MSBuild inside TcXaeShell through `scripts/build-no-vs.ps1`.
+NuGet supplies the C# compiler, the .NET Framework 4.7.2 reference assemblies and
+the EnvDTE interop assemblies. `TcAutomation/gen-interop.ps1` generates the
+`TCatSysManagerLib` interop from TwinCAT's type library, so no Windows SDK is
+needed. `build-no-vs.ps1` starts Windows PowerShell 5.1 for that step.
+
+The overlay (the `Directory.Build.*` files and `TcAutomation/NoVsCompilerCheck.targets`)
+is active only with `/p:NoVisualStudioBuild=true`. It keeps its restore and
+intermediate files under `obj/no-vs`. This path compiles C# 8 at most. If
+TcXaeShell is not in its default folder, add `-MsBuildPath <MSBuild.exe>` to
+`setup.ps1` or `test-plc-objects.ps1`. Run the native tests with
+`.\scripts\test-plc-objects.ps1 -NoVisualStudio`.
 
 ## Discover and execute
 

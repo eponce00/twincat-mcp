@@ -1,0 +1,26 @@
+<Project>
+  <!--
+    Opt-in no-VS build (see Directory.Build.props). Without a Windows SDK,
+    ResolveComReference cannot run TlbImp, so the COM references are swapped for
+    the NuGet PIAs and interop\Interop.TCatSysManagerLib.dll from gen-interop.ps1.
+  -->
+  <ItemGroup Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <!-- Remove by identity. A new COMReference then fails loudly instead of vanishing. -->
+    <COMReference Remove="TCatSysManagerLib" />
+    <COMReference Remove="EnvDTE" />
+    <COMReference Remove="EnvDTE80" />
+    <Reference Include="Interop.TCatSysManagerLib">
+      <HintPath>$(MSBuildThisFileDirectory)interop\Interop.TCatSysManagerLib.dll</HintPath>
+      <Private>true</Private>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+    </Reference>
+  </ItemGroup>
+
+  <Import Project="NoVsCompilerCheck.targets" Condition="'$(NoVisualStudioBuild)' == 'true'" />
+
+  <Target Name="EnsureTCatInterop" BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(NoVisualStudioBuild)' == 'true'">
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)interop\Interop.TCatSysManagerLib.dll')"
+           Text="Interop.TCatSysManagerLib.dll not found. Run TcAutomation\gen-interop.ps1 under Windows PowerShell 5.1, or build via scripts\build-no-vs.ps1." />
+  </Target>
+</Project>
