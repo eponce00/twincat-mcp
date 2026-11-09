@@ -2686,5 +2686,58 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "id": "hmi.refresh_mappings",
+    "description": "Refresh ADS PLC symbol mappings of the context HMI project from the live PLC, as the designer's Refresh mapping does. Checks targets over ADS first, skips missing ones, preserves mapping settings and restores a mapping whose remap fails. Never retried.",
+    "kind": "operation",
+    "command": "hmi-refresh-mappings",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "available": false,
+    "unavailableReason": "Disabled: refreshing stale schemas and definitions from a live PLC has not been qualified.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "symbols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "string",
+          "const": "CONFIRM"
+        }
+      },
+      "required": [
+        "contextHandle",
+        "grantHandle",
+        "confirm"
+      ],
+      "additionalProperties": false
+    }
   }
 ]

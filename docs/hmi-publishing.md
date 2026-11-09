@@ -22,6 +22,7 @@ operations cannot run in a PLC context. Close it with `context.close`.
 | `hmi.preflight` | Validate a named profile and return a source/config/toolchain fingerprint. |
 | `hmi.publish` | Require the matching fingerprint and a scoped grant; call the native publisher once. |
 | `hmi.status` | Read native progress/result and this context's last submission identity. Never republishes. |
+| `hmi.refresh_mappings` | Refresh ADS PLC symbol mappings from the live PLC. Requires a context grant. Disabled until qualified. |
 
 Use the existing three MCP tools: search, describe and execute. These are catalog
 operations, not new public tools. Category `hmi` is available in search.
@@ -85,6 +86,41 @@ and durable receipt before starting a new operation.
 
 Vendor exception text can contain sensitive data. Results identify the failed
 stage instead of returning raw exception text or credential-bearing diagnostics.
+
+## Mapping refresh
+
+A changed PLC type leaves a stale cached `SCHEMA` in `TcHmiSrv.Config::SYMBOLS`, or a stale
+struct in `DEFINITIONS`. The designer's *Refresh mapping* unmaps each selected symbol and maps
+it again with `AddSymbol`. `hmi.refresh_mappings` does the same through the public SDK, one
+symbol at a time. `ITcHmiProject.RefreshSymbols()` refreshes data types only and is not used.
+
+1. Select directly mapped ADS PLC symbols (`MAPPING` of the form `PLC1::GVL::x`). Extension
+   functions, TMC and sub-symbol mappings are skipped. A mapping with an unparsed target or a
+   runtime not enabled in the ADS configuration is skipped and named. `symbols` limits the selection.
+2. Before any HMI call, connect to each runtime named in the domain's
+   `*.Config.default.json` and read symbol metadata, never values. A missing target is skipped
+   and reported. An unreachable runtime, an unverified target or the `timeoutSeconds` deadline
+   stops the operation.
+3. Per symbol, call `UnMapSymbol` (never removing historized data) and confirm the entry is
+   gone, then call `MapSymbol`. Of `ACCESS`, `HIDDEN`, `OPTIONS`, `CUSTOMERDATA`, `DYNAMIC` and
+   `USEMAPPING`, set each one the original entry had back to its original value. If `MapSymbol`
+   fails, write the original entry back and stop. The deadline is checked before each symbol.
+4. Read every outcome back from the persisted configuration, on success and on a stop. A
+   touched symbol must match its expected entry, once, and a remapped entry must keep its planned
+   `DOMAIN` and `MAPPING`. Any other changed symbol or user group, a duplicated definition, or a
+   section present as a non-object fails the operation. On a
+   stop, so does a definition changed since the last verified remap. A touched entry that changed
+   after its verification returns `outcomeUnknown`. A run with nothing to refresh fails with
+   `hmi_mapping_nothing_selected`.
+
+A failed restore or an interrupted call returns `outcomeUnknown` and invalidates the context.
+The result names that symbol and whether its entry was restored. A refresh changes the
+fingerprint. Run `hmi.build` and `hmi.preflight` again before publishing.
+
+The operation is disabled until a live qualification shows that a remap corrects a stale
+`SCHEMA` and a stale referenced `DEFINITIONS` entry. Measured on TE2000 1.12.762.57 with the
+PLC unreachable: `UnMapSymbol` persists at once, a failed `MapSymbol` leaves the mapping
+deleted, and writing the original entry restores it exactly.
 
 ## Qualification
 

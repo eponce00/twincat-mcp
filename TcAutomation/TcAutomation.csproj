@@ -119,6 +119,7 @@
     <Compile Include="Core\ActivationWait.cs" />
     <Compile Include="Commands\HmiCommand.cs" />
     <Compile Include="Core\HmiPolicy.cs" />
+    <Compile Include="Core\HmiMappings.cs" />
     <Compile Include="Commands\BuildCommand.cs" />
     <Compile Include="Commands\InfoCommand.cs" />
     <Compile Include="Commands\CleanCommand.cs" />

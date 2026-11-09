@@ -127,6 +127,7 @@ describe supported behavior and limits.
 | `hmi.preflight` | `contextHandle`, `profileName` | No |
 | `hmi.publish` | `contextHandle`, `grantHandle`, `confirm`, `profileName`, `expectedFingerprint` | Context |
 | `hmi.status` | `contextHandle` | No |
+| `hmi.refresh_mappings` | `contextHandle`, `grantHandle`, `confirm`; optional `symbols` | Context |
 
 See [the HMI workflow](hmi-publishing.md) for native SDK prerequisites, preserved
 server data, completion semantics, deadlines and supported source layout.

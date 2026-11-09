@@ -173,6 +173,98 @@ class HmiTests(unittest.TestCase):
         self.assertFalse(catalog.get("hmi.preflight")["requiresGrant"])
 
 
+class HmiRefreshTests(unittest.TestCase):
+    """hmi.refresh_mappings stays disabled until its live qualification passes."""
+
+    setUp, tearDown, submit = HmiTests.setUp, HmiTests.tearDown, HmiTests.submit
+    context, grant = HmiTests.context, HmiTests.grant
+
+    def enable(self):
+        entry = self.engine.catalog.entries["hmi.refresh_mappings"]
+        entry.pop("available")
+        entry.pop("unavailableReason")
+
+    def refresh_args(self, ctx, op="hmi.refresh_mappings", **extra):
+        return dict(contextHandle=ctx, grantHandle=self.grant(ctx, op), confirm="CONFIRM", **extra)
+
+    def test_disabled_until_qualified(self):
+        ctx = self.context()
+        catalog = self.engine.catalog
+        self.assertNotIn(
+            "hmi.refresh_mappings",
+            [m["operation"] for m in catalog.search("refresh mappings", category="hmi")["matches"]],
+        )
+        self.assertFalse(catalog.describe(["hmi.refresh_mappings"])["operations"][0]["available"])
+        for op, args in [
+            (
+                "safety.grant",
+                dict(contextHandle=ctx, operations=["hmi.refresh_mappings"], reason="x"),
+            ),
+            ("hmi.refresh_mappings", dict(contextHandle=ctx, grantHandle="g", confirm="CONFIRM")),
+        ]:
+            try:
+                code = self.submit(op, args)[1]["code"]
+            except OperationError as err:
+                code = err.code
+            self.assertEqual("unsupported_integration", code)
+        self.assertFalse(self.backend.calls)
+
+    def test_requires_its_own_grant(self):
+        self.enable()
+        ctx = self.context()
+        for other in ["hmi.build", "hmi.publish"]:
+            args = self.refresh_args(ctx, other)
+            self.assertEqual("failed", self.submit("hmi.refresh_mappings", args)[0]["state"])
+        self.assertFalse(self.backend.calls)
+        receipt = self.submit("hmi.refresh_mappings", self.refresh_args(ctx))[0]
+        self.assertEqual("succeeded", receipt["state"])
+        self.assertEqual("hmi.refresh_mappings", self.backend.calls[-1][0])
+
+    def test_plc_context_refused(self):
+        self.enable()
+        ctx = self.submit(
+            "context.open",
+            dict(solutionPath=str(self.solution), amsNetId="1.2.3.4.1.1", plcName="PLC"),
+        )[1]["contextHandle"]
+        receipt, result = self.submit("hmi.refresh_mappings", self.refresh_args(ctx))
+        self.assertEqual("failed", receipt["state"])
+        self.assertEqual("wrong_context_kind", result["code"])
+        self.assertFalse(self.backend.calls)
+
+    def test_symbol_list_bounds(self):
+        self.enable()
+        ctx = self.context()
+        for symbols in [
+            [],
+            ["a", "a"],
+            [""],
+            ["x" * 513],
+            "PLC1.GVL.x",
+            list(map(str, range(2001))),
+        ]:
+            with self.assertRaises(OperationError):
+                self.engine.execute(
+                    "hmi.refresh_mappings", self.refresh_args(ctx, symbols=symbols), "bad-symbols"
+                )
+        self.assertFalse(self.backend.calls)
+
+    def test_uncertain_refresh_invalidates_context_and_replays(self):
+        self.enable()
+        ctx = self.context()
+        args = self.refresh_args(ctx, symbols=["PLC1.GVL.x"])
+        self.backend.result = dict(success=False, outcomeUnknown=True, symbol="PLC1.GVL.x")
+        first = self.submit("hmi.refresh_mappings", args, "refresh-once")
+        second = self.submit("hmi.refresh_mappings", args, "refresh-once")
+        self.assertEqual(first[0]["jobHandle"], second[0]["jobHandle"])
+        self.assertEqual(1, len(self.backend.calls))
+        self.assertEqual(["PLC1.GVL.x"], self.backend.calls[0][1]["symbols"])
+        self.assertEqual("failed", self.submit("hmi.refresh_mappings", args)[0]["state"])
+        self.assertEqual("failed", self.submit("hmi.inspect", dict(contextHandle=ctx))[0]["state"])
+        self.backend.result = dict(success=True, isPublishing=False)
+        self.assertTrue(self.submit("hmi.status", dict(contextHandle=ctx))[1]["success"])
+        self.assertEqual(2, len(self.backend.calls))
+
+
 class HmiBackendTests(unittest.TestCase):
     def test_hmi_context_is_forwarded_without_plc_target(self):
         with patch(
@@ -195,3 +287,28 @@ class HmiBackendTests(unittest.TestCase):
             )
             self.assertTrue(run.call_args.kwargs["hmi_only"])
             self.assertNotIn("amsNetId", run.call_args.args[1])
+
+    def test_refresh_is_forwarded_as_hmi_step(self):
+        with patch(
+            "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
+        ) as run:
+            Backend().run(
+                Catalog().get("hmi.refresh_mappings"),
+                {"contextHandle": "ctx", "symbols": ["PLC1.GVL.x"]},
+                {
+                    "kind": "hmi",
+                    "solutionPath": "Panel.sln",
+                    "projectPath": "Panel.hmiproj",
+                    "targetUrl": "https://host/",
+                },
+            )
+            self.assertEqual("hmi-refresh-mappings", run.call_args.args[0])
+            self.assertEqual(
+                {
+                    "projectPath": "Panel.hmiproj",
+                    "targetUrl": "https://host/",
+                    "symbols": ["PLC1.GVL.x"],
+                },
+                run.call_args.args[1],
+            )
+            self.assertTrue(run.call_args.kwargs["hmi_only"])

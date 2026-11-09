@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `hmi.refresh_mappings` refreshes ADS PLC symbol mappings, as the designer's
+  *Refresh mapping* does. It checks targets over ADS first, preserves mapping
+  settings and restores a mapping whose remap fails. Disabled until its live
+  qualification passes.
+
 ## 3.1.0 — 2026-11-07
 
 ### Added

@@ -240,6 +240,7 @@ class ShellHost:
                 "hmi-build",
                 "hmi-publish",
                 "hmi-status",
+                "hmi-refresh-mappings",
                 "build",
                 "build-symbols",
                 "info",
