@@ -2695,8 +2695,6 @@
     "engineering": true,
     "requiresGrant": true,
     "readOnly": false,
-    "available": false,
-    "unavailableReason": "Disabled: refreshing stale schemas and definitions from a live PLC has not been qualified.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -22,7 +22,7 @@ operations cannot run in a PLC context. Close it with `context.close`.
 | `hmi.preflight` | Validate a named profile and return a source/config/toolchain fingerprint. |
 | `hmi.publish` | Require the matching fingerprint and a scoped grant; call the native publisher once. |
 | `hmi.status` | Read native progress/result and this context's last submission identity. Never republishes. |
-| `hmi.refresh_mappings` | Refresh ADS PLC symbol mappings from the live PLC. Requires a context grant. Disabled until qualified. |
+| `hmi.refresh_mappings` | Refresh ADS PLC symbol mappings from the live PLC. Requires a context grant. |
 
 Use the existing three MCP tools: search, describe and execute. These are catalog
 operations, not new public tools. Category `hmi` is available in search.
@@ -117,10 +117,25 @@ A failed restore or an interrupted call returns `outcomeUnknown` and invalidates
 The result names that symbol and whether its entry was restored. A refresh changes the
 fingerprint. Run `hmi.build` and `hmi.preflight` again before publishing.
 
-The operation is disabled until a live qualification shows that a remap corrects a stale
-`SCHEMA` and a stale referenced `DEFINITIONS` entry. Measured on TE2000 1.12.762.57 with the
-PLC unreachable: `UnMapSymbol` persists at once, a failed `MapSymbol` leaves the mapping
-deleted, and writing the original entry restores it exactly.
+Measured on TE2000 1.12.762.57, on a scratch project copy with its PLC in Run:
+
+- A scalar mapping seeded with a wrong cached `SCHEMA` got the PLC type back. Its seeded
+  `ACCESS`, `HIDDEN` and `OPTIONS` values and its user-group reference stayed.
+- A struct definition seeded with a missing property got it back and matched the original.
+- A mapping to a missing PLC symbol was skipped as `target_missing` and left unchanged.
+- A refresh without `symbols` remapped 109 mappings in 19.6 s and skipped only the missing
+  target. Besides the seeded struct, 81 definitions changed. In 73, only generated function
+  names changed. Six were new types and two had changed. Every checked change matched the
+  current PLC source.
+- The refreshed configuration stayed semantically identical through a reopen and an `hmi.build`.
+- After a refresh, `hmi.preflight` refused the only profile with `hmi_target_mismatch`, as
+  designed.
+
+Not tested: a passing `hmi.preflight` and `hmi.publish` after a refresh, because no licensed
+TF2000 server was available.
+
+Measured with the PLC unreachable, `UnMapSymbol` persists at once. A failed `MapSymbol` leaves
+the mapping deleted, and writing the original entry restores it exactly.
 
 ## Qualification
 

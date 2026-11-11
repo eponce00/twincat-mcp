@@ -167,50 +167,30 @@ class HmiTests(unittest.TestCase):
 
     def test_hmi_catalog_is_discoverable(self):
         catalog = self.engine.catalog
-        self.assertEqual(5, len(catalog.search("", category="hmi")["matches"]))
+        self.assertEqual(6, len(catalog.search("", category="hmi")["matches"]))
         self.assertIn("context.open_hmi", catalog.get("hmi.publish")["prerequisites"][0])
         self.assertTrue(catalog.get("hmi.build")["requiresGrant"])
         self.assertFalse(catalog.get("hmi.preflight")["requiresGrant"])
 
 
 class HmiRefreshTests(unittest.TestCase):
-    """hmi.refresh_mappings stays disabled until its live qualification passes."""
-
     setUp, tearDown, submit = HmiTests.setUp, HmiTests.tearDown, HmiTests.submit
     context, grant = HmiTests.context, HmiTests.grant
-
-    def enable(self):
-        entry = self.engine.catalog.entries["hmi.refresh_mappings"]
-        entry.pop("available")
-        entry.pop("unavailableReason")
 
     def refresh_args(self, ctx, op="hmi.refresh_mappings", **extra):
         return dict(contextHandle=ctx, grantHandle=self.grant(ctx, op), confirm="CONFIRM", **extra)
 
-    def test_disabled_until_qualified(self):
-        ctx = self.context()
+    def test_discoverable(self):
         catalog = self.engine.catalog
-        self.assertNotIn(
+        self.assertIn(
             "hmi.refresh_mappings",
             [m["operation"] for m in catalog.search("refresh mappings", category="hmi")["matches"]],
         )
-        self.assertFalse(catalog.describe(["hmi.refresh_mappings"])["operations"][0]["available"])
-        for op, args in [
-            (
-                "safety.grant",
-                dict(contextHandle=ctx, operations=["hmi.refresh_mappings"], reason="x"),
-            ),
-            ("hmi.refresh_mappings", dict(contextHandle=ctx, grantHandle="g", confirm="CONFIRM")),
-        ]:
-            try:
-                code = self.submit(op, args)[1]["code"]
-            except OperationError as err:
-                code = err.code
-            self.assertEqual("unsupported_integration", code)
-        self.assertFalse(self.backend.calls)
+        entry = catalog.describe(["hmi.refresh_mappings"])["operations"][0]
+        self.assertNotIn("available", entry)
+        self.assertTrue(entry["requiresGrant"])
 
     def test_requires_its_own_grant(self):
-        self.enable()
         ctx = self.context()
         for other in ["hmi.build", "hmi.publish"]:
             args = self.refresh_args(ctx, other)
@@ -221,7 +201,6 @@ class HmiRefreshTests(unittest.TestCase):
         self.assertEqual("hmi.refresh_mappings", self.backend.calls[-1][0])
 
     def test_plc_context_refused(self):
-        self.enable()
         ctx = self.submit(
             "context.open",
             dict(solutionPath=str(self.solution), amsNetId="1.2.3.4.1.1", plcName="PLC"),
@@ -232,7 +211,6 @@ class HmiRefreshTests(unittest.TestCase):
         self.assertFalse(self.backend.calls)
 
     def test_symbol_list_bounds(self):
-        self.enable()
         ctx = self.context()
         for symbols in [
             [],
@@ -249,7 +227,6 @@ class HmiRefreshTests(unittest.TestCase):
         self.assertFalse(self.backend.calls)
 
     def test_uncertain_refresh_invalidates_context_and_replays(self):
-        self.enable()
         ctx = self.context()
         args = self.refresh_args(ctx, symbols=["PLC1.GVL.x"])
         self.backend.result = dict(success=False, outcomeUnknown=True, symbol="PLC1.GVL.x")

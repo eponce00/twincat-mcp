@@ -107,7 +107,7 @@ class ReviewTests(unittest.TestCase):
         self.assertFalse(catalog.describe(["scope.start"])["operations"][0]["available"])
         status = self.engine.execute("system.status", {})
         self.assertEqual(
-            ["hmi.refresh_mappings", "scope.export", "scope.start", "scope.status", "scope.stop"],
+            ["scope.export", "scope.start", "scope.status", "scope.stop"],
             status["unavailableOperations"],
         )
 

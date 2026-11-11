@@ -6,8 +6,8 @@
 
 - `hmi.refresh_mappings` refreshes ADS PLC symbol mappings, as the designer's
   *Refresh mapping* does. It checks targets over ADS first, preserves mapping
-  settings and restores a mapping whose remap fails. Disabled until its live
-  qualification passes.
+  settings and restores a mapping whose remap fails. The catalog now has 73
+  entries (69 discoverable).
 
 ## 3.1.0 — 2026-11-07
 

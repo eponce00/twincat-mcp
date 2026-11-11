@@ -13,8 +13,8 @@ The server targets MCP **2026-07-28** using the official Python SDK **2.2.0**.
 | `twincat_describe` | Read full schemas, prerequisites and examples for up to five operation IDs. |
 | `twincat_execute` | Validate and execute an operation, or inspect/cancel an existing job. |
 
-The catalog contains 73 operation contracts; 68 are discoverable. Scope capture,
-status, stop and export, and HMI mapping refresh, are disabled pending qualification. Individual operations
+The catalog contains 73 operation contracts; 69 are discoverable. Scope capture,
+status, stop and export are disabled pending qualification. Individual operations
 are **not separate MCP tools**.
 Search does not dynamically register tools or change `tools/list`. The public execute
 tool is conservatively annotated as potentially destructive; operation-specific
