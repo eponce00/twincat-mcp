@@ -128,11 +128,12 @@ Measured on TE2000 1.12.762.57, on a scratch project copy with its PLC in Run:
   names changed. Six were new types and two had changed. Every checked change matched the
   current PLC source.
 - The refreshed configuration stayed semantically identical through a reopen and an `hmi.build`.
-- After a refresh, `hmi.preflight` refused the only profile with `hmi_target_mismatch`, as
-  designed.
-
-Not tested: a passing `hmi.preflight` and `hmi.publish` after a refresh, because no licensed
-TF2000 server was available.
+- On an unseeded copy, a refresh, `hmi.build`, `hmi.preflight` and `hmi.publish` to a licensed
+  remote TF2000 server succeeded. The publish took 52.5 s, and `hmi.status` reported
+  `lastResult: true`.
+- The profile file changed between the end of `hmi.preflight` and the end of the publish. It
+  gained `socketTimeout`, and its port changed from a string to a number. No other project file
+  outside `bin`, `obj` and `.vs` changed. The publish reported `sourceChangedDuringPublish: true`.
 
 Measured with the PLC unreachable, `UnMapSymbol` persists at once. A failed `MapSymbol` leaves
 the mapping deleted, and writing the original entry restores it exactly.
