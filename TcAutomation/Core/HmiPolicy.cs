@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace TcAutomation.Core
@@ -12,6 +13,31 @@ namespace TcAutomation.Core
     /// <summary>Pure HMI publish policy, shared by native commands and offline tests.</summary>
     public static class HmiPolicy
     {
+        static readonly Regex EngineeringPort = new Regex(@"<(HmiCommunicationServerPort|HmiCommunicationServerAuthPort)>\d+</\1>");
+        static readonly Regex SolutionHmiProject = new Regex(@"""([^""]+\.hmiproj)""", RegexOptions.IgnoreCase);
+
+        // One char per byte, so no byte change can hide in a decoding. UTF-16 never matches: no restore.
+        static readonly Encoding Bytes = Encoding.GetEncoding(28591);
+
+        /// <summary>True when the two files differ, and only in engineering port values.</summary>
+        public static bool OnlyEngineeringPortsChanged(byte[] original, byte[] current)
+        {
+            string a = Bytes.GetString(original), b = Bytes.GetString(current);
+            return !string.Equals(a, b, StringComparison.Ordinal)
+                && string.Equals(MaskPorts(a), MaskPorts(b), StringComparison.Ordinal);
+        }
+
+        static string MaskPorts(string text) => EngineeringPort.Replace(text, "<$1>#</$1>");
+
+        /// <summary>Full paths of the .hmiproj files a solution names.</summary>
+        public static string[] HmiProjects(string solutionPath)
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(solutionPath));
+            return SolutionHmiProject.Matches(File.ReadAllText(solutionPath)).Cast<Match>()
+                .Select(m => Path.GetFullPath(Path.Combine(directory, m.Groups[1].Value)))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
         public static string Target(string value)
         {
             if (string.IsNullOrWhiteSpace(value) || value.Any(char.IsWhiteSpace) || value.Any(char.IsControl))

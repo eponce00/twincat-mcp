@@ -165,6 +165,7 @@ namespace TcAutomation.Core
                 Console.Error.WriteLine($"[DEBUG] .suo cleanup failed (non-fatal): {ex.Message}");
             }
 
+            if (HmiOnly) SnapshotHmiProjects();
             _solution = _dte.Solution;
             _solution.Open(_solutionFilePath);
             LastBuildArtifacts.Clear();
@@ -413,6 +414,58 @@ namespace TcAutomation.Core
         /// </summary>
         private const int TeardownTimeoutMs = 30000;
 
+        // HMI-only: each .hmiproj as it was before the shell opened the solution.
+        private readonly Dictionary<string, byte[]> _hmiProjectsAtOpen =
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+
+        private void SnapshotHmiProjects()
+        {
+            lock (_hmiProjectsAtOpen)
+            {
+                _hmiProjectsAtOpen.Clear();
+                try
+                {
+                    foreach (var path in HmiPolicy.HmiProjects(_solutionFilePath))
+                        if (File.Exists(path)) _hmiProjectsAtOpen[path] = File.ReadAllBytes(path);
+                }
+                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] .hmiproj snapshot failed (non-fatal): {ex.Message}"); }
+            }
+        }
+
+        /// <summary>
+        /// Measured (TE2000 1.12.762.57): with ports 3000/13000 busy, the shell writes the engineering
+        /// ports it picked into .hmiproj on an HMI build and on exit. Once the shell is gone, put
+        /// back a file whose only change is those ports. Any other change is kept.
+        /// </summary>
+        private void RestoreHmiProjects()
+        {
+            lock (_hmiProjectsAtOpen)
+            {
+                foreach (var entry in _hmiProjectsAtOpen)
+                {
+                    try
+                    {
+                        // One exclusive handle: no other save can land between the check and the write.
+                        using var file = new FileStream(entry.Key, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                        var now = new byte[file.Length];
+                        for (int read = 0; read < now.Length;)
+                        {
+                            int n = file.Read(now, read, now.Length - read);
+                            if (n == 0) throw new IOException("short read");
+                            read += n;
+                        }
+                        if (!HmiPolicy.OnlyEngineeringPortsChanged(entry.Value, now)) continue;
+                        file.Position = 0;
+                        file.Write(entry.Value, 0, entry.Value.Length);
+                        file.SetLength(entry.Value.Length);
+                        Console.Error.WriteLine($"[DEBUG] Restored engineering ports in {Path.GetFileName(entry.Key)}");
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] .hmiproj restore failed: {ex.Message}"); }
+                }
+                _hmiProjectsAtOpen.Clear();
+            }
+        }
+
         /// <summary>
         /// Close Visual Studio instance. Terminates the owned shell if Quit
         /// leaves it running or does not return within the teardown bound.
@@ -507,7 +560,7 @@ namespace TcAutomation.Core
             lock (_ownedProcessLock)
             {
                 var owned = _ownedProcess;
-                if (owned == null) return true;
+                if (owned == null) { RestoreHmiProjects(); return true; }
 
                 bool exited;
                 try
@@ -539,6 +592,7 @@ namespace TcAutomation.Core
                 OwnedProcessLeftRunning = false;
                 DteProcessId = null;
                 DteProcessStartTimeUtc = null;
+                RestoreHmiProjects();
                 return true;
             }
         }

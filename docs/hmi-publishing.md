@@ -15,6 +15,12 @@ TwinCAT project. It shares the existing exclusive, owned hidden XAE worker and
 serialized job queue. PLC operations cannot run in an HMI context, and HMI
 operations cannot run in a PLC context. Close it with `context.close`.
 
+The engineering server of the worker uses ports 3000 and 13000. If another process holds
+them, the worker picks other ports. It then writes them into the `.hmiproj` on an HMI build
+and on exit (measured, TE2000 1.12.762.57). Once its shell has exited, the worker restores
+each `.hmiproj` of the solution whose only change is those two ports. Any other change stays.
+Measured on `context.close` only.
+
 | Operation | Behavior |
 | --- | --- |
 | `hmi.inspect` | Read selected-project readiness, SDK version and profile names. |

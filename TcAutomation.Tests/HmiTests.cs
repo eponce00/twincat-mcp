@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using TcAutomation.Core;
 
 static class HmiTests
@@ -45,6 +46,29 @@ static class HmiTests
             Refuse(() => HmiPolicy.Fingerprint(project, "https://host/", "Local"));
             File.WriteAllText(profiles, "[{\"profileName\":\"Local\"},{\"profileName\":\"Local\"}]");
             Refuse(() => HmiPolicy.Profiles(root));
+
+            const string ports = "<P><HmiCommunicationServerPort>3000</HmiCommunicationServerPort><X>1</X>"
+                + "<HmiCommunicationServerAuthPort>13000</HmiCommunicationServerAuthPort></P>";
+            bool OnlyPorts(string a, string b) =>
+                HmiPolicy.OnlyEngineeringPortsChanged(System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));
+            Check(OnlyPorts(ports, ports.Replace(">3000<", ">3001<").Replace(">13000<", ">13001<")));
+            Check(OnlyPorts(ports, ports.Replace(">13000<", ">13002<")));
+            Check(!OnlyPorts(ports, ports));
+            Check(!OnlyPorts(ports, ports.Replace(">3000<", ">3001<").Replace("<X>1", "<X>2")));
+            Check(!OnlyPorts(ports, ports.Replace("<HmiCommunicationServerPort>3000</HmiCommunicationServerPort>", "")));
+            Check(!OnlyPorts(ports, ports.Replace(">3000<", ">x<")));
+            // Two different invalid UTF-8 bytes must not compare equal.
+            var e8 = System.Text.Encoding.ASCII.GetBytes(ports.Replace("<X>1", "<X>\u0001"));
+            var e9 = System.Text.Encoding.ASCII.GetBytes(ports.Replace("<X>1", "<X>\u0001").Replace(">3000<", ">3001<"));
+            e8[Array.IndexOf(e8, (byte)1)] = 0xE8;
+            e9[Array.IndexOf(e9, (byte)1)] = 0xE9;
+            Check(!HmiPolicy.OnlyEngineeringPortsChanged(e8, e9));
+            var u16 = System.Text.Encoding.Unicode;
+            Check(!HmiPolicy.OnlyEngineeringPortsChanged(u16.GetBytes(ports), u16.GetBytes(ports.Replace(">3000<", ">3001<"))));
+            var sln = Path.Combine(root, "Panel.sln");
+            File.WriteAllText(sln, "Project(\"{A}\") = \"Panel\", \"Panel\\Panel.hmiproj\", \"{B}\"\r\n"
+                + "Project(\"{A}\") = \"Plc\", \"Plc\\Plc.tsproj\", \"{C}\"\r\nProject(\"{A}\") = \"Two\", \"panel\\PANEL.hmiproj\", \"{D}\"\r\n");
+            Check(HmiPolicy.HmiProjects(sln).SequenceEqual(new[] { Path.Combine(root, "Panel", "Panel.hmiproj") }));
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("PASS: " + cases + " HMI policy cases; no XAE or server writes.");

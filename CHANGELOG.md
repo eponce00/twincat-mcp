@@ -9,6 +9,13 @@
   settings and restores a mapping whose remap fails. The catalog now has 73
   entries (69 discoverable).
 
+### Fixed
+
+- When ports 3000 and 13000 are busy, the HMI worker writes other engineering
+  ports into the user's `.hmiproj`. Once its shell has exited, the worker now
+  restores each `.hmiproj` whose only change is those ports (measured on
+  `context.close`).
+
 ## 3.1.0 — 2026-11-07
 
 ### Added
