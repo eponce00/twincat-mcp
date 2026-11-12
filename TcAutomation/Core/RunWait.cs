@@ -23,6 +23,12 @@ namespace TcAutomation.Core
         public TimeSpan Settle { get; set; } = TimeSpan.FromSeconds(2);
         /// <summary>A system service that stays in Config this long after answering has finished starting in Config.</summary>
         public TimeSpan ConfigGrace { get; set; } = TimeSpan.FromSeconds(30);
+        /// <summary>
+        /// Run counts only after the restart was seen: some port not in Run or not answering. Until then the
+        /// target is polled every <see cref="RestartPoll"/>; a target still in Run after this long did not restart.
+        /// </summary>
+        public TimeSpan RestartGrace { get; set; } = TimeSpan.FromSeconds(30);
+        public TimeSpan RestartPoll { get; set; } = TimeSpan.FromMilliseconds(200);
     }
 
     public sealed class PortState
@@ -61,6 +67,7 @@ namespace TcAutomation.Core
             var start = now();
             TimeSpan? runSince = null, configSince = null;
             string? last = null;
+            bool restartSeen = false;
             while (true)
             {
                 result.Attempts++;
@@ -78,7 +85,9 @@ namespace TcAutomation.Core
                 }
 
                 bool allRun = system == AdsState.Run && plcs.All(p => p.state == AdsState.Run);
-                runSince = allRun ? runSince ?? elapsed : (TimeSpan?)null;
+                // Run from before the restart is not the restart's Run.
+                if (!allRun) restartSeen = true;
+                runSince = allRun && restartSeen ? runSince ?? elapsed : (TimeSpan?)null;
                 configSince = system == AdsState.Config ? configSince ?? elapsed : (TimeSpan?)null;
                 result.ElapsedMs = (long)elapsed.TotalMilliseconds;
 
@@ -93,12 +102,17 @@ namespace TcAutomation.Core
                     result.Message = $"The target started in Config and stayed there for {options.ConfigGrace.TotalSeconds:0} s; it did not reach Run.";
                     return result;
                 }
+                if (!restartSeen && elapsed >= options.RestartGrace)
+                {
+                    result.Message = $"The target stayed in Run for {options.RestartGrace.TotalSeconds:0} s after the restart command; the restart was not observed.";
+                    return result;
+                }
                 if (elapsed >= options.Timeout)
                 {
                     result.Message = $"The target did not reach Run within {options.Timeout.TotalSeconds:0} s: {observed}.";
                     return result;
                 }
-                sleep(options.Interval);
+                sleep(restartSeen || options.RestartPoll >= options.Interval ? options.Interval : options.RestartPoll);
             }
         }
 

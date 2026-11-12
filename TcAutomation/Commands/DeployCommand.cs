@@ -310,6 +310,7 @@ namespace TcAutomation.Commands
             {
                 result.Success = false;
                 result.ErrorMessage = $"Deployment failed: {ex.Message}";
+                Console.Error.WriteLine($"[DEBUG] Deployment failed: {ex}");
                 return result;
             }
         }

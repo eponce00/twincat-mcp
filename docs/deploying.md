@@ -60,7 +60,10 @@ boot project re-enables PLC projects that are disabled in the `.tsproj`.
 
 After the activation lands, the deploy restarts TwinCAT and waits up to
 `runTimeoutSeconds` (default 120) for Run on the system service (port 10000)
-and on each deployed PLC's configured ADS port. Run must hold for 2 s. A
+and on each deployed PLC's configured ADS port. Run counts only after the
+restart has been seen: some port out of Run or not answering, polled every
+200 ms until then. A target still in Run 30 s after the restart command did
+not restart, and the operation fails. Run must then hold for 2 s. A
 system service that comes back in Config and stays there for 30 s has started
 in Config. That, a timeout, or a PLC that stays in Stop fails the deployment
 instead of reporting success. The receipt's `run` holds the final states,
@@ -116,9 +119,11 @@ ADS; `probeTargets:true` reads every variant's target.
 
 ## Not qualified
 
-- Run verification was exercised on a local user-mode runtime whose licences
-  did not allow its PLC to run: the deployment and restart correctly failed in
-  Config. Reaching Run with these changes was not exercised.
+- Run verification was exercised on a local user-mode runtime only: a
+  deployment and restart that reached Run, and, while the runtime's licences
+  did not allow its PLC to run, a deployment and restart that failed in Config.
+- `targetMessages` are read back from 10 s before the restart, so a restart
+  right after another one also lists the earlier restart's messages.
 - `runtime.set_state` Run/Config (`Reset`/`Reconfig` on port 10000) was not
   exercised: on the shared user-mode runtime a system reset has stopped the
   TwinCAT system service before.

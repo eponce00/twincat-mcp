@@ -68,6 +68,16 @@ static class RunWaitTests
         s = new Script { System = t => t < 3 ? (AdsState?)null : AdsState.Run, Plc = _ => throw new Exception("PLC port must not be read") };
         Check(Wait(s).ReachedRun, "system service only");
 
+        // Run from before the restart does not count: the restart command returned before the target went down
+        s = new Script { System = t => t < 0.6 || t >= 3 ? AdsState.Run : (AdsState?)null, Plc = t => t < 0.6 || t >= 4 ? AdsState.Run : AdsState.Stop };
+        r = Wait(s, 851);
+        Check(r.ReachedRun && r.ElapsedMs >= 6000 && r.Transitions[1].Contains("unreadable"), "Run counts only after the target left Run: " + r.ElapsedMs);
+
+        // A target that never leaves Run did not restart
+        s = new Script();
+        r = Wait(s, 851);
+        Check(!r.ReachedRun && r.Message.Contains("restart was not observed") && r.ElapsedMs <= 31000, "a restart that never happened is a failure: " + r.Message);
+
         // The summary shows the target's own warnings and errors before anything else
         r = new RunWaitResult { SystemState = "Config", PlcStates = new List<PortState> { new PortState { Port = 851, State = "unreadable" } } };
         r.TargetMessages.Add(new ReadPlcLogEntry { Severity = "Info", Text = "TwinCAT System starting" });
