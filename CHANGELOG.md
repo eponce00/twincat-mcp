@@ -15,6 +15,10 @@
   ports into the user's `.hmiproj`. Once its shell has exited, the worker now
   restores each `.hmiproj` whose only change is those ports (measured on
   `context.close`).
+- The worker starts an HMI shell in a Windows job and ends the job once the
+  shell has exited. On `context.close`, no engineering server of the context
+  outlived it in five runs. A process that breaks away from the job, or that
+  survives a retry, is left running, and so is the job when the worker dies.
 
 ## 3.1.0 — 2026-11-07
 

@@ -32,6 +32,7 @@
     <Compile Include="ActivationWaitTests.cs" />
     <Compile Include="HmiTests.cs" />
     <Compile Include="HmiMappingTests.cs" />
+    <Compile Include="ShellJobTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

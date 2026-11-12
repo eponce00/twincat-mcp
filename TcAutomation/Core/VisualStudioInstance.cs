@@ -549,18 +549,18 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Kill the shell this instance started, through its launch handle.
-        /// Touches no other process. Thread-safe and repeatable: one lock covers
-        /// the attempt, so a concurrent caller waits for its result. True once
-        /// the shell is confirmed gone or none was started. On false the handle
-        /// is KEPT for a retry, and the PID stays recorded.
+        /// Kill the shell this instance started, through its launch handle. For an
+        /// HMI shell, then end the processes left in its job. Touches no other
+        /// process. Thread-safe and repeatable: one lock covers the attempt, so a
+        /// concurrent caller waits for its result. True once the shell is confirmed
+        /// gone or none was started. On false the handle or job is KEPT for a retry.
         /// </summary>
         public bool KillOwnedProcess(string reason)
         {
             lock (_ownedProcessLock)
             {
                 var owned = _ownedProcess;
-                if (owned == null) { RestoreHmiProjects(); return true; }
+                if (owned == null) return EndShellJob();
 
                 bool exited;
                 try
@@ -592,9 +592,41 @@ namespace TcAutomation.Core
                 OwnedProcessLeftRunning = false;
                 DteProcessId = null;
                 DteProcessStartTimeUtc = null;
-                RestoreHmiProjects();
-                return true;
+                return EndShellJob();
             }
+        }
+
+        // HMI-only: the job holding the shell and the processes it starts.
+        private ShellJob? _shellJob;
+        private bool _shellJobRetried;
+
+        /// <summary>
+        /// After the shell is gone, end what it left running (HMI engineering servers), then restore
+        /// the .hmiproj files. A first timeout keeps the job and returns false. The retry waits 1 s,
+        /// then lets the job go, so leftovers never block the next shell. Called under _ownedProcessLock.
+        /// </summary>
+        private bool EndShellJob()
+        {
+            if (_shellJob != null)
+            {
+                if (!_shellJob.End(_shellJobRetried ? 1000 : 5000))
+                {
+                    Console.Error.WriteLine($"[DEBUG] {_shellJob.ActiveProcesses()} process(es) started by the HMI shell are not confirmed gone");
+                    if (!_shellJobRetried)
+                    {
+                        _shellJobRetried = true;
+                        OwnedProcessLeftRunning = true;
+                        return false;
+                    }
+                    Console.Error.WriteLine("[DEBUG] Releasing the HMI shell job with processes still in it");
+                    _shellJob.Dispose();
+                }
+                _shellJob = null;
+                _shellJobRetried = false;
+                OwnedProcessLeftRunning = false;
+            }
+            RestoreHmiProjects();
+            return true;
         }
 
         /// <summary>
@@ -758,8 +790,12 @@ namespace TcAutomation.Core
                 if (_ownedProcess != null)
                     throw new InvalidOperationException(
                         $"This instance still owns XAE PID {_ownedProcess.Id}. No second shell is started.");
-                process = Process.Start(start)
-                    ?? throw new InvalidOperationException("XAE process did not start.");
+                if (_shellJob != null)
+                    throw new InvalidOperationException("Processes of the previous HMI shell are not confirmed gone. No second shell is started.");
+                // An HMI shell starts engineering servers that can outlive it: keep them in its job.
+                process = HmiOnly
+                    ? ShellJob.Start(start, out _shellJob)
+                    : Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
                 _ownedProcess = process;
                 OwnedProcessLeftRunning = false;
             }

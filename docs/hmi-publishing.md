@@ -21,6 +21,13 @@ and on exit (measured, TE2000 1.12.762.57). Once its shell has exited, the worke
 each `.hmiproj` of the solution whose only change is those two ports. Any other change stays.
 Measured on `context.close` only.
 
+The engineering server can start a copy of itself from `%TEMP%`, which outlives the shell. The
+worker starts an HMI shell inside a Windows job. After the shell exits, it ends every process
+left in that job (measured on `context.close`, five runs). Processes started
+outside the worker are not touched. A process that breaks away from the job is not ended. If
+members survive one retry, the worker lets the job go so that the next shell can start. If the
+worker itself dies, the job is not ended.
+
 | Operation | Behavior |
 | --- | --- |
 | `hmi.inspect` | Read selected-project readiness, SDK version and profile names. |
