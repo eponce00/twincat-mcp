@@ -29,9 +29,6 @@ namespace TcAutomation.Core
             public Dictionary<string, Runtime> Runtimes = new Dictionary<string, Runtime>(StringComparer.Ordinal);
         }
 
-        public static string ConfigPath(string projectDirectory) =>
-            Path.Combine(projectDirectory, "Server", "TcHmiSrv", "TcHmiSrv.Config.default.json");
-
         public static JsonDocument Read(string path)
         {
             var info = new FileInfo(path);
@@ -148,9 +145,7 @@ namespace TcAutomation.Core
                     if (pb.Count != lb.Count || pa.Select(p => p.Name).Distinct(StringComparer.Ordinal).Count() != pa.Count) return false;
                     return pa.Count == pb.Count && pa.All(p => pb.TryGetValue(p.Name, out var v) && Same(p.Value, v));
                 case JsonValueKind.Array:
-                    var ea = a.EnumerateArray().ToList();
-                    var eb = b.EnumerateArray().ToList();
-                    return ea.Count == eb.Count && ea.Zip(eb, Same).All(x => x);
+                    return a.GetArrayLength() == b.GetArrayLength() && a.EnumerateArray().Zip(b.EnumerateArray(), Same).All(x => x);
                 case JsonValueKind.String: return a.GetString() == b.GetString();
                 // Exact: double or decimal conversion would equate distinct numbers.
                 case JsonValueKind.Number: return Canonical(a.GetRawText()) == Canonical(b.GetRawText());
@@ -197,11 +192,14 @@ namespace TcAutomation.Core
             catch (OverflowException) { return number; }
         }
 
-        public static bool SameTarget(string entry, string domain, string target)
+        public static bool SameTarget(string entry, string domain, string target) =>
+            Field(entry, "DOMAIN") == domain && Field(entry, "MAPPING") == target;
+
+        /// <summary>A string member of the entry, or null.</summary>
+        public static string? Field(string entry, string key)
         {
             using var doc = JsonDocument.Parse(entry);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                && Str(doc.RootElement, "DOMAIN") == domain && Str(doc.RootElement, "MAPPING") == target;
+            return Str(doc.RootElement, key);
         }
 
         public static JsonValueKind Kind(JsonElement config, string key) =>
@@ -212,12 +210,8 @@ namespace TcAutomation.Core
                 ? s.EnumerateObject().Count(p => p.Name == name) : 0;
 
         /// <summary>The entry's JSON, or null when it is absent or its name occurs more than once.</summary>
-        public static string? Entry(JsonElement config, string name)
-        {
-            if (!config.TryGetProperty("SYMBOLS", out var s) || s.ValueKind != JsonValueKind.Object) return null;
-            var found = s.EnumerateObject().Where(p => p.Name == name).Take(2).ToList();
-            return found.Count == 1 ? found[0].Value.GetRawText() : null;
-        }
+        public static string? Entry(JsonElement config, string name) =>
+            Occurrences(config, name) == 1 ? config.GetProperty("SYMBOLS").GetProperty(name).GetRawText() : null;
 
         static KeyValuePair<string, string> Skip(string name, string reason) => new KeyValuePair<string, string>(name, reason);
         static string? Str(JsonElement e, string key) =>

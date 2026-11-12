@@ -226,46 +226,28 @@ class HmiRefreshTests(unittest.TestCase):
                 )
         self.assertFalse(self.backend.calls)
 
-    def test_open_reports_pending_recovery_without_acting(self):
+    def test_open_reports_pending_recovery_by_configuration_without_acting(self):
+        def opened():
+            args = dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/")
+            return self.submit("context.open_hmi", args)[1]
+
+        result = opened()
+        self.assertNotIn("pendingRecovery", result)
+        self.submit("context.close", dict(contextHandle=result["contextHandle"]))
         folder = self.root / "state" / "hmi-recovery"
         folder.mkdir(parents=True)
-        record = dict(Version=1, ConfigPath="c", Symbol="PLC1.GVL.x", OriginalEntry="{}", CreatedUtc="2026-11-12T10:00:00Z")
-        (folder / "a.json").write_text(json.dumps(dict(record, ProjectPath=str(self.project).upper())))
-        (folder / "b.json").write_text(json.dumps(dict(record, ProjectPath=str(self.root / "Other.hmiproj"))))
-        result = self.submit(
-            "context.open_hmi",
-            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
-        )[1]
-        self.assertEqual([dict(symbol="PLC1.GVL.x", createdUtc="2026-11-12T10:00:00Z")], result["pendingRecovery"])
+        config = str(self.root / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json").upper()
+        record = dict(Version=1, Symbol="PLC1.GVL.x", OriginalEntry="{}", CreatedUtc="t")
+        # Found by its configuration, also after a rename. The same project with another configuration is not.
+        (folder / "a.json").write_text(json.dumps(dict(record, ProjectPath=str(self.root / "Old.hmiproj"), ConfigPath=config)))
+        (folder / "b.json").write_text(json.dumps(dict(record, Symbol="y", ProjectPath=str(self.project), ConfigPath="c")))
+        result = opened()
+        self.assertEqual([dict(symbol="PLC1.GVL.x", createdUtc="t")], result["pendingRecovery"])
         self.assertFalse(self.backend.calls)
         (folder / "a.json").unlink()
         (folder / "b.json").write_text("{")
         self.submit("context.close", dict(contextHandle=result["contextHandle"]))
-        result = self.submit(
-            "context.open_hmi",
-            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
-        )[1]
-        self.assertEqual([dict(unreadable="b.json")], result["pendingRecovery"])
-
-    def test_pending_recovery_found_by_configuration_after_rename(self):
-        folder = self.root / "state" / "hmi-recovery"
-        folder.mkdir(parents=True)
-        config = self.root / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json"
-        record = dict(Version=1, ProjectPath=str(self.root / "Old.hmiproj"), ConfigPath=str(config),
-                      Symbol="PLC1.GVL.y", OriginalEntry="{}", CreatedUtc="t")
-        (folder / "a.json").write_text(json.dumps(record))
-        result = self.submit(
-            "context.open_hmi",
-            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
-        )[1]
-        self.assertEqual([dict(symbol="PLC1.GVL.y", createdUtc="t")], result["pendingRecovery"])
-
-    def test_no_pending_recovery_key_without_records(self):
-        result = self.submit(
-            "context.open_hmi",
-            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
-        )[1]
-        self.assertNotIn("pendingRecovery", result)
+        self.assertEqual([dict(unreadable="b.json")], opened()["pendingRecovery"])
 
     def test_recover_is_forwarded_and_typed(self):
         ctx = self.context()
@@ -292,13 +274,13 @@ class HmiRefreshTests(unittest.TestCase):
 
 
 class HmiBackendTests(unittest.TestCase):
-    def test_hmi_context_is_forwarded_without_plc_target(self):
+    def assert_hmi_step(self, operation, command, **extra):
         with patch(
             "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
         ) as run:
             Backend().run(
-                Catalog().get("hmi.inspect"),
-                {"contextHandle": "ctx"},
+                Catalog().get(operation),
+                {"contextHandle": "ctx", **extra},
                 {
                     "kind": "hmi",
                     "solutionPath": "Panel.sln",
@@ -306,13 +288,19 @@ class HmiBackendTests(unittest.TestCase):
                     "targetUrl": "https://host/",
                 },
             )
-            self.assertEqual("hmi-inspect", run.call_args.args[0])
+            self.assertEqual(command, run.call_args.args[0])
             self.assertEqual(
-                {"projectPath": "Panel.hmiproj", "targetUrl": "https://host/"},
+                {"projectPath": "Panel.hmiproj", "targetUrl": "https://host/", **extra},
                 run.call_args.args[1],
             )
             self.assertTrue(run.call_args.kwargs["hmi_only"])
             self.assertNotIn("amsNetId", run.call_args.args[1])
+
+    def test_hmi_context_is_forwarded_without_plc_target(self):
+        self.assert_hmi_step("hmi.inspect", "hmi-inspect")
+
+    def test_refresh_is_forwarded_as_hmi_step(self):
+        self.assert_hmi_step("hmi.refresh_mappings", "hmi-refresh-mappings", symbols=["PLC1.GVL.x"])
 
     def test_timeout_log_is_named_without_its_folder(self):
         from twincat_mcp.host import ShellHost
@@ -334,28 +322,3 @@ class HmiBackendTests(unittest.TestCase):
         self.assertEqual(entry, result["recovery"]["originalEntry"])
         self.assertEqual(entry, result["originalEntry"])
         self.assertEqual("x", result["recovery"]["symbol"])
-
-    def test_refresh_is_forwarded_as_hmi_step(self):
-        with patch(
-            "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
-        ) as run:
-            Backend().run(
-                Catalog().get("hmi.refresh_mappings"),
-                {"contextHandle": "ctx", "symbols": ["PLC1.GVL.x"]},
-                {
-                    "kind": "hmi",
-                    "solutionPath": "Panel.sln",
-                    "projectPath": "Panel.hmiproj",
-                    "targetUrl": "https://host/",
-                },
-            )
-            self.assertEqual("hmi-refresh-mappings", run.call_args.args[0])
-            self.assertEqual(
-                {
-                    "projectPath": "Panel.hmiproj",
-                    "targetUrl": "https://host/",
-                    "symbols": ["PLC1.GVL.x"],
-                },
-                run.call_args.args[1],
-            )
-            self.assertTrue(run.call_args.kwargs["hmi_only"])

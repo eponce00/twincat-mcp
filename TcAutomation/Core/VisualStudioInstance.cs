@@ -462,13 +462,9 @@ namespace TcAutomation.Core
                         {
                             // One exclusive handle: no other save can land between the check and the write.
                             using var file = new FileStream(entry.Key, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-                            var now = new byte[file.Length];
-                            for (int read = 0; read < now.Length;)
-                            {
-                                int n = file.Read(now, read, now.Length - read);
-                                if (n == 0) throw new IOException("short read");
-                                read += n;
-                            }
+                            var buffer = new MemoryStream();
+                            file.CopyTo(buffer);
+                            var now = buffer.ToArray();
                             var restored = HmiPolicy.PortRestore(entry.Key, entry.Value, now);
                             if (restored == null) continue;
                             file.Position = 0;

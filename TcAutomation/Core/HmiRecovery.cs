@@ -8,10 +8,8 @@ using System.Text.Json;
 
 namespace TcAutomation.Core
 {
-    /// <summary>
-    /// The original entry of the mapping a refresh is about to unmap, kept on disk until the mapping is
-    /// confirmed present again. It survives a killed shell or worker, so recover mode can write it back.
-    /// </summary>
+    /// <summary>The original entry of a mapping a refresh unmaps, kept on disk until the mapping is confirmed
+    /// present. It survives a killed shell or worker, so recover mode can write it back.</summary>
     public static class HmiRecovery
     {
         public sealed class Record
@@ -27,10 +25,8 @@ namespace TcAutomation.Core
             public DateTime WorkerStartUtc { get; set; }
         }
 
-        /// <summary>
-        /// True while another live worker owns the record: a call it started may still change the mapping, so
-        /// nobody else may clear or recover it. The current worker's own calls have returned.
-        /// </summary>
+        /// <summary>True while another live worker owns the record. A call it started can still change the mapping, so
+        /// nobody else may clear or recover it. The current worker's own calls have returned.</summary>
         public static bool OwnerRunning(Record record)
         {
             if (record.WorkerPid == 0) return false;
@@ -41,18 +37,15 @@ namespace TcAutomation.Core
                 using var owner = System.Diagnostics.Process.GetProcessById(record.WorkerPid);
                 return Math.Abs((owner.StartTime.ToUniversalTime() - record.WorkerStartUtc).TotalSeconds) < 1;
             }
-            // Gone, or not ours to read: a reused PID with another start time is not the owner.
-            catch (ArgumentException) { return false; }
-            catch (InvalidOperationException) { return false; }
+            // A reused PID with another start time is not the owner. Gone: not the owner. Not ours to read: assume it is.
+            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException) { return false; }
             catch (System.ComponentModel.Win32Exception) { return true; }
         }
 
         public enum Verdict { Restore, AlreadyPresent, Reconcile, Conflict }
 
-        /// <summary>
-        /// An exclusive handle that serializes refresh and recovery of one configuration across workers.
-        /// The OS releases it when the worker dies. Null when another holder has it.
-        /// </summary>
+        /// <summary>Serializes refresh and recovery of one configuration across workers. Null when another
+        /// holder has it. The OS releases it when the worker dies.</summary>
         public static FileStream? Lock(string stateDirectory, string configPath)
         {
             var path = Path.ChangeExtension(PathFor(stateDirectory, configPath), ".lock");
@@ -74,12 +67,8 @@ namespace TcAutomation.Core
         /// <summary>Write through a temporary file and a rename, so a reader never sees a partial record.</summary>
         public static void Write(string stateDirectory, Record record)
         {
-            if (record.WorkerPid == 0)
-                using (var self = System.Diagnostics.Process.GetCurrentProcess())
-                {
-                    record.WorkerPid = self.Id;
-                    record.WorkerStartUtc = self.StartTime.ToUniversalTime();
-                }
+            using (var self = System.Diagnostics.Process.GetCurrentProcess())
+                if (record.WorkerPid == 0) { record.WorkerPid = self.Id; record.WorkerStartUtc = self.StartTime.ToUniversalTime(); }
             var path = PathFor(stateDirectory, record.ConfigPath);
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -100,10 +89,16 @@ namespace TcAutomation.Core
             Record? record;
             try { record = JsonSerializer.Deserialize<Record>(File.ReadAllText(path)); }
             catch (JsonException) { throw new InvalidOperationException("hmi_recovery_unreadable"); }
-            if (record == null || record.Version != 1 || string.IsNullOrEmpty(record.Symbol) || string.IsNullOrEmpty(record.OriginalEntry)
+            if (record == null || record.Version != 1 || string.IsNullOrEmpty(record.Symbol) || !IsObject(record.OriginalEntry)
                 || !string.Equals(Path.GetFullPath(record.ConfigPath), Path.GetFullPath(configPath), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("hmi_recovery_unreadable");
             return record;
+        }
+
+        static bool IsObject(string json)
+        {
+            try { using var doc = JsonDocument.Parse(json ?? ""); return doc.RootElement.ValueKind == JsonValueKind.Object; }
+            catch (JsonException) { return false; }
         }
 
         public static void Clear(string stateDirectory, string configPath)
@@ -112,33 +107,24 @@ namespace TcAutomation.Core
             if (File.Exists(path)) File.Delete(path);
         }
 
-        /// <summary>
-        /// What recover mode does with the current entry (null when the mapping is absent). An entry bound to the
-        /// original DOMAIN and MAPPING is a remap that finished: reconcile it by setting the preserved fields back.
-        /// </summary>
+        /// <summary>What recover mode does with the current entry (null: absent). An entry on the original DOMAIN
+        /// and MAPPING is a finished remap: reconcile it by setting the preserved fields back.</summary>
         public static Verdict Decide(string originalEntry, string? currentEntry)
         {
             if (currentEntry == null) return Verdict.Restore;
             if (HmiMappings.Same(originalEntry, currentEntry)) return Verdict.AlreadyPresent;
-            using var doc = JsonDocument.Parse(originalEntry);
-            var root = doc.RootElement;
-            string? domain = root.TryGetProperty("DOMAIN", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
-            string? target = root.TryGetProperty("MAPPING", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+            string? domain = HmiMappings.Field(originalEntry, "DOMAIN"), target = HmiMappings.Field(originalEntry, "MAPPING");
             return domain != null && target != null && HmiMappings.SameTarget(currentEntry, domain, target) ? Verdict.Reconcile : Verdict.Conflict;
         }
 
-        /// <summary>
-        /// Whether a stopped refresh may clear its record: only when no call can still be running, and the
-        /// mapping is present as it was or as the refresh verified it.
-        /// </summary>
+        /// <summary>A stopped refresh may clear its record only when no call can still be running, and the mapping
+        /// is present as it was or as the refresh verified it.</summary>
         public static bool CanClear(string originalEntry, string? currentEntry, string? verifiedEntry, bool outcomeCertain) =>
             outcomeCertain && currentEntry != null
             && (HmiMappings.Same(originalEntry, currentEntry) || verifiedEntry != null && HmiMappings.Same(verifiedEntry, currentEntry));
 
-        /// <summary>
-        /// Server definitions the entry's SCHEMA needs that the configuration lacks, following references
-        /// between definitions ("#/definitions/X" inside DEFINITIONS).
-        /// </summary>
+        /// <summary>Server definitions the entry's SCHEMA needs that the configuration lacks, following references
+        /// between definitions ("#/definitions/X" inside DEFINITIONS).</summary>
         public static string[] MissingDefinitions(string entry, JsonElement config)
         {
             using var doc = JsonDocument.Parse(entry);

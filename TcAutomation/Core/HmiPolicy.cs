@@ -19,16 +19,6 @@ namespace TcAutomation.Core
         // One char per byte, so no byte change can hide in a decoding. UTF-16 never matches: no restore.
         static readonly Encoding Bytes = Encoding.GetEncoding(28591);
 
-        /// <summary>True when the two files differ, and only in engineering port values.</summary>
-        public static bool OnlyEngineeringPortsChanged(byte[] original, byte[] current)
-        {
-            string a = Bytes.GetString(original), b = Bytes.GetString(current);
-            return !string.Equals(a, b, StringComparison.Ordinal)
-                && string.Equals(MaskPorts(a), MaskPorts(b), StringComparison.Ordinal);
-        }
-
-        static string MaskPorts(string text) => EngineeringPort.Replace(text, "<$1>#</$1>");
-
         static readonly Regex LoopbackEndpoint = new Regex(@"^""http://127\.0\.0\.1:[0-9]+""$");
 
         /// <summary>The server configuration whose ENDPOINTS the engineering server rewrites.</summary>
@@ -73,7 +63,10 @@ namespace TcAutomation.Core
         public static byte[] PortRestore(string path, byte[] original, byte[] current)
         {
             if (path.EndsWith(".hmiproj", StringComparison.OrdinalIgnoreCase))
-                return OnlyEngineeringPortsChanged(original, current) ? original : null;
+            {
+                string a = Bytes.GetString(original), b = Bytes.GetString(current);
+                return a != b && EngineeringPort.Replace(a, "<$1>#</$1>") == EngineeringPort.Replace(b, "<$1>#</$1>") ? original : null;
+            }
             if (!EndpointsSpan(original, out int os, out int oe) || !EndpointsSpan(current, out int cs, out int ce)) return null;
             if (Bytes.GetString(original, os, oe - os) == Bytes.GetString(current, cs, ce - cs)) return null;
             var x = EndpointTokens(original, os, oe);

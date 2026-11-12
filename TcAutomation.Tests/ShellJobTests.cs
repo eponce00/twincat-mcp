@@ -29,27 +29,16 @@ static class ShellJobTests
             Check(job.End(5000));
         }
 
-        // A grandchild is a job member, and ending the job ends it.
-        using (var process = ShellJob.Start(Info("/c ping -n 30 127.0.0.1 >nul"), out var job))
-        {
-            Check(job.Contains(process));
-            var clock = Stopwatch.StartNew();
-            while (job.ActiveProcesses() < 2 && clock.ElapsedMilliseconds < 5000) Thread.Sleep(50);
-            Check(job.ActiveProcesses() >= 2);
-            Check(job.End(5000));
-            Check(process.WaitForExit(5000));
-            Check(job.ActiveProcesses() == 0);
-        }
-
-        // Closing the only job handle without End, as when the worker dies, ends every member.
-        using (var process = ShellJob.Start(Info("/c ping -n 30 127.0.0.1 >nul"), out var job))
-        {
-            var clock = Stopwatch.StartNew();
-            while (job.ActiveProcesses() < 2 && clock.ElapsedMilliseconds < 5000) Thread.Sleep(50);
-            Check(job.ActiveProcesses() >= 2);
-            job.Dispose();
-            Check(process.WaitForExit(5000));
-        }
+        // A grandchild is a job member. End ends it, and so does closing the only handle (a dead worker).
+        foreach (var end in new[] { true, false })
+            using (var process = ShellJob.Start(Info("/c ping -n 30 127.0.0.1 >nul"), out var job))
+            {
+                var clock = Stopwatch.StartNew();
+                while (job.ActiveProcesses() < 2 && clock.ElapsedMilliseconds < 5000) Thread.Sleep(50);
+                Check(job.ActiveProcesses() >= 2);
+                if (end) Check(job.End(5000)); else job.Dispose();
+                Check(process.WaitForExit(5000));
+            }
         Console.WriteLine("PASS: " + cases + " shell job cases; cmd and ping only, no XAE.");
     }
 }

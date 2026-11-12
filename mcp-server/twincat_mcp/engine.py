@@ -35,7 +35,7 @@ class Engine:
         self.jobs = Jobs(root / "jobs.sqlite3", self.run)
 
     def pending_recovery(self, project):
-        """Mappings a stopped refresh of this project left for recover mode (records written by the worker)."""
+        """Mappings a stopped refresh of this project's configuration left for recover mode (records written by the worker)."""
         found = []
         config = os.path.normcase(
             str(Path(project).parent / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json")
@@ -44,9 +44,7 @@ class Engine:
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
                 # The record belongs to the configuration; a renamed project still finds it.
-                if os.path.normcase(record["ProjectPath"]) == os.path.normcase(project) or (
-                    os.path.normcase(record["ConfigPath"]) == config
-                ):
+                if os.path.normcase(record["ConfigPath"]) == config:
                     found.append(dict(symbol=record["Symbol"], createdUtc=record["CreatedUtc"]))
             except (OSError, ValueError, KeyError, TypeError):
                 found.append(dict(unreadable=path.name))
@@ -177,17 +175,18 @@ class Engine:
                     started=False,
                     invalid=False,
                 )
-                extra = (
-                    {"projectPath": args["projectPath"], "targetUrl": args["targetUrl"]}
-                    if operation == "context.open_hmi"
-                    else {"target": args["amsNetId"], "plcName": args["plcName"]}
+                # Reported, never applied: recovery is an explicit, granted operation.
+                pending = operation == "context.open_hmi" and self.pending_recovery(args["projectPath"])
+                return dict(
+                    success=True,
+                    contextHandle=handle,
+                    **(
+                        {"projectPath": args["projectPath"], "targetUrl": args["targetUrl"]}
+                        if operation == "context.open_hmi"
+                        else {"target": args["amsNetId"], "plcName": args["plcName"]}
+                    ),
+                    **({"pendingRecovery": pending} if pending else {}),
                 )
-                if operation == "context.open_hmi":
-                    pending = self.pending_recovery(args["projectPath"])
-                    if pending:
-                        # Reported, never applied: recovery is an explicit, granted operation.
-                        extra["pendingRecovery"] = pending
-                return dict(success=True, contextHandle=handle, **extra)
         if operation == "context.close":
             with self.lock:
                 if not self.context or self.context["handle"] != args["contextHandle"]:

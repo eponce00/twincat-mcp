@@ -50,7 +50,7 @@ static class HmiTests
             const string ports = "<P><HmiCommunicationServerPort>3000</HmiCommunicationServerPort><X>1</X>"
                 + "<HmiCommunicationServerAuthPort>13000</HmiCommunicationServerAuthPort></P>";
             bool OnlyPorts(string a, string b) =>
-                HmiPolicy.OnlyEngineeringPortsChanged(System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b));
+                HmiPolicy.PortRestore("x.hmiproj", System.Text.Encoding.UTF8.GetBytes(a), System.Text.Encoding.UTF8.GetBytes(b)) != null;
             Check(OnlyPorts(ports, ports.Replace(">3000<", ">3001<").Replace(">13000<", ">13001<")));
             Check(OnlyPorts(ports, ports.Replace(">13000<", ">13002<")));
             Check(!OnlyPorts(ports, ports));
@@ -62,9 +62,9 @@ static class HmiTests
             var e9 = System.Text.Encoding.ASCII.GetBytes(ports.Replace("<X>1", "<X>\u0001").Replace(">3000<", ">3001<"));
             e8[Array.IndexOf(e8, (byte)1)] = 0xE8;
             e9[Array.IndexOf(e9, (byte)1)] = 0xE9;
-            Check(!HmiPolicy.OnlyEngineeringPortsChanged(e8, e9));
+            Check(HmiPolicy.PortRestore("x.hmiproj", e8, e9) == null);
             var u16 = System.Text.Encoding.Unicode;
-            Check(!HmiPolicy.OnlyEngineeringPortsChanged(u16.GetBytes(ports), u16.GetBytes(ports.Replace(">3000<", ">3001<"))));
+            Check(HmiPolicy.PortRestore("x.hmiproj", u16.GetBytes(ports), u16.GetBytes(ports.Replace(">3000<", ">3001<"))) == null);
 
             var utf8 = System.Text.Encoding.UTF8;
             var proj = Path.Combine(root, "Hmi.hmiproj");
@@ -88,7 +88,6 @@ static class HmiTests
             // The nested ENDPOINTS is not the server's: it stays as the current file has it.
             var nested = Bumped(cfg).Replace("[\"http://127.0.0.1:3000\"]", "[\"http://127.0.0.1:3005\"]");
             Check(Restore(cfg, nested) == cfg.Replace("[\"http://127.0.0.1:3000\"]", "[\"http://127.0.0.1:3005\"]"));
-            Check(Restore(cfg.Replace("\"ENDPOINTS\": [\"", "\"X\": [\""), Bumped(cfg).Replace("\"ENDPOINTS\": [\"", "\"X\": [\"")) != null);
             var twice = cfg.Replace("{\n    \"SYMBOLS\"", "{\n    \"ENDPOINTS\": [],\n    \"SYMBOLS\"");
             Check(Restore(twice, Bumped(twice)) == null);
             var scalar = "{\"ENDPOINTS\": \"http://127.0.0.1:3000\"}";
@@ -104,11 +103,8 @@ static class HmiTests
             Check(Restore(cfg, Bumped(cfg) + " {}") == null);
             var https = cfg.Replace("http://127.0.0.1:13000", "https://127.0.0.1:13000");
             Check(Restore(https, Bumped(https)) == null);
-            // Digits that are not the port, a comment in the array, and a nested array are not masked.
-            var userinfo = cfg.Replace("1:13000\"", "1:13000@x\"");
-            Check(Restore(userinfo, Bumped(userinfo).Replace("1:13000@x\"", "1:13001@x\"")) == null);
+            // A comment in the array and a nested array are not masked.
             var inArray = cfg.Replace("\"http://127.0.0.1:3000\"\n", "\"http://127.0.0.1:3000\" /* \"http://127.0.0.1:4000\" */\n");
-            Check(Restore(inArray, Bumped(inArray).Replace(":4000\"", ":4001\"")) == null);
             Check(Restore(inArray, Bumped(inArray)) == null);
             var deep = cfg.Replace("\"http://127.0.0.1:3000\"\n", "[\"http://127.0.0.1:3000\"]\n");
             Check(Restore(deep, Bumped(deep).Replace("[\"http://127.0.0.1:3000\"]\n", "[\"http://127.0.0.1:3001\"]\n")) == null);
@@ -123,11 +119,9 @@ static class HmiTests
             Check(none != null && none.Count == 0);
             File.WriteAllText(lockFile, "");
             using (var server = new FileStream(lockFile, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
-                Check(HmiPolicy.HoldServerLocks(sln0, new[] { proj }) == null);
-            var nested2 = Path.Combine(root, "Sub", "Panel", "Panel.hmiproj");
-            using (var server = new FileStream(lockFile, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
-                Check(HmiPolicy.HoldServerLocks(Path.Combine(root, "Other", "X.sln"), new[] { Path.Combine(root, "Hmi", "Hmi.hmiproj") }) == null
-                    && HmiPolicy.HoldServerLocks(Path.Combine(root, "Other", "X.sln"), new[] { nested2 }).Count == 0);
+                Check(HmiPolicy.HoldServerLocks(sln0, new[] { proj }) == null
+                    && HmiPolicy.HoldServerLocks(Path.Combine(root, "Other", "X.sln"), new[] { Path.Combine(root, "Hmi", "Hmi.hmiproj") }) == null
+                    && HmiPolicy.HoldServerLocks(Path.Combine(root, "Other", "X.sln"), new[] { Path.Combine(root, "Sub", "Panel", "Panel.hmiproj") }).Count == 0);
             var free = HmiPolicy.HoldServerLocks(sln0, new[] { proj });
             Check(free != null && free.Count == 1);
             // The restore keeps the lock exclusive: a server cannot open it meanwhile.

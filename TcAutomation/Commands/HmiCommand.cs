@@ -39,15 +39,15 @@ namespace TcAutomation.Commands
                 List<object> missing = null;
                 bool recover = command == "hmi-refresh-mappings" && StepDispatcher.GetBool(args, "recover", true) == true;
                 if (recover && Requested(args) != null) return Failure("hmi_mapping_arguments");
+                var configFile = command == "hmi-refresh-mappings" ? HmiPolicy.ServerConfig(projectPath) : null;
                 // One refresh or recovery per configuration across workers, from the pending check until the record settles.
                 using var gate = command == "hmi-refresh-mappings"
-                    ? HmiRecovery.Lock(SessionFile.SessionDir, HmiMappings.ConfigPath(Path.GetDirectoryName(projectPath)))
+                    ? HmiRecovery.Lock(SessionFile.SessionDir, configFile)
                         ?? throw new InvalidOperationException("hmi_mapping_busy")
                     : null;
                 if (command == "hmi-refresh-mappings" && !recover)
                 {
                     // A mapping a stopped refresh left unmapped must be recovered first; a new refresh would overwrite its record.
-                    var configFile = HmiMappings.ConfigPath(Path.GetDirectoryName(projectPath));
                     var recordPath = HmiRecovery.PathFor(SessionFile.SessionDir, configFile);
                     HmiRecovery.Record pending;
                     try { pending = HmiRecovery.Read(SessionFile.SessionDir, configFile); }
@@ -84,7 +84,7 @@ namespace TcAutomation.Commands
                     // ADS checks come first: an unreachable PLC must stop this before the HMI API is touched.
                     stage = "hmi_mapping_prepare";
                     var root = Path.GetDirectoryName(projectPath);
-                    using (var config = HmiMappings.Read(HmiMappings.ConfigPath(root)))
+                    using (var config = HmiMappings.Read(configFile))
                         plan = HmiMappings.Select(root, config.RootElement, Requested(args));
                     stage = "hmi_mapping_ads";
                     missing = CheckTargets(plan, started, timeout);
@@ -246,7 +246,7 @@ namespace TcAutomation.Commands
         private static object Refresh(Assembly sdk, object project, string projectPath, HmiMappings.Plan plan,
             List<object> missing, string sdkVersion, Stopwatch started, int timeout)
         {
-            var configPath = HmiMappings.ConfigPath(Path.GetDirectoryName(projectPath));
+            var configPath = HmiPolicy.ServerConfig(projectPath);
             var skipped = plan.Skipped.Select(s => (object)new { name = s.Key, reason = s.Value }).Concat(missing).ToList();
             if (plan.Eligible.Count == 0)
                 return new { Success = false, code = "hmi_mapping_nothing_selected", outcomeUnknown = false, skipped,
@@ -397,15 +397,11 @@ namespace TcAutomation.Commands
             }
         }
 
-        /// <summary>
-        /// Settles the record a stopped refresh left. An absent mapping gets its original entry back. A mapping
-        /// bound to the original target (a remap that finished) gets its preserved fields back. An identical
-        /// entry needs no write. Any other entry is never overwritten. Every branch verifies the persisted
-        /// result and the referenced definitions before the record is cleared.
-        /// </summary>
+        /// <summary>Settles a stopped refresh's record by HmiRecovery.Decide. Never overwrites an entry with another
+        /// target. Verifies the persisted result and the definitions before the record is cleared.</summary>
         private static object Recover(Assembly sdk, object project, string projectPath, string sdkVersion)
         {
-            var configPath = HmiMappings.ConfigPath(Path.GetDirectoryName(projectPath));
+            var configPath = HmiPolicy.ServerConfig(projectPath);
             var recordPath = HmiRecovery.PathFor(SessionFile.SessionDir, configPath);
             HmiRecovery.Record record;
             try { record = HmiRecovery.Read(SessionFile.SessionDir, configPath); }
@@ -420,13 +416,8 @@ namespace TcAutomation.Commands
             if (HmiRecovery.OwnerRunning(record))
                 return new { Success = false, code = "hmi_recovery_owner_running", outcomeUnknown = false, symbol = record.Symbol, recordPath,
                     message = "The worker that wrote this recovery record is still running. Close its context first." };
-            if (!string.Equals(Path.GetFullPath(record.ProjectPath), projectPath, StringComparison.OrdinalIgnoreCase))
-                return new { Success = false, code = "hmi_recovery_unreadable", outcomeUnknown = false, recordPath,
-                    message = "The recovery record names another project. Nothing was changed." };
             if (!Resolves(sdk, "WriteSymbolJson", typeof(string), typeof(string))) return Failure("hmi_sdk_method_unavailable");
-            string domain;
-            using (var parsed = JsonDocument.Parse(record.OriginalEntry))
-                domain = parsed.RootElement.TryGetProperty("DOMAIN", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+            var domain = HmiMappings.Field(record.OriginalEntry, "DOMAIN");
             object server = Call(sdk, project, "ITcHmiProject", "GetServerInterface");
             if (domain == null || !ServerReady(sdk, server, new[] { domain })) return Failure("hmi_server_not_ready");
 

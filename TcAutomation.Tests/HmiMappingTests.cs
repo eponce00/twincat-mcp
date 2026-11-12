@@ -130,6 +130,12 @@ static class HmiMappingTests
             Refuse("hmi_recovery_unreadable", () => HmiRecovery.Read(state, cfgB));
             File.WriteAllText(HmiRecovery.PathFor(state, cfgB), "{");
             Refuse("hmi_recovery_unreadable", () => HmiRecovery.Read(state, cfgB));
+            // An entry that is not a JSON object is a corrupt record, not a server fault.
+            foreach (var bad in new[] { "[]", "{", "" })
+            {
+                HmiRecovery.Write(state, new HmiRecovery.Record { ProjectPath = "p", ConfigPath = cfgB, Symbol = "s", OriginalEntry = bad });
+                Refuse("hmi_recovery_unreadable", () => HmiRecovery.Read(state, cfgB));
+            }
             HmiRecovery.Clear(state, cfgA);
             HmiRecovery.Clear(state, cfgA);
             Check(HmiRecovery.Read(state, cfgA) == null);

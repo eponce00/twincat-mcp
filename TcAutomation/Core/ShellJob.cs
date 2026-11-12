@@ -108,12 +108,6 @@ namespace TcAutomation.Core
             return (int)accounting.ActiveProcesses;
         }
 
-        public bool Contains(Process process)
-        {
-            if (_job == IntPtr.Zero) return false;
-            return IsProcessInJob(process.Handle, _job, out var member) && member;
-        }
-
         public void Dispose()
         {
             if (_job == IntPtr.Zero) return;
@@ -121,14 +115,10 @@ namespace TcAutomation.Core
             _job = IntPtr.Zero;
         }
 
-        static string EnvironmentBlock(ProcessStartInfo start)
-        {
-            // The same Unicode block Process.Start builds: sorted, NUL-separated, double NUL at the end.
-            var keys = start.Environment.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase);
-            var block = new StringBuilder();
-            foreach (var key in keys) block.Append(key).Append('=').Append(start.Environment[key]).Append('\0');
-            return block.Append('\0').ToString();
-        }
+        // The same Unicode block Process.Start builds: sorted, NUL-separated, double NUL at the end.
+        static string EnvironmentBlock(ProcessStartInfo start) =>
+            string.Concat(start.Environment.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase)
+                .Select(k => k + "=" + start.Environment[k] + "\0")) + "\0";
 
         const uint CreateSuspended = 0x4, CreateUnicodeEnvironment = 0x400, CreateNoWindow = 0x08000000;
         const uint JobObjectLimitBreakawayOk = 0x800, JobObjectLimitKillOnJobClose = 0x2000;
@@ -182,8 +172,6 @@ namespace TcAutomation.Core
         static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool TerminateJobObject(IntPtr job, uint exitCode);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         static extern bool CreateProcess(string application, StringBuilder commandLine, IntPtr processAttributes,
             IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string? currentDirectory,
