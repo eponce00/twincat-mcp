@@ -8,7 +8,7 @@ Submitted operations require a request key. Immediate operations and `job.wait`
 do not. Each marked operation requires a scoped grant.
 
 [PLC objects](plc-objects.md), [moving objects](moving-objects.md),
-[build feedback](build-feedback.md) and [security review](contributor-security-review.md)
+[build feedback](build-feedback.md), [deploying](deploying.md) and [security review](contributor-security-review.md)
 describe supported behavior and limits.
 
 ## Context
@@ -42,6 +42,7 @@ describe supported behavior and limits.
 | `engineering.list_objects` | Browse one PLC project folder or object. Omit path to discover the selected PLC root. Returns bounded child metadata and nextOffset. | `contextHandle` | No | Job |
 | `engineering.list_plcs` | List PLC projects, configured ADS ports and boot-project settings in the solution. | `contextHandle` | No | Job |
 | `engineering.list_tasks` | List configured real-time tasks with cycle times, priorities and enabled state. | `contextHandle` | No | Job |
+| `engineering.list_variants` | Read-only: list the project's variants with the target and build configuration each deploys, the solution's current selection, and an ordered deployment plan (one context per target). Reads only the context target's platform over ADS unless probeTargets is set. | `contextHandle` | No | Job |
 | `engineering.matching_login` | Log into the unchanged baseline in this engineering context. Requires retained compile information, matching configuration/platform, configured ADS port and a RUN application. Rejects download/change prompts. | `port`, `configuration`, `platform`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.move_object` | Relocate a top-level PLC object or project folder within the context PLC, preserving native bytes, GUIDs and nested members. Offline only; requires current subtree hash and CONFIRM. Saves and reloads the owned solution. Rejects conflicts, linked paths and member-only moves. Recovery records and rollback evidence are returned; no crash-atomicity or replay. | `path`, `expectedSha256`, `contextHandle`, `grantHandle`, `newParentPath`, `confirm` | Yes | Job |
 | `engineering.online_change` | Apply one online change in the already logged-in matching PLC context. Verify one counter increment and advancing cycles. Never substitute download, activate, restart or boot-project update. | `port`, `contextFile`, `cycleSymbol`, `expectedOnlineChangeCount`, `confirm`, `contextHandle`, `grantHandle` | Yes | Job |
@@ -51,7 +52,7 @@ describe supported behavior and limits.
 | `engineering.restart` | Restart the TwinCAT runtime on the context target. Requires an operation-scoped grant and CONFIRM. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
 | `engineering.set_boot_project` | Configure autostart and generate the selected PLC boot project on the context target. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.set_target` | Set the solution target to the AMS Net ID fixed by context.open. Does not activate. | `contextHandle`, `grantHandle` | Yes | Job |
-| `engineering.set_variant` | Get or set the solution variant. Requires TwinCAT XAE 4024 or newer; omit variantName to query. | `contextHandle`, `grantHandle` | Yes | Job |
+| `engineering.set_variant` | Get or set the solution variant. Setting applies the variant's build configuration/platform from the .tsproj, as XAE's variant selector does, and refuses a variant whose TargetNetId is not the context target. Requires TwinCAT XAE 4024 or newer; omit variantName to query. | `contextHandle`, `grantHandle` | Yes | Job |
 | `engineering.static_analysis` | Run TE1200 static analysis and return rule violations. Requires the appropriate license. | `contextHandle` | No | Job |
 | `engineering.symbols` | Read a bounded page of runtime symbols or data types from the selected PLC TMC. Returns file/source fingerprints and provenance of the last build observed in this context. Existing/stale files are not proof of a successful current build. | `contextHandle` | No | Job |
 | `engineering.update_object` | Edit and save declaration, ST implementation or explicit linking policy offline. Requires the full object sha256 from read_object. Logged-in projects are rejected; online source editing remains separate. | `path`, `expectedSha256`, `contextHandle`, `grantHandle` | Yes | Job |
@@ -112,7 +113,7 @@ describe supported behavior and limits.
 | Operation | Purpose | Required arguments | Grant | Execution |
 | --- | --- | --- | --- | --- |
 | `workflow.build_verify` | Build and verify expected TMC symbols and/or types in one operation. Compilation success and artifact verification are reported separately. Requires explicit expectations; preserves last-good artifacts on failure. | `contextHandle` | No | Job |
-| `workflow.deploy` | Build, prepare the boot project, activate configuration and restart the context target. Returns the native deployment receipt. dryRun previews the workflow. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
+| `workflow.deploy` | Build, prepare the boot project, activate configuration and restart the context target. Selects the build configuration and platform first (variant, explicit configuration/platform, or the target's own platform), reads the target's platform over ADS and refuses a mismatch before building or downloading. dryRun previews the selection and steps; the receipt reports variant, configuration, platform and whether the platform was verified. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
 | `workflow.sequence` | Run up to 32 validated catalog operations in order, stopping on first failure. Each step includes its handles. No rollback, nesting or replay. | `steps` | No | Job |
 | `workflow.test` | Build, configure the test task and boot project, optionally disable I/O, activate, restart and poll TcUnit results on the context target. Requires a grant even for local targets. | `contextHandle`, `grantHandle`, `confirm` | Yes | Job |
 | `workflow.wait_state` | Poll runtime state until expectedState or timeout; returns final observation and attempt count. | `amsNetId`, `expectedState` | No | Job |

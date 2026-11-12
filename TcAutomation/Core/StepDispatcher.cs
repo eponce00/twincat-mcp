@@ -190,9 +190,21 @@ namespace TcAutomation.Core
                     }
                     case "set-variant":
                     {
+                        if (GetBool(argsElement, "list", hasArgs) == true)
+                        {
+                            // engineering.list_variants: read-only, served by the shell that holds the solution.
+                            List<string>? order = null;
+                            if (hasArgs && argsElement.TryGetProperty("order", out var orderElement) && orderElement.ValueKind == JsonValueKind.Array)
+                            {
+                                order = new List<string>();
+                                foreach (var item in orderElement.EnumerateArray()) order.Add(item.GetString() ?? "");
+                            }
+                            return VariantsCommand.ExecuteInSession(vsInstance, solutionPath, GetString(argsElement, "amsNetId", hasArgs),
+                                order, GetBool(argsElement, "probeTargets", hasArgs) ?? false);
+                        }
                         string? variantName = GetString(argsElement, "variantName", hasArgs) ?? GetString(argsElement, "variant", hasArgs);
                         bool getOnly = GetBool(argsElement, "getOnly", hasArgs) ?? GetBool(argsElement, "get", hasArgs) ?? false;
-                        return SetVariantCommand.ExecuteInSession(vsInstance, solutionPath, variantName, getOnly);
+                        return SetVariantCommand.ExecuteInSession(vsInstance, solutionPath, variantName, getOnly, GetString(argsElement, "amsNetId", hasArgs));
                     }
                     case "list-tasks":
                     {
@@ -247,10 +259,18 @@ namespace TcAutomation.Core
                     {
                         string amsNetId = GetString(argsElement, "amsNetId", hasArgs)
                             ?? throw new ArgumentException("deploy requires args.amsNetId");
-                        string? plcName = GetString(argsElement, "plcName", hasArgs) ?? GetString(argsElement, "plc", hasArgs);
-                        bool skipBuild = GetBool(argsElement, "skipBuild", hasArgs) ?? false;
-                        bool dryRun = GetBool(argsElement, "dryRun", hasArgs) ?? false;
-                        return DeployCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId, plcName, skipBuild, dryRun);
+                        var options = new DeployOptions
+                        {
+                            PlcName = GetString(argsElement, "plcName", hasArgs) ?? GetString(argsElement, "plc", hasArgs),
+                            SkipBuild = GetBool(argsElement, "skipBuild", hasArgs) ?? false,
+                            DryRun = GetBool(argsElement, "dryRun", hasArgs) ?? false,
+                            Variant = GetString(argsElement, "variant", hasArgs),
+                            Configuration = GetString(argsElement, "configuration", hasArgs),
+                            Platform = GetString(argsElement, "platform", hasArgs),
+                            GenerateBootProject = GetBool(argsElement, "generateBootProject", hasArgs) ?? true,
+                            AllowUnverifiedPlatform = GetBool(argsElement, "allowUnverifiedPlatform", hasArgs) ?? false,
+                        };
+                        return DeployCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId, options);
                     }
                     case "run-tcunit":
                     {

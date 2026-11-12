@@ -16,13 +16,7 @@ namespace TcAutomation.Commands
         /// CLI entrypoint: opens a one-shot VS instance, runs the deploy workflow,
         /// closes it, and writes the JSON result to stdout.
         /// </summary>
-        public static int Execute(
-            string solutionPath, 
-            string amsNetId, 
-            string? plcName = null,
-            string? tcVersion = null,
-            bool skipBuild = false,
-            bool dryRun = false)
+        public static int Execute(string solutionPath, string amsNetId, string? tcVersion, DeployOptions options)
         {
             if (!IsValidAmsNetId(amsNetId))
             {
@@ -45,7 +39,7 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var result = ExecuteInSession(vsInstance, solutionPath, amsNetId, plcName, skipBuild, dryRun);
+                var result = ExecuteInSession(vsInstance, solutionPath, amsNetId, options);
 
                 // Keep camelCase to match the legacy CLI output format.
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions
@@ -79,11 +73,10 @@ namespace TcAutomation.Commands
             VisualStudioInstance vsInstance,
             string solutionPath,
             string amsNetId,
-            string? plcName = null,
-            bool skipBuild = false,
-            bool dryRun = false)
+            DeployOptions options)
         {
             var steps = new List<object>();
+            bool dryRun = options.DryRun;
             var result = new DeployResult
             {
                 Solution = solutionPath,
@@ -110,7 +103,6 @@ namespace TcAutomation.Commands
                 }
                 string projectTcVersion = TcFileUtilities.GetTcVersion(tcProjectPath);
                 steps.Add(new { step = 1, action = "Found TwinCAT project", tcVersion = projectTcVersion });
-                steps.Add(new { step = 2, action = "Reused shared solution" });
 
                 var automationInterface = new AutomationInterface(vsInstance);
                 if (automationInterface.PlcTreeItem.ChildCount <= 0)
@@ -120,9 +112,64 @@ namespace TcAutomation.Commands
                     return result;
                 }
                 int plcCount = automationInterface.PlcTreeItem.ChildCount;
+
+                // What to build, decided before anything is built or downloaded. The shell may be shared with an
+                // earlier session, so its active configuration is never trusted as is.
+                var (activeConfiguration, activePlatform) = SolutionPlatform.Active(vsInstance);
+                var target = TargetPlatform.Read(amsNetId);
+                result.Target = target;
+                BuildSelection selection;
+                try
+                {
+                    selection = BuildPlanner.Resolve(ProjectVariants.Read(tcProjectPath), options.Variant, options.Configuration,
+                        options.Platform, activeConfiguration, activePlatform, amsNetId, target, options.AllowUnverifiedPlatform);
+                }
+                catch (DeployRefusedException refused)
+                {
+                    steps.Add(new { step = 2, action = "Deployment refused before building", reason = refused.Message, active = activeConfiguration + "|" + activePlatform });
+                    result.Success = false;
+                    result.ErrorMessage = refused.Message;
+                    return result;
+                }
+                result.Variant = selection.Variant;
+                result.Configuration = selection.Configuration;
+                result.Platform = selection.Platform;
+                result.PlatformVerified = selection.PlatformVerified;
+                result.PlatformStatus = selection.PlatformStatus;
+                steps.Add(new
+                {
+                    step = 2,
+                    action = "Selected build",
+                    variant = selection.Variant,
+                    configuration = selection.Configuration,
+                    platform = selection.Platform,
+                    source = selection.Source,
+                    previous = activeConfiguration + "|" + activePlatform,
+                    target = target.TargetType,
+                    platformStatus = selection.PlatformStatus,
+                    dryRun
+                });
+
+                if (options.SkipBuild && !(Same(activeConfiguration, selection.Configuration) && Same(activePlatform, selection.Platform)))
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"skipBuild needs the last build to be '{selection.Configuration}|{selection.Platform}', but the solution is on '{activeConfiguration}|{activePlatform}'. Build for the new platform.";
+                    return result;
+                }
+
+                if (!dryRun)
+                {
+                    if (selection.Variant != null)
+                    {
+                        var sysManager14 = (ITcSysManager14)automationInterface.SystemManager;
+                        if (!Same(sysManager14.CurrentProjectVariant ?? "", selection.Variant))
+                            sysManager14.CurrentProjectVariant = selection.Variant;
+                    }
+                    SolutionPlatform.Select(vsInstance, automationInterface, selection.Configuration, selection.Platform);
+                }
                 steps.Add(new { step = 3, action = $"Found {plcCount} PLC project(s)" });
 
-                if (!skipBuild)
+                if (!options.SkipBuild)
                 {
                     if (!dryRun)
                     {
@@ -138,22 +185,30 @@ namespace TcAutomation.Commands
                             result.BuildErrors = CollectErrors(errorItems);
                             return result;
                         }
+                        var (builtConfiguration, builtPlatform) = SolutionPlatform.Active(vsInstance);
+                        if (!Same(builtConfiguration, selection.Configuration) || !Same(builtPlatform, selection.Platform))
+                        {
+                            result.Success = false;
+                            result.ErrorMessage = $"The build ran as '{builtConfiguration}|{builtPlatform}', not '{selection.Configuration}|{selection.Platform}'. Nothing was downloaded.";
+                            return result;
+                        }
                     }
-                    steps.Add(new { step = 4, action = "Build completed", dryRun = dryRun });
+                    steps.Add(new { step = 4, action = "Build completed", configuration = selection.Configuration, platform = selection.Platform, dryRun });
                 }
                 else
                 {
-                    steps.Add(new { step = 4, action = "Build skipped" });
+                    steps.Add(new { step = 4, action = "Build skipped", configuration = selection.Configuration, platform = selection.Platform });
                 }
 
                 if (!dryRun)
                 {
                     automationInterface.TargetNetId = amsNetId;
                 }
-                steps.Add(new { step = 5, action = $"Set target to {amsNetId}", dryRun = dryRun });
+                steps.Add(new { step = 5, action = $"Set target to {amsNetId}", dryRun });
 
                 var deployedPlcs = new List<string>();
                 bool foundTargetPlc = false;
+                string? plcName = options.PlcName;
 
                 for (int i = 1; i <= automationInterface.PlcTreeItem.ChildCount; i++)
                 {
@@ -171,7 +226,10 @@ namespace TcAutomation.Commands
                     {
                         ITcPlcProject iecProject = (ITcPlcProject)plcProject;
                         iecProject.BootProjectAutostart = true;
-                        iecProject.GenerateBootProject(true);
+                        // Generating the boot project separately re-enables disabled PLC projects on some
+                        // solutions; without it the activation writes the boot files.
+                        if (options.GenerateBootProject)
+                            iecProject.GenerateBootProject(true);
                     }
 
                     deployedPlcs.Add(plcProject.Name);
@@ -189,7 +247,7 @@ namespace TcAutomation.Commands
                     return result;
                 }
 
-                steps.Add(new { step = 6, action = "Activated boot project", plcs = deployedPlcs, dryRun = dryRun });
+                steps.Add(new { step = 6, action = options.GenerateBootProject ? "Boot project generated, autostart on" : "Autostart on; the activation writes the boot project", plcs = deployedPlcs, dryRun });
 
                 if (!dryRun)
                 {
@@ -212,7 +270,7 @@ namespace TcAutomation.Commands
                 }
                 else
                 {
-                    steps.Add(new { step = 7, action = "Configuration activated", dryRun = dryRun });
+                    steps.Add(new { step = 7, action = "Configuration activated", dryRun });
                 }
 
                 if (!dryRun)
@@ -220,13 +278,14 @@ namespace TcAutomation.Commands
                     automationInterface.StartRestartTwinCAT();
                     System.Threading.Thread.Sleep(10000);
                 }
-                steps.Add(new { step = 8, action = "TwinCAT restarted", dryRun = dryRun });
+                steps.Add(new { step = 8, action = "TwinCAT restarted", dryRun });
 
                 result.Success = true;
                 result.DeployedPlcs = deployedPlcs;
+                string build = $"{selection.Configuration}|{selection.Platform}{(selection.PlatformVerified ? "" : " (platform not verified)")}";
                 result.Message = dryRun
-                    ? $"DRY RUN: Would deploy to {amsNetId}"
-                    : $"Successfully deployed to {amsNetId}";
+                    ? $"DRY RUN: Would deploy {build} to {amsNetId}"
+                    : $"Deployed {build} to {amsNetId}";
                 return result;
             }
             catch (Exception ex)
@@ -236,6 +295,8 @@ namespace TcAutomation.Commands
                 return result;
             }
         }
+
+        static bool Same(string a, string b) => string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
 
         private static bool IsValidAmsNetId(string amsNetId)
         {
@@ -312,5 +373,24 @@ namespace TcAutomation.Commands
         public string? ErrorMessage { get; set; }
         public List<object>? BuildErrors { get; set; }
         public ActivationWaitResult? Activation { get; set; }
+        public string? Variant { get; set; }
+        public string? Configuration { get; set; }
+        public string? Platform { get; set; }
+        public bool PlatformVerified { get; set; }
+        public string? PlatformStatus { get; set; }
+        public TargetDescription? Target { get; set; }
+    }
+
+    /// <summary>What a deployment does; every field has the workflow's documented default.</summary>
+    public class DeployOptions
+    {
+        public string? PlcName { get; set; }
+        public bool SkipBuild { get; set; }
+        public bool DryRun { get; set; }
+        public string? Variant { get; set; }
+        public string? Configuration { get; set; }
+        public string? Platform { get; set; }
+        public bool GenerateBootProject { get; set; } = true;
+        public bool AllowUnverifiedPlatform { get; set; }
     }
 }

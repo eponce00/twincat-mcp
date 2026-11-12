@@ -194,10 +194,31 @@ namespace TcAutomation
                 getDefaultValue: () => false);
             deployCommand.AddOption(dryRunOption);
             
-            deployCommand.SetHandler((string solution, string amsNetId, string? tcVersion, string? plc, bool skipBuild, bool dryRun) =>
+            var deployVariantOpt = new Option<string?>(new[] { "--variant" }, "Project variant to deploy; applies its build configuration (its target must be --amsnetid)");
+            var deployConfigurationOpt = new Option<string?>(new[] { "--configuration" }, "Solution configuration, e.g. Debug");
+            var deployPlatformOpt = new Option<string?>(new[] { "--platform" }, "Solution platform, e.g. 'TwinCAT RT (x64)'; must match the target");
+            var deployNoBootOpt = new Option<bool>(new[] { "--no-boot-project" }, () => false, "Set autostart only; the activation writes the boot project");
+            var deployUnverifiedOpt = new Option<bool>(new[] { "--allow-unverified-platform" }, () => false, "Deploy when the target description cannot be read");
+            deployCommand.AddOption(deployVariantOpt);
+            deployCommand.AddOption(deployConfigurationOpt);
+            deployCommand.AddOption(deployPlatformOpt);
+            deployCommand.AddOption(deployNoBootOpt);
+            deployCommand.AddOption(deployUnverifiedOpt);
+            deployCommand.SetHandler((System.CommandLine.Invocation.InvocationContext ctx) =>
             {
-                DeployCommand.Execute(solution, amsNetId, plc, tcVersion, skipBuild, dryRun);
-            }, deploySolutionOpt, deployAmsOpt, deployTcVersionOpt, plcOption, skipBuildOption, dryRunOption);
+                var r = ctx.ParseResult;
+                DeployCommand.Execute(r.GetValueForOption(deploySolutionOpt)!, r.GetValueForOption(deployAmsOpt)!, r.GetValueForOption(deployTcVersionOpt), new DeployOptions
+                {
+                    PlcName = r.GetValueForOption(plcOption),
+                    SkipBuild = r.GetValueForOption(skipBuildOption),
+                    DryRun = r.GetValueForOption(dryRunOption),
+                    Variant = r.GetValueForOption(deployVariantOpt),
+                    Configuration = r.GetValueForOption(deployConfigurationOpt),
+                    Platform = r.GetValueForOption(deployPlatformOpt),
+                    GenerateBootProject = !r.GetValueForOption(deployNoBootOpt),
+                    AllowUnverifiedPlatform = r.GetValueForOption(deployUnverifiedOpt),
+                });
+            });
 
             // === LIST-PLCS COMMAND ===
             var listPlcsCommand = new Command("list-plcs", "List all PLC projects in a TwinCAT solution");

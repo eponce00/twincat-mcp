@@ -31,6 +31,7 @@
     <Compile Include="ReviewTests.cs" />
     <Compile Include="ActivationWaitTests.cs" />
     <Compile Include="HmiTests.cs" />
+    <Compile Include="DeployPlatformTests.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
