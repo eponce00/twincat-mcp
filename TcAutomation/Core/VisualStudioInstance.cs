@@ -165,6 +165,7 @@ namespace TcAutomation.Core
                 Console.Error.WriteLine($"[DEBUG] .suo cleanup failed (non-fatal): {ex.Message}");
             }
 
+            if (HmiOnly) SnapshotHmiProjects();
             _solution = _dte.Solution;
             _solution.Open(_solutionFilePath);
             LastBuildArtifacts.Clear();
@@ -413,6 +414,72 @@ namespace TcAutomation.Core
         /// </summary>
         private const int TeardownTimeoutMs = 30000;
 
+        // HMI-only: each .hmiproj and its server configuration as they were before the shell opened the solution.
+        private readonly Dictionary<string, byte[]> _hmiProjectsAtOpen =
+            new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+
+        private void SnapshotHmiProjects()
+        {
+            lock (_hmiProjectsAtOpen)
+            {
+                _hmiProjectsAtOpen.Clear();
+                string[] projects;
+                try { projects = HmiPolicy.HmiProjects(_solutionFilePath); }
+                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] .hmiproj snapshot failed (non-fatal): {ex.Message}"); return; }
+                foreach (var path in projects)
+                    foreach (var file in new[] { path, HmiPolicy.ServerConfig(path) })
+                    {
+                        try { if (File.Exists(file)) _hmiProjectsAtOpen[file] = File.ReadAllBytes(file); }
+                        catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] Snapshot of {Path.GetFileName(file)} failed (non-fatal): {ex.Message}"); }
+                    }
+            }
+        }
+
+        /// <summary>
+        /// Measured (TE2000 1.12.762.57): with ports 3000/13000 busy, the shell writes the engineering
+        /// ports it picked into .hmiproj on an HMI build and on exit, and its server writes them into
+        /// the ENDPOINTS of TcHmiSrv.Config.default.json on load. Once the shell and its job are gone,
+        /// put those ports back (HmiPolicy.PortRestore). Any other change is kept. A server outside the
+        /// job (breakaway, or started by COM) that still holds its lock blocks the whole restore.
+        /// </summary>
+        private void RestoreHmiProjects()
+        {
+            lock (_hmiProjectsAtOpen)
+            {
+                if (_hmiProjectsAtOpen.Count == 0) return;
+                var locks = HmiPolicy.HoldServerLocks(_solutionFilePath, _hmiProjectsAtOpen.Keys);
+                if (locks == null)
+                {
+                    Console.Error.WriteLine("[DEBUG] An engineering server still holds its lock; engineering ports are not restored");
+                    _hmiProjectsAtOpen.Clear();
+                    return;
+                }
+                try
+                {
+                    foreach (var entry in _hmiProjectsAtOpen)
+                    {
+                        try
+                        {
+                            // One exclusive handle: no other save can land between the check and the write.
+                            using var file = new FileStream(entry.Key, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                            var buffer = new MemoryStream();
+                            file.CopyTo(buffer);
+                            var now = buffer.ToArray();
+                            var restored = HmiPolicy.PortRestore(entry.Key, entry.Value, now);
+                            if (restored == null) continue;
+                            file.Position = 0;
+                            file.Write(restored, 0, restored.Length);
+                            file.SetLength(restored.Length);
+                            Console.Error.WriteLine($"[DEBUG] Restored engineering ports in {Path.GetFileName(entry.Key)}");
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] Port restore failed for {Path.GetFileName(entry.Key)}: {ex.Message}"); }
+                    }
+                }
+                finally { foreach (var held in locks) held.Dispose(); }
+                _hmiProjectsAtOpen.Clear();
+            }
+        }
+
         /// <summary>
         /// Close Visual Studio instance. Terminates the owned shell if Quit
         /// leaves it running or does not return within the teardown bound.
@@ -496,18 +563,18 @@ namespace TcAutomation.Core
         }
 
         /// <summary>
-        /// Kill the shell this instance started, through its launch handle.
-        /// Touches no other process. Thread-safe and repeatable: one lock covers
-        /// the attempt, so a concurrent caller waits for its result. True once
-        /// the shell is confirmed gone or none was started. On false the handle
-        /// is KEPT for a retry, and the PID stays recorded.
+        /// Kill the shell this instance started, through its launch handle. For an
+        /// HMI shell, then end the processes left in its job. Touches no other
+        /// process. Thread-safe and repeatable: one lock covers the attempt, so a
+        /// concurrent caller waits for its result. True once the shell is confirmed
+        /// gone or none was started. On false the handle or job is KEPT for a retry.
         /// </summary>
         public bool KillOwnedProcess(string reason)
         {
             lock (_ownedProcessLock)
             {
                 var owned = _ownedProcess;
-                if (owned == null) return true;
+                if (owned == null) return EndShellJob();
 
                 bool exited;
                 try
@@ -539,8 +606,45 @@ namespace TcAutomation.Core
                 OwnedProcessLeftRunning = false;
                 DteProcessId = null;
                 DteProcessStartTimeUtc = null;
-                return true;
+                return EndShellJob();
             }
+        }
+
+        // HMI-only: the job holding the shell and the processes it starts.
+        private ShellJob? _shellJob;
+        private bool _shellJobRetried;
+
+        /// <summary>
+        /// After the shell is gone, end what it left running (HMI engineering servers), then restore
+        /// engineering ports. A first timeout keeps the job and returns false. The retry waits 1 s,
+        /// then lets the job go, so leftovers never block the next shell. A server left running can
+        /// still write (assumed), so a released job gets no restore. Called under _ownedProcessLock.
+        /// </summary>
+        private bool EndShellJob()
+        {
+            bool membersGone = true;
+            if (_shellJob != null)
+            {
+                if (!_shellJob.End(_shellJobRetried ? 1000 : 5000))
+                {
+                    Console.Error.WriteLine($"[DEBUG] {_shellJob.ActiveProcesses()} process(es) started by the HMI shell are not confirmed gone");
+                    if (!_shellJobRetried)
+                    {
+                        _shellJobRetried = true;
+                        OwnedProcessLeftRunning = true;
+                        return false;
+                    }
+                    Console.Error.WriteLine("[DEBUG] Releasing the HMI shell job with processes still in it; engineering ports are not restored");
+                    _shellJob.Dispose();
+                    membersGone = false;
+                }
+                _shellJob = null;
+                _shellJobRetried = false;
+                OwnedProcessLeftRunning = false;
+            }
+            if (membersGone) RestoreHmiProjects();
+            else lock (_hmiProjectsAtOpen) _hmiProjectsAtOpen.Clear();
+            return true;
         }
 
         /// <summary>
@@ -704,8 +808,12 @@ namespace TcAutomation.Core
                 if (_ownedProcess != null)
                     throw new InvalidOperationException(
                         $"This instance still owns XAE PID {_ownedProcess.Id}. No second shell is started.");
-                process = Process.Start(start)
-                    ?? throw new InvalidOperationException("XAE process did not start.");
+                if (_shellJob != null)
+                    throw new InvalidOperationException("Processes of the previous HMI shell are not confirmed gone. No second shell is started.");
+                // An HMI shell starts engineering servers that can outlive it: keep them in its job.
+                process = HmiOnly
+                    ? ShellJob.Start(start, out _shellJob)
+                    : Process.Start(start) ?? throw new InvalidOperationException("XAE process did not start.");
                 _ownedProcess = process;
                 OwnedProcessLeftRunning = false;
             }

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `hmi.refresh_mappings` refreshes ADS PLC symbol mappings, as the designer's
+  *Refresh mapping* does. It checks targets over ADS first, preserves mapping
+  settings and restores a mapping whose remap fails. A run that stops with a
+  mapping removed leaves a recovery record. `context.open_hmi` reports it, a new refresh is refused
+  until it is resolved, and `recover: true` writes the entry back and verifies
+  it. The catalog now has 73 entries (69 discoverable).
+- A host call that times out writes the host's recent output to a
+  `host-timeout-*.log` file in the MCP state folder and names that file.
+
+### Fixed
+
+- With ports 3000 and 13000 busy, the engineering ports change in `.hmiproj`
+  and in the `ENDPOINTS` of `TcHmiSrv.Config.default.json`. After the shell
+  exits, the worker restores them and keeps every other change (measured on
+  `context.close`). See `docs/hmi-publishing.md` for the conditions.
+- An HMI context that names another solution gets a new shell.
+- The worker starts an HMI shell in a Windows job and ends the job after the
+  shell exits, or Windows ends it when the worker dies (measured). A process
+  that breaks away from the job, or starts outside it, is left running.
+
 ## 3.1.0 — 2026-11-07
 
 ### Added

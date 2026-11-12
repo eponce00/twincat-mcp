@@ -2686,5 +2686,61 @@
       ],
       "additionalProperties": false
     }
+  },
+  {
+    "id": "hmi.refresh_mappings",
+    "description": "Refresh ADS PLC symbol mappings of the context HMI project from the live PLC, as the designer's Refresh mapping does. Checks targets over ADS first, skips missing ones, preserves mapping settings and restores a mapping whose remap fails. Before each unmap it keeps the original entry on disk; if a run stops with a mapping removed, context.open_hmi reports pendingRecovery and recover true writes that entry back. Never retried.",
+    "kind": "operation",
+    "command": "hmi-refresh-mappings",
+    "engineering": true,
+    "requiresGrant": true,
+    "readOnly": false,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "symbols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2000,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "recover": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write back the mapping a stopped refresh left removed, from its recovery record, instead of refreshing. Not with symbols."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 600,
+          "default": 180
+        },
+        "grantHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "confirm": {
+          "type": "string",
+          "const": "CONFIRM"
+        }
+      },
+      "required": [
+        "contextHandle",
+        "grantHandle",
+        "confirm"
+      ],
+      "additionalProperties": false
+    }
   }
 ]

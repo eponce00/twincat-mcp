@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from test_engine import FakeBackend
 
-from twincat_mcp.backend import Backend
+from twincat_mcp.backend import Backend, normalize
 from twincat_mcp.catalog import Catalog
 from twincat_mcp.engine import Engine
 from twincat_mcp.errors import OperationError
@@ -167,20 +167,120 @@ class HmiTests(unittest.TestCase):
 
     def test_hmi_catalog_is_discoverable(self):
         catalog = self.engine.catalog
-        self.assertEqual(5, len(catalog.search("", category="hmi")["matches"]))
+        self.assertEqual(6, len(catalog.search("", category="hmi")["matches"]))
         self.assertIn("context.open_hmi", catalog.get("hmi.publish")["prerequisites"][0])
         self.assertTrue(catalog.get("hmi.build")["requiresGrant"])
         self.assertFalse(catalog.get("hmi.preflight")["requiresGrant"])
 
 
+class HmiRefreshTests(unittest.TestCase):
+    setUp, tearDown, submit = HmiTests.setUp, HmiTests.tearDown, HmiTests.submit
+    context, grant = HmiTests.context, HmiTests.grant
+
+    def refresh_args(self, ctx, op="hmi.refresh_mappings", **extra):
+        return dict(contextHandle=ctx, grantHandle=self.grant(ctx, op), confirm="CONFIRM", **extra)
+
+    def test_discoverable(self):
+        catalog = self.engine.catalog
+        self.assertIn(
+            "hmi.refresh_mappings",
+            [m["operation"] for m in catalog.search("refresh mappings", category="hmi")["matches"]],
+        )
+        entry = catalog.describe(["hmi.refresh_mappings"])["operations"][0]
+        self.assertNotIn("available", entry)
+        self.assertTrue(entry["requiresGrant"])
+
+    def test_requires_its_own_grant(self):
+        ctx = self.context()
+        for other in ["hmi.build", "hmi.publish"]:
+            args = self.refresh_args(ctx, other)
+            self.assertEqual("failed", self.submit("hmi.refresh_mappings", args)[0]["state"])
+        self.assertFalse(self.backend.calls)
+        receipt = self.submit("hmi.refresh_mappings", self.refresh_args(ctx))[0]
+        self.assertEqual("succeeded", receipt["state"])
+        self.assertEqual("hmi.refresh_mappings", self.backend.calls[-1][0])
+
+    def test_plc_context_refused(self):
+        ctx = self.submit(
+            "context.open",
+            dict(solutionPath=str(self.solution), amsNetId="1.2.3.4.1.1", plcName="PLC"),
+        )[1]["contextHandle"]
+        receipt, result = self.submit("hmi.refresh_mappings", self.refresh_args(ctx))
+        self.assertEqual("failed", receipt["state"])
+        self.assertEqual("wrong_context_kind", result["code"])
+        self.assertFalse(self.backend.calls)
+
+    def test_symbol_list_bounds(self):
+        ctx = self.context()
+        for symbols in [
+            [],
+            ["a", "a"],
+            [""],
+            ["x" * 513],
+            "PLC1.GVL.x",
+            list(map(str, range(2001))),
+        ]:
+            with self.assertRaises(OperationError):
+                self.engine.execute(
+                    "hmi.refresh_mappings", self.refresh_args(ctx, symbols=symbols), "bad-symbols"
+                )
+        self.assertFalse(self.backend.calls)
+
+    def test_open_reports_pending_recovery_by_configuration_without_acting(self):
+        def opened():
+            args = dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/")
+            return self.submit("context.open_hmi", args)[1]
+
+        result = opened()
+        self.assertNotIn("pendingRecovery", result)
+        self.submit("context.close", dict(contextHandle=result["contextHandle"]))
+        folder = self.root / "state" / "hmi-recovery"
+        folder.mkdir(parents=True)
+        config = str(self.root / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json").upper()
+        record = dict(Version=1, Symbol="PLC1.GVL.x", OriginalEntry="{}", CreatedUtc="t")
+        # Found by its configuration, also after a rename. The same project with another configuration is not.
+        (folder / "a.json").write_text(json.dumps(dict(record, ProjectPath=str(self.root / "Old.hmiproj"), ConfigPath=config)))
+        (folder / "b.json").write_text(json.dumps(dict(record, Symbol="y", ProjectPath=str(self.project), ConfigPath="c")))
+        result = opened()
+        self.assertEqual([dict(symbol="PLC1.GVL.x", createdUtc="t")], result["pendingRecovery"])
+        self.assertFalse(self.backend.calls)
+        (folder / "a.json").unlink()
+        (folder / "b.json").write_text("{")
+        self.submit("context.close", dict(contextHandle=result["contextHandle"]))
+        self.assertEqual([dict(unreadable="b.json")], opened()["pendingRecovery"])
+
+    def test_recover_is_forwarded_and_typed(self):
+        ctx = self.context()
+        with self.assertRaises(OperationError):
+            self.engine.execute("hmi.refresh_mappings", self.refresh_args(ctx, recover="yes"), "bad-recover")
+        self.assertFalse(self.backend.calls)
+        self.assertEqual("succeeded", self.submit("hmi.refresh_mappings", self.refresh_args(ctx, recover=True))[0]["state"])
+        self.assertIs(True, self.backend.calls[-1][1]["recover"])
+
+    def test_uncertain_refresh_invalidates_context_and_replays(self):
+        ctx = self.context()
+        args = self.refresh_args(ctx, symbols=["PLC1.GVL.x"])
+        self.backend.result = dict(success=False, outcomeUnknown=True, symbol="PLC1.GVL.x")
+        first = self.submit("hmi.refresh_mappings", args, "refresh-once")
+        second = self.submit("hmi.refresh_mappings", args, "refresh-once")
+        self.assertEqual(first[0]["jobHandle"], second[0]["jobHandle"])
+        self.assertEqual(1, len(self.backend.calls))
+        self.assertEqual(["PLC1.GVL.x"], self.backend.calls[0][1]["symbols"])
+        self.assertEqual("failed", self.submit("hmi.refresh_mappings", args)[0]["state"])
+        self.assertEqual("failed", self.submit("hmi.inspect", dict(contextHandle=ctx))[0]["state"])
+        self.backend.result = dict(success=True, isPublishing=False)
+        self.assertTrue(self.submit("hmi.status", dict(contextHandle=ctx))[1]["success"])
+        self.assertEqual(2, len(self.backend.calls))
+
+
 class HmiBackendTests(unittest.TestCase):
-    def test_hmi_context_is_forwarded_without_plc_target(self):
+    def assert_hmi_step(self, operation, command, **extra):
         with patch(
             "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
         ) as run:
             Backend().run(
-                Catalog().get("hmi.inspect"),
-                {"contextHandle": "ctx"},
+                Catalog().get(operation),
+                {"contextHandle": "ctx", **extra},
                 {
                     "kind": "hmi",
                     "solutionPath": "Panel.sln",
@@ -188,10 +288,37 @@ class HmiBackendTests(unittest.TestCase):
                     "targetUrl": "https://host/",
                 },
             )
-            self.assertEqual("hmi-inspect", run.call_args.args[0])
+            self.assertEqual(command, run.call_args.args[0])
             self.assertEqual(
-                {"projectPath": "Panel.hmiproj", "targetUrl": "https://host/"},
+                {"projectPath": "Panel.hmiproj", "targetUrl": "https://host/", **extra},
                 run.call_args.args[1],
             )
             self.assertTrue(run.call_args.kwargs["hmi_only"])
             self.assertNotIn("amsNetId", run.call_args.args[1])
+
+    def test_hmi_context_is_forwarded_without_plc_target(self):
+        self.assert_hmi_step("hmi.inspect", "hmi-inspect")
+
+    def test_refresh_is_forwarded_as_hmi_step(self):
+        self.assert_hmi_step("hmi.refresh_mappings", "hmi-refresh-mappings", symbols=["PLC1.GVL.x"])
+
+    def test_timeout_log_is_named_without_its_folder(self):
+        from twincat_mcp.host import ShellHost
+
+        with tempfile.TemporaryDirectory() as folder, patch.dict("os.environ", {"TWINCAT_MCP_STATE_DIR": folder}):
+            host = ShellHost(Path("unused.exe"))
+            host._recent.append("12:00:00 [DEBUG] last line")
+            first = host._write_timeout_log("ensure-solution")
+            host._request_id += 1
+            second = host._write_timeout_log("ensure-solution")
+            self.assertNotIn(folder, first)
+            self.assertNotEqual(first, second)
+            name = first.split(" ")[0]
+            self.assertIn("last line", (Path(folder) / name).read_text(encoding="utf-8"))
+
+    def test_original_entry_keys_are_kept_verbatim(self):
+        entry = {"ACCESS": 3, "SCHEMA": {"$ref": "tchmi:server#/definitions/PLC1.ST_A"}}
+        result = normalize({"Recovery": {"Symbol": "x", "OriginalEntry": entry}, "OriginalEntry": entry})
+        self.assertEqual(entry, result["recovery"]["originalEntry"])
+        self.assertEqual(entry, result["originalEntry"])
+        self.assertEqual("x", result["recovery"]["symbol"])

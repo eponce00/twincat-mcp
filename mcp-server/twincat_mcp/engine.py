@@ -1,5 +1,6 @@
 """Application orchestration independent of transport and SDK types."""
 
+import json
 import os
 import secrets
 import threading
@@ -30,7 +31,25 @@ class Engine:
             or os.environ.get("TWINCAT_MCP_STATE_DIR")
             or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "twincat-mcp"
         )
+        self.state_root = root
         self.jobs = Jobs(root / "jobs.sqlite3", self.run)
+
+    def pending_recovery(self, project):
+        """Records a stopped refresh left for this project's server configuration (recover mode)."""
+        found = []
+        config = os.path.normcase(
+            str(Path(project).parent / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json")
+        )
+        for path in sorted((self.state_root / "hmi-recovery").glob("*.json")):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                # The record belongs to the configuration; a renamed project still finds it.
+                # Resolve it like projectPath, so an 8.3 short path still matches.
+                if os.path.normcase(str(Path(record["ConfigPath"]).resolve())) == config:
+                    found.append(dict(symbol=record["Symbol"], createdUtc=record["CreatedUtc"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                found.append(dict(unreadable=path.name))
+        return found
 
     def context_for(self, handle, allow_invalid=False):
         ctx = self.context
@@ -157,6 +176,8 @@ class Engine:
                     started=False,
                     invalid=False,
                 )
+                # Reported, never applied: recovery is an explicit, granted operation.
+                pending = operation == "context.open_hmi" and self.pending_recovery(args["projectPath"])
                 return dict(
                     success=True,
                     contextHandle=handle,
@@ -165,6 +186,7 @@ class Engine:
                         if operation == "context.open_hmi"
                         else {"target": args["amsNetId"], "plcName": args["plcName"]}
                     ),
+                    **({"pendingRecovery": pending} if pending else {}),
                 )
         if operation == "context.close":
             with self.lock:

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace TcAutomation.Core
@@ -12,6 +13,140 @@ namespace TcAutomation.Core
     /// <summary>Pure HMI publish policy, shared by native commands and offline tests.</summary>
     public static class HmiPolicy
     {
+        static readonly Regex EngineeringPort = new Regex(@"<(HmiCommunicationServerPort|HmiCommunicationServerAuthPort)>\d+</\1>");
+        static readonly Regex SolutionHmiProject = new Regex(@"""([^""]+\.hmiproj)""", RegexOptions.IgnoreCase);
+
+        // One char per byte, so no byte change can hide in a decoding. UTF-16 never matches: no restore.
+        static readonly Encoding Bytes = Encoding.GetEncoding(28591);
+
+        static readonly Regex LoopbackEndpoint = new Regex(@"^""http://127\.0\.0\.1:[0-9]+""$");
+
+        /// <summary>The server configuration whose ENDPOINTS the engineering server rewrites.</summary>
+        public static string ServerConfig(string hmiProject) =>
+            Path.Combine(Path.GetDirectoryName(hmiProject), "Server", "TcHmiSrv", "TcHmiSrv.Config.default.json");
+
+        /// <summary>
+        /// Exclusive handles on every engineering server lock of the solution, held while ports are restored.
+        /// Measured: a running server holds .engineering_servers\*\TcHmiSrv.lock, and none is left after a
+        /// clean close. Null if any lock is still held, or the locks cannot be listed: restore nothing.
+        /// </summary>
+        public static List<FileStream> HoldServerLocks(string solutionPath, IEnumerable<string> files)
+        {
+            var held = new List<FileStream>();
+            try
+            {
+                var roots = files.Where(f => f.EndsWith(".hmiproj", StringComparison.OrdinalIgnoreCase))
+                    .Select(p => Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(p))))
+                    .Append(Path.GetDirectoryName(Path.GetFullPath(solutionPath)))
+                    .Where(r => r != null).Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach (var folder in roots.Select(r => Path.Combine(r, ".engineering_servers")).Where(Directory.Exists))
+                    foreach (var path in Directory.GetFiles(folder, "TcHmiSrv.lock", SearchOption.AllDirectories))
+                    {
+                        try { held.Add(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)); }
+                        catch (FileNotFoundException) { }
+                    }
+                return held;
+            }
+            catch
+            {
+                foreach (var stream in held) stream.Dispose();
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The bytes to write back once the shell is gone, or null to leave the file. A .hmiproj comes back
+        /// whole if only its engineering ports changed. A server configuration gets only its original
+        /// ENDPOINTS array back, if only the ports of "http://127.0.0.1:port" elements changed, so other
+        /// edits (a refresh) stay.
+        /// </summary>
+        public static byte[] PortRestore(string path, byte[] original, byte[] current)
+        {
+            if (path.EndsWith(".hmiproj", StringComparison.OrdinalIgnoreCase))
+            {
+                string a = Bytes.GetString(original), b = Bytes.GetString(current);
+                return a != b && EngineeringPort.Replace(a, "<$1>#</$1>") == EngineeringPort.Replace(b, "<$1>#</$1>") ? original : null;
+            }
+            if (!EndpointsSpan(original, out int os, out int oe) || !EndpointsSpan(current, out int cs, out int ce)) return null;
+            if (Bytes.GetString(original, os, oe - os) == Bytes.GetString(current, cs, ce - cs)) return null;
+            var x = EndpointTokens(original, os, oe);
+            var y = EndpointTokens(current, cs, ce);
+            if (x == null || y == null || !x.SequenceEqual(y, StringComparer.Ordinal)) return null;
+            var result = new byte[current.Length - (ce - cs) + (oe - os)];
+            Buffer.BlockCopy(current, 0, result, 0, cs);
+            Buffer.BlockCopy(original, os, result, cs, oe - os);
+            Buffer.BlockCopy(current, ce, result, cs + (oe - os), current.Length - ce);
+            return result;
+        }
+
+        /// <summary>
+        /// The array as raw tokens and the bytes between them, with the port of each direct
+        /// "http://127.0.0.1:port" element masked. Null if it holds a comment.
+        /// </summary>
+        static List<string> EndpointTokens(byte[] json, int start, int end)
+        {
+            var parts = new List<string>();
+            try
+            {
+                var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(json, start, end - start),
+                    new JsonReaderOptions { CommentHandling = JsonCommentHandling.Allow });
+                int previous = 0;
+                while (reader.Read())
+                {
+                    if (reader.TokenType == JsonTokenType.Comment) return null;
+                    int at = (int)reader.TokenStartIndex, after = (int)reader.BytesConsumed;
+                    parts.Add(Bytes.GetString(json, start + previous, at - previous));
+                    var token = Bytes.GetString(json, start + at, after - at);
+                    bool port = reader.TokenType == JsonTokenType.String && reader.CurrentDepth == 1 && LoopbackEndpoint.IsMatch(token);
+                    parts.Add(port ? "\"http://127.0.0.1:#\"" : token);
+                    previous = after;
+                }
+                parts.Add(Bytes.GetString(json, start + previous, end - start - previous));
+                return parts;
+            }
+            catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException) { return null; }
+        }
+
+        /// <summary>Byte range of the one top-level ENDPOINTS array. False for anything else, UTF-16 included.</summary>
+        static bool EndpointsSpan(byte[] json, out int start, out int end)
+        {
+            start = end = -1;
+            int offset = json.Length >= 3 && json[0] == 0xEF && json[1] == 0xBB && json[2] == 0xBF ? 3 : 0;
+            int found = 0;
+            try
+            {
+                var reader = new Utf8JsonReader(new ReadOnlySpan<byte>(json, offset, json.Length - offset),
+                    new JsonReaderOptions { CommentHandling = JsonCommentHandling.Skip });
+                if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return false;
+                while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    bool match = reader.ValueTextEquals("ENDPOINTS");
+                    if (!reader.Read()) return false;
+                    if (match)
+                    {
+                        if (reader.TokenType != JsonTokenType.StartArray) return false;
+                        start = offset + (int)reader.TokenStartIndex;
+                        reader.Skip();
+                        end = offset + (int)reader.BytesConsumed;
+                        found++;
+                    }
+                    else reader.Skip();
+                }
+                if (reader.TokenType != JsonTokenType.EndObject || reader.Read()) return false;
+            }
+            catch (Exception ex) when (ex is JsonException || ex is InvalidOperationException) { return false; }
+            return found == 1;
+        }
+
+        /// <summary>Full paths of the .hmiproj files a solution names.</summary>
+        public static string[] HmiProjects(string solutionPath)
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(solutionPath));
+            return SolutionHmiProject.Matches(File.ReadAllText(solutionPath)).Cast<Match>()
+                .Select(m => Path.GetFullPath(Path.Combine(directory, m.Groups[1].Value)))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
         public static string Target(string value)
         {
             if (string.IsNullOrWhiteSpace(value) || value.Any(char.IsWhiteSpace) || value.Any(char.IsControl))

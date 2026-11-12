@@ -14,7 +14,7 @@ from .scope import ScopeSession
 
 def normalize(value):
     # Normalize protocol property names only; preserve case-sensitive symbol keys
-    # inside maps such as Values/Variables.
+    # inside maps such as Values/Variables, and an HMI entry kept verbatim (originalEntry).
     if isinstance(value, list):
         return [normalize(v) for v in value]
     if not isinstance(value, dict):
@@ -24,7 +24,7 @@ def normalize(value):
             {name: normalize(item) for name, item in v.items()}
             if k.lower() == "results" and isinstance(v, dict)
             else v
-            if k.lower() in {"values", "variables"}
+            if k.lower() in {"values", "variables", "originalentry"}
             else normalize(v)
         )
         for k, v in value.items()

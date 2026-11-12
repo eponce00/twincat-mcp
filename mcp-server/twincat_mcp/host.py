@@ -3,6 +3,7 @@
 Engine contexts own its lifetime; native parent-death cleanup covers crashes.
 """
 
+import collections
 import json
 import os
 import queue
@@ -145,6 +146,8 @@ class ShellHost:
         self._current_hmi_only = False
         self._ready_info: dict | None = None
         self._last_error: str | None = None
+        # Recent host stderr with times, written to a local file when a call times out.
+        self._recent: collections.deque[str] = collections.deque(maxlen=200)
 
     # ---------------- public API ----------------
 
@@ -240,6 +243,7 @@ class ShellHost:
                 "hmi-build",
                 "hmi-publish",
                 "hmi-status",
+                "hmi-refresh-mappings",
                 "build",
                 "build-symbols",
                 "info",
@@ -431,7 +435,11 @@ class ShellHost:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
-                raise HostError(f"{method} timed out after {timeout:.0f}s")
+                log = self._write_timeout_log(method)
+                raise HostError(
+                    f"{method} timed out after {timeout:.0f}s"
+                    + (f"; recent host output is in {log}" if log else "")
+                )
             try:
                 msg = self._responses.get(timeout=min(remaining, 0.5))
             except queue.Empty:
@@ -459,6 +467,21 @@ class ShellHost:
             else:
                 err = msg.get("error") or "host returned error"
                 raise HostError(str(err))
+
+    def _write_timeout_log(self, method: str) -> str | None:
+        """Keep the host's recent stderr locally. It can hold vendor text, so it never goes into a result."""
+        try:
+            folder = Path(
+                os.environ.get("TWINCAT_MCP_STATE_DIR")
+                or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "twincat-mcp"
+            )
+            folder.mkdir(parents=True, exist_ok=True)
+            # Unique per call; the result names the file only, never a path with the user's profile.
+            name = f"host-timeout-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{self._request_id}-{method}.log"
+            (folder / name).write_text("\n".join(list(self._recent)) + "\n", encoding="utf-8")
+            return name + " in the MCP state folder"
+        except OSError:
+            return None
 
     def _stdout_loop(self):
         try:
@@ -489,6 +512,7 @@ class ShellHost:
                 line = line.rstrip()
                 if not line:
                     continue
+                self._recent.append(time.strftime("%H:%M:%S ") + line)
                 if line.startswith("[PROGRESS]"):
                     clean = line[len("[PROGRESS]") :].strip()
                     with self._progress_lock:

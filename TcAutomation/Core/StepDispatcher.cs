@@ -21,7 +21,7 @@ namespace TcAutomation.Core
         /// </summary>
         public static readonly HashSet<string> ShellCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "hmi-inspect", "hmi-preflight", "hmi-build", "hmi-publish", "hmi-status",
+            "hmi-inspect", "hmi-preflight", "hmi-build", "hmi-publish", "hmi-status", "hmi-refresh-mappings",
             "build", "info", "clean",
             "set-target", "activate", "restart", "online-change", "matching-login", "read-plc-source", "edit-plc-source",
             "list-plc-objects", "read-plc-object", "create-plc-object", "create-plc-folder",
