@@ -282,8 +282,8 @@ namespace TcAutomation.Commands
                 }
             }
             string effectiveTcVersion = hmiOnly ? "HMI" : (tcVersionOverride ?? projectTcVersion);
-            if (_vsInstance != null && _vsInstance.HmiOnly != hmiOnly)
-                DiscardShell(_vsInstance, "engineering context kind changed");
+            if (_vsInstance != null && MustReplaceShell(_vsInstance.HmiOnly, _vsInstance.SolutionFilePath, hmiOnly, solutionPath))
+                DiscardShell(_vsInstance, _vsInstance.HmiOnly != hmiOnly ? "engineering context kind changed" : "HMI solution changed");
 
             bool openedFresh = false;
             bool reloaded = false;
@@ -770,6 +770,13 @@ namespace TcAutomation.Commands
             }
             catch { }
         }
+
+        /// <summary>
+        /// A context kind change needs a new shell. So does another HMI solution: an HMI shell has no
+        /// TwinCAT version, so ReloadSolution refuses it (measured with no tcVersion: "version '' is not installed").
+        /// </summary>
+        public static bool MustReplaceShell(bool shellHmiOnly, string? shellSolution, bool hmiOnly, string solutionPath) =>
+            shellHmiOnly != hmiOnly || (hmiOnly && !PathsEqual(shellSolution, solutionPath));
 
         private static bool PathsEqual(string? a, string? b)
         {

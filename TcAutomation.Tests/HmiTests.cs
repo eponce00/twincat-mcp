@@ -69,6 +69,14 @@ static class HmiTests
             File.WriteAllText(sln, "Project(\"{A}\") = \"Panel\", \"Panel\\Panel.hmiproj\", \"{B}\"\r\n"
                 + "Project(\"{A}\") = \"Plc\", \"Plc\\Plc.tsproj\", \"{C}\"\r\nProject(\"{A}\") = \"Two\", \"panel\\PANEL.hmiproj\", \"{D}\"\r\n");
             Check(HmiPolicy.HmiProjects(sln).SequenceEqual(new[] { Path.Combine(root, "Panel", "Panel.hmiproj") }));
+
+            bool Replace(bool shellHmi, string shellSln, bool hmi, string next) =>
+                TcAutomation.Commands.HostCommand.MustReplaceShell(shellHmi, shellSln, hmi, next);
+            string a = Path.Combine(root, "A.sln"), b = Path.Combine(root, "B.sln");
+            Check(Replace(true, a, true, b));
+            Check(!Replace(true, a, true, a.ToUpperInvariant()));
+            Check(Replace(true, a, false, a) && Replace(false, a, true, a));
+            Check(!Replace(false, a, false, b));
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("PASS: " + cases + " HMI policy cases; no XAE or server writes.");
