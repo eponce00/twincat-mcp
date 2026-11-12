@@ -107,6 +107,9 @@
     <Compile Include="Core\MessageFilter.cs" />
     <Compile Include="Core\TcFileUtilities.cs" />
     <Compile Include="Core\VisualStudioInstance.cs" />
+    <Compile Include="Core\TargetPlatform.cs" />
+    <Compile Include="Core\ProjectVariants.cs" />
+    <Compile Include="Core\SolutionPlatform.cs" />
     <Compile Include="Core\DialogWatchdog.cs" />
     <Compile Include="Core\StepDispatcher.cs" />
     <Compile Include="Core\BuildRun.cs" />
@@ -130,6 +133,7 @@
     <Compile Include="Commands\PlcSourceCommand.cs" />
     <Compile Include="Commands\PlcObjectsCommand.cs" />
     <Compile Include="Commands\DeployCommand.cs" />
+    <Compile Include="Commands\VariantsCommand.cs" />
     <Compile Include="Commands\ListPlcsCommand.cs" />
     <Compile Include="Commands\SetBootProjectCommand.cs" />
     <Compile Include="Commands\DisableIoCommand.cs" />

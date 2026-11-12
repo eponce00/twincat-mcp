@@ -82,6 +82,8 @@ class Backend:
             args["variables"] = json.dumps(args["variables"])
         if id == "engineering.set_variant":
             args["getOnly"] = not bool(args.get("variantName"))
+        if id == "engineering.list_variants":
+            args["list"] = True
         if id == "engineering.configure_task" and "autostart" in args:
             args["autoStart"] = args.pop("autostart")
         timeout = max(1, int(args.get("timeoutMinutes", 20 if id == "workflow.deploy" else 10)))

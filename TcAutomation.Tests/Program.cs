@@ -154,5 +154,6 @@ static class Program
         ReviewTests.Run();
         ActivationWaitTests.Run();
         HmiTests.Run();
+        DeployPlatformTests.Run();
     }
 }

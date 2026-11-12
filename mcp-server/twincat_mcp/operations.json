@@ -411,7 +411,7 @@
   },
   {
     "id": "workflow.deploy",
-    "description": "Build, prepare the boot project, activate configuration and restart the context target. Returns the native deployment receipt. dryRun previews the workflow.",
+    "description": "Build, prepare the boot project, activate configuration and restart the context target. Selects the build configuration and platform first (variant, explicit configuration/platform, or the target's own platform), reads the target's platform over ADS and refuses a mismatch before building or downloading. dryRun previews the selection and steps; the receipt reports variant, configuration, platform and whether the platform was verified.",
     "kind": "workflow",
     "command": "deploy",
     "engineering": true,
@@ -429,6 +429,34 @@
           "type": "boolean",
           "description": "Show what would be done without making changes (default: false)",
           "default": false
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Project variant to deploy. Applies the variant's build configuration from the .tsproj; its TargetNetId must be the context target."
+        },
+        "configuration": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Solution configuration, e.g. Debug. Defaults to the variant's, else the solution's current one."
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Solution platform, e.g. 'TwinCAT RT (x64)'. Defaults to the variant's, else the platform the target needs. Must match the target."
+        },
+        "generateBootProject": {
+          "type": "boolean",
+          "default": true,
+          "description": "Generate each PLC's boot project before activating (default). false sets autostart only and lets the activation write the boot files, for solutions where generation re-enables disabled PLC projects."
+        },
+        "allowUnverifiedPlatform": {
+          "type": "boolean",
+          "default": false,
+          "description": "Deploy when the target description cannot be read. Never overrides a known mismatch; the receipt then says 'platform not verified'."
         },
         "confirm": {
           "const": "CONFIRM",
@@ -552,7 +580,7 @@
   },
   {
     "id": "engineering.set_variant",
-    "description": "Get or set the solution variant. Requires TwinCAT XAE 4024 or newer; omit variantName to query.",
+    "description": "Get or set the solution variant. Setting applies the variant's build configuration/platform from the .tsproj, as XAE's variant selector does, and refuses a variant whose TargetNetId is not the context target. Requires TwinCAT XAE 4024 or newer; omit variantName to query.",
     "kind": "operation",
     "command": "set-variant",
     "engineering": true,
@@ -580,6 +608,46 @@
       "required": [
         "contextHandle",
         "grantHandle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "id": "engineering.list_variants",
+    "description": "Read-only: list the project's variants with the target and build configuration each deploys, the solution's current selection, and an ordered deployment plan (one context per target). Reads only the context target's platform over ADS unless probeTargets is set.",
+    "kind": "operation",
+    "command": "set-variant",
+    "engineering": true,
+    "requiresGrant": false,
+    "readOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "order": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "description": "Variant names in deployment order, e.g. ['LocalHil','Station']. Default: the context target's variant first."
+        },
+        "probeTargets": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also read every variant's target description over ADS (read-only). Default: only the context target."
+        },
+        "contextHandle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exclusive engineering context returned by context.open."
+        }
+      },
+      "required": [
+        "contextHandle"
       ],
       "additionalProperties": false
     }
@@ -703,7 +771,7 @@
         },
         "timeoutMs": {
           "type": "integer",
-          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 \u00d7 timeoutMs.",
+          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 × timeoutMs.",
           "default": 2500
         }
       },
@@ -1240,7 +1308,7 @@
         },
         "contains": {
           "type": "string",
-          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise \u2014 e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
+          "description": "Case-insensitive substring filter applied to each item's description. Use this to cut through library-reload noise — e.g. 'FAILED TEST', 'E_SM_Fault', 'stack'. Omit to get everything (may be hundreds of items)."
         },
         "contextHandle": {
           "type": "string",

@@ -187,7 +187,7 @@ Do not expose it as an unauthenticated network service.
 
 | Workflow | Work performed by the server |
 | --- | --- |
-| `workflow.deploy` | Build, activate and restart through the existing C# deployment implementation. |
+| `workflow.deploy` | Select and verify the build configuration and platform for the target, build, activate and restart. See [deploying](docs/deploying.md). |
 | `workflow.test` | Configure/run the TcUnit workflow and return its structured report. |
 | `workflow.sequence` | Validate up to 32 catalog steps before effects, then execute in order and stop on failure. |
 | `workflow.wait_state` | Poll runtime state with a configured interval and deadline. |

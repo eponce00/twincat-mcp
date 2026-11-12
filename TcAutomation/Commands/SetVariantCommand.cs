@@ -53,7 +53,7 @@ namespace TcAutomation.Commands
         /// <summary>
         /// Get/set project variant using an already-open VS instance. Used by batch mode.
         /// </summary>
-        public static SetVariantResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? variantName, bool getOnly)
+        public static SetVariantResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? variantName, bool getOnly, string? contextTarget = null)
         {
             var result = new SetVariantResult { SolutionPath = solutionPath };
 
@@ -86,10 +86,40 @@ namespace TcAutomation.Commands
                 {
                     try
                     {
-                        sysManager14.CurrentProjectVariant = variantName;
+                        // XAE applies a variant's target and build configuration when it is chosen in its toolbar;
+                        // the automation interface does not, so they are applied here from the .tsproj.
+                        var variants = ProjectVariants.Read(TcFileUtilities.FindTwinCATProjectFile(solutionPath));
+                        var info = variants.Find(v => string.Equals(v.Name, variantName, StringComparison.OrdinalIgnoreCase));
+                        if (info == null)
+                        {
+                            result.ErrorMessage = $"Variant '{variantName}' is not in the project. Variants: {string.Join(", ", variants.ConvertAll(v => v.Name))}";
+                            return result;
+                        }
+                        if (info.TargetNetId != null && !string.IsNullOrEmpty(contextTarget) && info.TargetNetId != contextTarget)
+                        {
+                            result.ErrorMessage = $"Variant '{info.Name}' targets {info.TargetNetId}, but this context targets {contextTarget}. Nothing was changed; open a context on {info.TargetNetId} to use this variant.";
+                            return result;
+                        }
+                        sysManager14.CurrentProjectVariant = info.Name;
                         result.CurrentVariant = sysManager14.CurrentProjectVariant ?? "";
+                        if (info.TargetNetId != null)
+                        {
+                            automation.TargetNetId = info.TargetNetId;
+                            result.TargetNetId = automation.TargetNetId;
+                        }
+                        if (info.Configuration != null && info.Platform != null)
+                        {
+                            SolutionPlatform.Select(vsInstance, automation, info.Configuration, info.Platform);
+                        }
+                        var (configuration, platform) = SolutionPlatform.Active(vsInstance);
+                        result.Configuration = configuration;
+                        result.Platform = platform;
                         result.Success = true;
-                        result.Message = $"Project variant changed from '{result.PreviousVariant}' to '{result.CurrentVariant}'";
+                        result.Message = $"Project variant changed from '{result.PreviousVariant}' to '{result.CurrentVariant}': target {result.TargetNetId ?? "unchanged"}, build {configuration}|{platform}";
+                    }
+                    catch (DeployRefusedException ex)
+                    {
+                        result.ErrorMessage = ex.Message;
                     }
                     catch (Exception ex)
                     {
@@ -113,6 +143,9 @@ namespace TcAutomation.Commands
         public string? Message { get; set; }
         public string PreviousVariant { get; set; } = "";
         public string CurrentVariant { get; set; } = "";
+        public string? TargetNetId { get; set; }
+        public string? Configuration { get; set; }
+        public string? Platform { get; set; }
         public string? ErrorMessage { get; set; }
     }
 }
