@@ -108,6 +108,7 @@
     <Compile Include="Core\TcFileUtilities.cs" />
     <Compile Include="Core\VisualStudioInstance.cs" />
     <Compile Include="Core\TargetPlatform.cs" />
+    <Compile Include="Core\RunWait.cs" />
     <Compile Include="Core\ProjectVariants.cs" />
     <Compile Include="Core\SolutionPlatform.cs" />
     <Compile Include="Core\DialogWatchdog.cs" />

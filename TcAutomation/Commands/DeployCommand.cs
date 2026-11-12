@@ -207,6 +207,7 @@ namespace TcAutomation.Commands
                 steps.Add(new { step = 5, action = $"Set target to {amsNetId}", dryRun });
 
                 var deployedPlcs = new List<string>();
+                var plcPorts = new List<int>();
                 bool foundTargetPlc = false;
                 string? plcName = options.PlcName;
 
@@ -233,6 +234,8 @@ namespace TcAutomation.Commands
                     }
 
                     deployedPlcs.Add(plcProject.Name);
+                    int? port = PlcPorts.Of(plcProject);
+                    if (port != null) plcPorts.Add(port.Value);
                 }
 
                 if (!string.IsNullOrEmpty(plcName) && !foundTargetPlc)
@@ -275,10 +278,25 @@ namespace TcAutomation.Commands
 
                 if (!dryRun)
                 {
-                    automationInterface.StartRestartTwinCAT();
-                    System.Threading.Thread.Sleep(10000);
+                    // XAE's activation prompt restarts in Run; the deployment is done only when the target is in Run.
+                    var run = RunWait.RestartAndWait(amsNetId, plcPorts, automationInterface.StartRestartTwinCAT,
+                        new RunWaitOptions { Timeout = TimeSpan.FromSeconds(options.RunTimeoutSeconds) },
+                        message => Console.Error.WriteLine($"[PROGRESS] run: {message}"));
+                    result.Run = run;
+                    if (!run.ReachedRun)
+                    {
+                        steps.Add(new { step = 8, action = "TwinCAT restarted; the target did not reach Run", run.SystemState, run.PlcStates, run.Transitions });
+                        result.Success = false;
+                        result.DeployedPlcs = deployedPlcs;
+                        result.ErrorMessage = run.Message + RunWait.Summary(run);
+                        return result;
+                    }
+                    steps.Add(new { step = 8, action = "TwinCAT restarted; Run verified", run.SystemState, run.PlcStates, run.ElapsedMs });
                 }
-                steps.Add(new { step = 8, action = "TwinCAT restarted", dryRun });
+                else
+                {
+                    steps.Add(new { step = 8, action = $"TwinCAT restarted; wait up to {options.RunTimeoutSeconds} s for Run on port 10000 and PLC ports {string.Join(", ", plcPorts)}", dryRun });
+                }
 
                 result.Success = true;
                 result.DeployedPlcs = deployedPlcs;
@@ -379,6 +397,7 @@ namespace TcAutomation.Commands
         public bool PlatformVerified { get; set; }
         public string? PlatformStatus { get; set; }
         public TargetDescription? Target { get; set; }
+        public RunWaitResult? Run { get; set; }
     }
 
     /// <summary>What a deployment does; every field has the workflow's documented default.</summary>
@@ -392,5 +411,6 @@ namespace TcAutomation.Commands
         public string? Platform { get; set; }
         public bool GenerateBootProject { get; set; } = true;
         public bool AllowUnverifiedPlatform { get; set; }
+        public int RunTimeoutSeconds { get; set; } = 120;
     }
 }

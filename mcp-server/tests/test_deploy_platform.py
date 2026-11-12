@@ -18,19 +18,34 @@ CTX = dict(solutionPath="sample.sln", amsNetId="192.168.1.108.1.1", plcName="PLC
 class DeployPlatformContract(unittest.TestCase):
     def test_deploy_takes_variant_configuration_platform_and_boot_choice(self):
         schema = Catalog().get("workflow.deploy")["inputSchema"]
-        for name in ("variant", "configuration", "platform", "generateBootProject", "allowUnverifiedPlatform"):
+        for name in (
+            "variant",
+            "configuration",
+            "platform",
+            "generateBootProject",
+            "allowUnverifiedPlatform",
+        ):
             self.assertIn(name, schema["properties"])
         self.assertTrue(schema["properties"]["generateBootProject"]["default"])
         self.assertFalse(schema["properties"]["allowUnverifiedPlatform"]["default"])
         validator = Draft202012Validator(schema)
         base = dict(contextHandle="c", grantHandle="g", confirm="CONFIRM")
         self.assertTrue(validator.is_valid({**base, "variant": "Station", "dryRun": True}))
-        self.assertFalse(validator.is_valid({**base, "platform": ""}), "empty platform is not a choice")
-        self.assertFalse(validator.is_valid({**base, "amsNetId": "1.2.3.4.1.1"}), "the target comes from the context only")
+        self.assertFalse(
+            validator.is_valid({**base, "platform": ""}), "empty platform is not a choice"
+        )
+        self.assertFalse(
+            validator.is_valid({**base, "amsNetId": "1.2.3.4.1.1"}),
+            "the target comes from the context only",
+        )
 
     def test_deploy_arguments_reach_the_native_step_with_the_context_target(self):
-        args = dict(variant="LocalHil", platform="TwinCAT OS (x64)", generateBootProject=False, dryRun=True)
-        with patch("twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])) as run:
+        args = dict(
+            variant="LocalHil", platform="TwinCAT OS (x64)", generateBootProject=False, dryRun=True
+        )
+        with patch(
+            "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
+        ) as run:
             Backend().run(Catalog().get("workflow.deploy"), dict(args), CTX)
         command, sent = run.call_args.args[0], run.call_args.args[1]
         self.assertEqual("deploy", command)
@@ -46,7 +61,9 @@ class DeployPlatformContract(unittest.TestCase):
             "PlatformVerified": False,
         }
         with patch("twincat_mcp.backend.run_shell_step", return_value=(refusal, [])):
-            result = Backend().run(Catalog().get("workflow.deploy"), dict(platform="TwinCAT RT (x64)"), CTX)
+            result = Backend().run(
+                Catalog().get("workflow.deploy"), dict(platform="TwinCAT RT (x64)"), CTX
+            )
         self.assertFalse(result["success"])
         self.assertIn("does not match", result["errorMessage"])
 
@@ -56,7 +73,9 @@ class DeployPlatformContract(unittest.TestCase):
         self.assertFalse(entry["requiresGrant"])
         self.assertEqual("set-variant", entry["command"])
         self.assertFalse(entry["inputSchema"]["properties"]["probeTargets"]["default"])
-        with patch("twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])) as run:
+        with patch(
+            "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
+        ) as run:
             Backend().run(entry, dict(order=["LocalHil", "Station"]), CTX)
         sent = run.call_args.args[1]
         self.assertTrue(sent["list"])
@@ -64,7 +83,9 @@ class DeployPlatformContract(unittest.TestCase):
         self.assertEqual(["LocalHil", "Station"], sent["order"])
 
     def test_set_variant_still_queries_without_a_name(self):
-        with patch("twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])) as run:
+        with patch(
+            "twincat_mcp.backend.run_shell_step", return_value=({"Success": True}, [])
+        ) as run:
             Backend().run(Catalog().get("engineering.set_variant"), {}, CTX)
         self.assertTrue(run.call_args.args[1]["getOnly"])
         self.assertNotIn("list", run.call_args.args[1])

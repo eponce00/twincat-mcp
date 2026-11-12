@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .cli import run_tc_automation, run_tc_automation_with_progress
 from .dispatch import run_shell_step
+from .hmi import project_path, target_url
 from .host import get_shell_host_if_alive, shutdown_shell_host
 from .routes import run_route_action
 from .scope import ScopeSession
@@ -52,6 +53,7 @@ class Backend:
 
     def run(self, entry, arguments, context=None):
         args = dict(arguments)
+        hmi_publish = args.pop("hmiPublish", None) if entry["id"] == "workflow.deploy" else None
         for key in ("contextHandle", "grantHandle", "confirm", "recordingHandle"):
             if key == "confirm" and entry["id"] in {
                 "engineering.delete_object",
@@ -108,6 +110,54 @@ class Backend:
             result["success"] = False
         if progress:
             result["progress"] = progress[-50:]
+        if hmi_publish is not None:
+            result = self.publish_after_deploy(result, args, hmi_publish, context)
+        return result
+
+    def publish_after_deploy(self, result, args, spec, context):
+        """The HMI publish of workflow.deploy: only after the target is verified in Run, once, never retried."""
+        plan = dict(
+            projectPath=project_path(spec["projectPath"]),
+            targetUrl=target_url(spec["targetUrl"]),
+            profileName=spec["profileName"],
+        )
+        if args.get("dryRun"):
+            result["hmiPublish"] = dict(plan, planned=True)
+            return result
+        if not result.get("success"):
+            result["hmiPublish"] = dict(
+                plan,
+                published=False,
+                reason="Not published: the PLC deployment did not end in Run.",
+            )
+            return result
+        step = dict(plan, expectedFingerprint=spec["expectedFingerprint"])
+        step["timeoutSeconds"] = spec.get("timeoutSeconds", 180)
+        if "credentialTarget" in spec:
+            step["credentialTarget"] = spec["credentialTarget"]
+        published, progress = run_shell_step(
+            "hmi-publish",
+            step,
+            solution_path=context["solutionPath"] if context else None,
+            tc_version=context.get("tcVersion") if context else None,
+            timeout_minutes=(step["timeoutSeconds"] + 59) // 60,
+            hmi_only=True,
+        )
+        published = normalize(published)
+        published.setdefault(
+            "success", not bool(published.get("errorMessage") or published.get("error"))
+        )
+        if progress:
+            published["progress"] = progress[-20:]
+        result["hmiPublish"] = published
+        if published.get("outcomeUnknown"):
+            result["outcomeUnknown"] = True
+        if not published["success"]:
+            result["success"] = False
+            result["errorMessage"] = (
+                "The PLC deployment reached Run, but the HMI was not published: "
+                + str(published.get("errorMessage") or published.get("error") or "no reason given")
+            )
         return result
 
     def record(self, args):

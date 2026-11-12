@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using TcAutomation.Core;
 using TwinCAT.Ads;
 
 namespace TcAutomation.Commands
@@ -66,16 +67,63 @@ namespace TcAutomation.Commands
                         return 0;
                     }
 
-                    // Write the new state
+                    // The system service (port 10000) does not take Run or Config directly: XAE's "restart in Run
+                    // mode" writes Reset, and its "restart in Config mode" writes Reconfig. Either restarts TwinCAT.
+                    bool systemRestart = effectivePort == RunWait.SystemPort && (adsState == AdsState.Run || adsState == AdsState.Config);
+                    AdsState written = systemRestart ? (adsState == AdsState.Run ? AdsState.Reset : AdsState.Reconfig) : adsState;
+                    result.WrittenState = written.ToString();
+                    TargetLogWindow? log = systemRestart ? new TargetLogWindow(amsNetId) : null;
                     try
                     {
-                        adsClient.WriteControl(new StateInfo(adsState, currentStateInfo.DeviceState));
+                        try
+                        {
+                            adsClient.WriteControl(new StateInfo(written, currentStateInfo.DeviceState));
+                        }
+                        catch (AdsErrorException ex) when (ex.ErrorCode == AdsErrorCode.DeviceServiceNotSupported)
+                        {
+                            result.ErrorMessage = $"The target refused {written} on port {effectivePort} (service not supported). Use engineering.restart from an engineering context, or control the target locally.";
+                            Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                            return 1;
+                        }
+
+                        if (systemRestart)
+                        {
+                            // The restart drops the connection; read again until the requested state holds.
+                            using var probe = new TargetRunProbe(amsNetId);
+                            var clock = System.Diagnostics.Stopwatch.StartNew();
+                            var options = new RunWaitOptions { Timeout = TimeSpan.FromSeconds(60) };
+                            if (adsState == AdsState.Run)
+                            {
+                                var run = RunWait.Wait(probe, Array.Empty<int>(), options, () => clock.Elapsed, d => System.Threading.Thread.Sleep(d));
+                                run.TargetMessages = log!.Messages();
+                                run.TargetLogError = log.Error;
+                                result.Run = run;
+                                result.CurrentState = run.SystemState;
+                                result.Success = run.ReachedRun;
+                                if (!run.ReachedRun) result.ErrorMessage = run.Message + RunWait.Summary(run);
+                            }
+                            else
+                            {
+                                AdsState? state = null;
+                                while (clock.Elapsed < options.Timeout)
+                                {
+                                    state = probe.ReadState(RunWait.SystemPort);
+                                    if (state == AdsState.Config && clock.Elapsed > TimeSpan.FromSeconds(2)) break;
+                                    System.Threading.Thread.Sleep(options.Interval);
+                                }
+                                result.CurrentState = state?.ToString() ?? "unreadable";
+                                result.Success = state == AdsState.Config;
+                                if (!result.Success) result.ErrorMessage = $"The target did not reach Config within {options.Timeout.TotalSeconds:0} s (now {result.CurrentState}).";
+                            }
+                            if (result.CurrentState != null && Enum.TryParse(result.CurrentState, out AdsState reached))
+                                result.StateDescription = GetStateDescription(reached);
+                            Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                            return result.Success ? 0 : 1;
+                        }
                     }
-                    catch (AdsErrorException ex) when (ex.ErrorCode == AdsErrorCode.DeviceServiceNotSupported)
+                    finally
                     {
-                        result.ErrorMessage = $"State change not supported via ADS on this target. Use 'twincat_restart' (which uses Automation Interface) for remote state changes, or control the target locally.";
-                        Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
-                        return 1;
+                        log?.Dispose();
                     }
 
                     // Give it a moment to transition
@@ -178,5 +226,8 @@ namespace TcAutomation.Commands
         public bool Success { get; set; }
         public string? Warning { get; set; }
         public string? ErrorMessage { get; set; }
+        /// <summary>The ADS state actually written (Reset/Reconfig for a system restart into Run/Config).</summary>
+        public string? WrittenState { get; set; }
+        public RunWaitResult? Run { get; set; }
     }
 }
