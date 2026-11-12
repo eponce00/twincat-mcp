@@ -35,7 +35,7 @@ class Engine:
         self.jobs = Jobs(root / "jobs.sqlite3", self.run)
 
     def pending_recovery(self, project):
-        """Mappings a stopped refresh of this project's configuration left for recover mode (records written by the worker)."""
+        """Records a stopped refresh left for this project's server configuration (recover mode)."""
         found = []
         config = os.path.normcase(
             str(Path(project).parent / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json")
@@ -44,7 +44,8 @@ class Engine:
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
                 # The record belongs to the configuration; a renamed project still finds it.
-                if os.path.normcase(record["ConfigPath"]) == config:
+                # Resolve it like projectPath, so an 8.3 short path still matches.
+                if os.path.normcase(str(Path(record["ConfigPath"]).resolve())) == config:
                     found.append(dict(symbol=record["Symbol"], createdUtc=record["CreatedUtc"]))
             except (OSError, ValueError, KeyError, TypeError):
                 found.append(dict(unreadable=path.name))
