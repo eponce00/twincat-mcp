@@ -169,7 +169,7 @@ namespace TcAutomation.Core
                     case "restart":
                     {
                         string? amsNetId = GetString(argsElement, "amsNetId", hasArgs);
-                        return RestartCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId);
+                        return RestartCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId, GetInt(argsElement, "runTimeoutSeconds", hasArgs) ?? 120);
                     }
                     case "list-plcs":
                     {
@@ -269,6 +269,7 @@ namespace TcAutomation.Core
                             Platform = GetString(argsElement, "platform", hasArgs),
                             GenerateBootProject = GetBool(argsElement, "generateBootProject", hasArgs) ?? true,
                             AllowUnverifiedPlatform = GetBool(argsElement, "allowUnverifiedPlatform", hasArgs) ?? false,
+                            RunTimeoutSeconds = GetInt(argsElement, "runTimeoutSeconds", hasArgs) ?? 120,
                         };
                         return DeployCommand.ExecuteInSession(vsInstance, solutionPath, amsNetId, options);
                     }

@@ -109,6 +109,11 @@ class Engine:
             return
         if entry["requiresGrant"]:
             self.grants.check(operation, args)
+            if operation == "workflow.deploy" and "hmiPublish" in args:
+                # The publish after the deployment needs its own authorization in the same grant.
+                self.grants.check("hmi.publish", args)
+                project_path(args["hmiPublish"]["projectPath"])
+                target_url(args["hmiPublish"]["targetUrl"])
         if entry["engineering"]:
             with self.lock:
                 ctx = self.context_for(

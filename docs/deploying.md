@@ -56,6 +56,52 @@ activation. `generateBootProject:false` only sets autostart and lets the
 activation write the boot files. Use it for solutions where generating the
 boot project re-enables PLC projects that are disabled in the `.tsproj`.
 
+## Ending in Run
+
+After the activation lands, the deploy restarts TwinCAT and waits up to
+`runTimeoutSeconds` (default 120) for Run on the system service (port 10000)
+and on each deployed PLC's configured ADS port. Run counts only after the
+restart has been seen: some port out of Run or not answering, polled every
+200 ms until then. A target still in Run 30 s after the restart command did
+not restart, and the operation fails. Run must then hold for 2 s. A
+system service that comes back in Config and stays there for 30 s has started
+in Config. That, a timeout, or a PLC that stays in Stop fails the deployment
+instead of reporting success. The receipt's `run` holds the final states,
+each distinct observation (`transitions`), and `targetMessages`.
+
+`targetMessages` are the target's event log (TcEventLogger, ADS port 110)
+during the restart. The live subscription is completed by reading back the
+events logged since just before the restart. They include PLC and
+application messages. TwinCAT's system messages that XAE's dialog shows
+from the ADS logger, such as a missing licence, are not part of the event log
+and are not returned. When the target stays in Config without messages,
+check its licences and XAE's output.
+
+`engineering.restart` waits the same way, for the system service and every
+PLC whose boot project autostarts.
+
+## Restart into Run or Config over ADS
+
+`runtime.set_state` with `Run` or `Config` on the system service restarts
+TwinCAT into that mode: it writes `Reset` (Run) or `Reconfig` (Config) to port
+10000, as XAE's restart prompts do; targets reject a direct `Run` there. It
+then waits up to 60 s for the requested state, and for `Run` returns the
+target's event log when Run is not reached. Other states and the PLC ports
+are written as before.
+
+## Deploy, then publish the HMI
+
+`workflow.deploy` takes an optional `hmiPublish` with the arguments of
+`hmi.publish` (`projectPath`, `targetUrl`, `profileName`,
+`expectedFingerprint`, `timeoutSeconds`, `credentialTarget`). After the target
+is verified in Run, the HMI is published once from the same solution, loaded
+for HMI work only as `hmi.publish` requires. Nothing is published when the
+deployment fails or does not reach Run. Get `expectedFingerprint` from
+`hmi.preflight` in an HMI context first. The grant must name both
+`workflow.deploy` and `hmi.publish` for the PLC context. A failed publish fails
+the workflow and keeps the deployment receipt; the dry run lists the planned
+publish.
+
 ## Variants and multi-target plans
 
 `engineering.set_variant` applies the variant's build configuration and
@@ -72,6 +118,17 @@ operations to run, one context per target:
 ADS; `probeTargets:true` reads every variant's target.
 
 ## Not qualified
+
+- Run verification was exercised on a local user-mode runtime only: a
+  deployment and restart that reached Run, and, while the runtime's licences
+  did not allow its PLC to run, a deployment and restart that failed in Config.
+- `targetMessages` are read back from 10 s before the restart, so a restart
+  right after another one also lists the earlier restart's messages.
+- `runtime.set_state` Run/Config (`Reset`/`Reconfig` on port 10000) was not
+  exercised: on the shared user-mode runtime a system reset has stopped the
+  TwinCAT system service before.
+- `hmiPublish` was exercised with mocked native steps only.
+- No remote RT x64 target was used for any of these.
 
 The platform mapping was taken from a user-mode runtime (`PC-WIN-U-OS`) and a
 CP67xx IPC with Windows 10 and the real-time kernel (`CB3273-WIN 10.0`). The

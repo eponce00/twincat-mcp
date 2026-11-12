@@ -1,5 +1,7 @@
 using System;
 using System.Text.Json;
+using System.Collections.Generic;
+using TCatSysManagerLib;
 using TcAutomation.Core;
 
 namespace TcAutomation.Commands
@@ -9,7 +11,7 @@ namespace TcAutomation.Commands
     /// </summary>
     public class RestartCommand
     {
-        public static int Execute(string solutionPath, string? amsNetId, string? tcVersion)
+        public static int Execute(string solutionPath, string? amsNetId, string? tcVersion, int runTimeoutSeconds = 120)
         {
             VisualStudioInstance? vsInstance = null;
             
@@ -30,7 +32,7 @@ namespace TcAutomation.Commands
                 vsInstance.Load();
                 vsInstance.LoadSolution();
 
-                var result = ExecuteInSession(vsInstance, solutionPath, amsNetId);
+                var result = ExecuteInSession(vsInstance, solutionPath, amsNetId, runTimeoutSeconds);
                 Console.WriteLine(JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
                 return result.Success ? 0 : 1;
             }
@@ -48,7 +50,7 @@ namespace TcAutomation.Commands
         /// <summary>
         /// Restart TwinCAT on target using an already-open VS instance. Used by batch mode.
         /// </summary>
-        public static RestartResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? amsNetId)
+        public static RestartResult ExecuteInSession(VisualStudioInstance vsInstance, string solutionPath, string? amsNetId, int runTimeoutSeconds = 120)
         {
             var result = new RestartResult { Solution = solutionPath };
             try
@@ -61,12 +63,26 @@ namespace TcAutomation.Commands
                     automationInterface.TargetNetId = amsNetId;
                 }
 
-                automationInterface.StartRestartTwinCAT();
-                System.Threading.Thread.Sleep(10000);
-
+                // Wait for Run on the system service and every PLC that starts by itself.
+                var ports = new List<int>();
+                for (int i = 1; i <= automationInterface.PlcTreeItem.ChildCount; i++)
+                {
+                    var plc = automationInterface.PlcTreeItem.Child[i];
+                    bool autostart;
+                    try { autostart = ((ITcPlcProject)plc).BootProjectAutostart; } catch { autostart = false; }
+                    int? port = PlcPorts.Of(plc);
+                    if (autostart && port != null) ports.Add(port.Value);
+                }
+                var run = RunWait.RestartAndWait(targetNetId, ports, automationInterface.StartRestartTwinCAT,
+                    new RunWaitOptions { Timeout = TimeSpan.FromSeconds(runTimeoutSeconds) },
+                    message => Console.Error.WriteLine($"[PROGRESS] run: {message}"));
                 result.TargetNetId = targetNetId;
-                result.Success = true;
-                result.Message = $"TwinCAT restarted on {targetNetId}";
+                result.Run = run;
+                result.Success = run.ReachedRun;
+                if (run.ReachedRun)
+                    result.Message = $"TwinCAT restarted on {targetNetId}; {run.Message}";
+                else
+                    result.ErrorMessage = run.Message + RunWait.Summary(run);
             }
             catch (Exception ex)
             {
@@ -90,5 +106,6 @@ namespace TcAutomation.Commands
         public string TargetNetId { get; set; } = "";
         public string? Message { get; set; }
         public string? ErrorMessage { get; set; }
+        public RunWaitResult? Run { get; set; }
     }
 }

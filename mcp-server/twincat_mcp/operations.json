@@ -376,7 +376,7 @@
   },
   {
     "id": "engineering.restart",
-    "description": "Restart the TwinCAT runtime on the context target. Requires an operation-scoped grant and CONFIRM.",
+    "description": "Restart the TwinCAT runtime on the context target and wait for Run on the system service and every PLC that autostarts. Not reaching Run is a failure with the target's own event log. Requires an operation-scoped grant and CONFIRM.",
     "kind": "operation",
     "command": "restart",
     "engineering": true,
@@ -399,6 +399,13 @@
           "type": "string",
           "minLength": 1,
           "description": "Unexpired safety grant for this operation and target/context."
+        },
+        "runTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "default": 120,
+          "description": "Time the target may take to reach Run after the restart."
         }
       },
       "required": [
@@ -411,7 +418,7 @@
   },
   {
     "id": "workflow.deploy",
-    "description": "Build, prepare the boot project, activate configuration and restart the context target. Selects the build configuration and platform first (variant, explicit configuration/platform, or the target's own platform), reads the target's platform over ADS and refuses a mismatch before building or downloading. dryRun previews the selection and steps; the receipt reports variant, configuration, platform and whether the platform was verified.",
+    "description": "Build, prepare the boot project, activate configuration and restart the context target. Selects the build configuration and platform first (variant, explicit configuration/platform, or the target's own platform), reads the target's platform over ADS and refuses a mismatch before building or downloading. dryRun previews the selection and steps; the receipt reports variant, configuration, platform and whether the platform was verified. After the restart it waits for Run on the system service and the deployed PLCs; not reaching Run is a failure with the target's event log. Optional hmiPublish publishes the HMI after Run is verified.",
     "kind": "workflow",
     "command": "deploy",
     "engineering": true,
@@ -472,6 +479,57 @@
           "type": "string",
           "minLength": 1,
           "description": "Unexpired safety grant for this operation and target/context."
+        },
+        "runTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 600,
+          "default": 120,
+          "description": "Time the target may take to reach Run after the restart (system service and each deployed PLC's port). Not reaching Run fails the deployment and returns the target's own event log from the restart."
+        },
+        "hmiPublish": {
+          "type": "object",
+          "description": "After the target is verified in Run, publish the HMI once (hmi.publish semantics) from the same solution. Run hmi.preflight in an HMI context first for expectedFingerprint. The grant must name both workflow.deploy and hmi.publish for this context. Not run when the deployment fails or does not reach Run.",
+          "properties": {
+            "projectPath": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "targetUrl": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "profileName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "expectedFingerprint": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 5,
+              "maximum": 600,
+              "default": 180
+            },
+            "credentialTarget": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "Passed to hmi.publish unchanged."
+            }
+          },
+          "required": [
+            "projectPath",
+            "targetUrl",
+            "profileName",
+            "expectedFingerprint"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -814,7 +872,7 @@
   },
   {
     "id": "runtime.set_state",
-    "description": "Change the explicit target runtime state over ADS. Requires a grant for this operation and AMS target.",
+    "description": "Change the explicit target runtime state over ADS. Run or Config on the system service restarts TwinCAT into that mode (written as Reset/Reconfig, like XAE's restart prompts) and waits for it; Run also returns the target's event log when it is not reached. Requires a grant for this operation and AMS target.",
     "kind": "operation",
     "command": "set-state",
     "engineering": false,
