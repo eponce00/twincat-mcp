@@ -15,6 +15,12 @@
   ports into the user's `.hmiproj`. Once its shell has exited, the worker now
   restores each `.hmiproj` whose only change is those ports (measured on
   `context.close`).
+- The engineering server also writes those ports into the `ENDPOINTS` of
+  `TcHmiSrv.Config.default.json` when the project loads. If the ports of
+  `http://127.0.0.1` elements are the only change in that array, the worker now
+  puts back the original array and keeps every other change, a mapping refresh
+  included (measured on `context.close`). Nothing is restored while an
+  engineering server still holds its lock, or after the job is released.
 - The worker starts an HMI shell in a Windows job and ends the job once the
   shell has exited. On `context.close`, no engineering server of the context
   outlived it in five runs. A process that breaks away from the job, or that

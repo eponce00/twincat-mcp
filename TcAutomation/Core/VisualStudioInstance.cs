@@ -414,7 +414,7 @@ namespace TcAutomation.Core
         /// </summary>
         private const int TeardownTimeoutMs = 30000;
 
-        // HMI-only: each .hmiproj as it was before the shell opened the solution.
+        // HMI-only: each .hmiproj and its server configuration as they were before the shell opened the solution.
         private readonly Dictionary<string, byte[]> _hmiProjectsAtOpen =
             new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
 
@@ -423,45 +423,63 @@ namespace TcAutomation.Core
             lock (_hmiProjectsAtOpen)
             {
                 _hmiProjectsAtOpen.Clear();
-                try
-                {
-                    foreach (var path in HmiPolicy.HmiProjects(_solutionFilePath))
-                        if (File.Exists(path)) _hmiProjectsAtOpen[path] = File.ReadAllBytes(path);
-                }
-                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] .hmiproj snapshot failed (non-fatal): {ex.Message}"); }
+                string[] projects;
+                try { projects = HmiPolicy.HmiProjects(_solutionFilePath); }
+                catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] .hmiproj snapshot failed (non-fatal): {ex.Message}"); return; }
+                foreach (var path in projects)
+                    foreach (var file in new[] { path, HmiPolicy.ServerConfig(path) })
+                    {
+                        try { if (File.Exists(file)) _hmiProjectsAtOpen[file] = File.ReadAllBytes(file); }
+                        catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] Snapshot of {Path.GetFileName(file)} failed (non-fatal): {ex.Message}"); }
+                    }
             }
         }
 
         /// <summary>
         /// Measured (TE2000 1.12.762.57): with ports 3000/13000 busy, the shell writes the engineering
-        /// ports it picked into .hmiproj on an HMI build and on exit. Once the shell is gone, put
-        /// back a file whose only change is those ports. Any other change is kept.
+        /// ports it picked into .hmiproj on an HMI build and on exit, and its server writes them into
+        /// the ENDPOINTS of TcHmiSrv.Config.default.json on load. Once the shell and its job are gone,
+        /// put those ports back (HmiPolicy.PortRestore). Any other change is kept. A server outside the
+        /// job (breakaway, or started by COM) that still holds its lock blocks the whole restore.
         /// </summary>
         private void RestoreHmiProjects()
         {
             lock (_hmiProjectsAtOpen)
             {
-                foreach (var entry in _hmiProjectsAtOpen)
+                if (_hmiProjectsAtOpen.Count == 0) return;
+                var locks = HmiPolicy.HoldServerLocks(_solutionFilePath, _hmiProjectsAtOpen.Keys);
+                if (locks == null)
                 {
-                    try
-                    {
-                        // One exclusive handle: no other save can land between the check and the write.
-                        using var file = new FileStream(entry.Key, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-                        var now = new byte[file.Length];
-                        for (int read = 0; read < now.Length;)
-                        {
-                            int n = file.Read(now, read, now.Length - read);
-                            if (n == 0) throw new IOException("short read");
-                            read += n;
-                        }
-                        if (!HmiPolicy.OnlyEngineeringPortsChanged(entry.Value, now)) continue;
-                        file.Position = 0;
-                        file.Write(entry.Value, 0, entry.Value.Length);
-                        file.SetLength(entry.Value.Length);
-                        Console.Error.WriteLine($"[DEBUG] Restored engineering ports in {Path.GetFileName(entry.Key)}");
-                    }
-                    catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] .hmiproj restore failed: {ex.Message}"); }
+                    Console.Error.WriteLine("[DEBUG] An engineering server still holds its lock; engineering ports are not restored");
+                    _hmiProjectsAtOpen.Clear();
+                    return;
                 }
+                try
+                {
+                    foreach (var entry in _hmiProjectsAtOpen)
+                    {
+                        try
+                        {
+                            // One exclusive handle: no other save can land between the check and the write.
+                            using var file = new FileStream(entry.Key, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                            var now = new byte[file.Length];
+                            for (int read = 0; read < now.Length;)
+                            {
+                                int n = file.Read(now, read, now.Length - read);
+                                if (n == 0) throw new IOException("short read");
+                                read += n;
+                            }
+                            var restored = HmiPolicy.PortRestore(entry.Key, entry.Value, now);
+                            if (restored == null) continue;
+                            file.Position = 0;
+                            file.Write(restored, 0, restored.Length);
+                            file.SetLength(restored.Length);
+                            Console.Error.WriteLine($"[DEBUG] Restored engineering ports in {Path.GetFileName(entry.Key)}");
+                        }
+                        catch (Exception ex) { Console.Error.WriteLine($"[DEBUG] Port restore failed for {Path.GetFileName(entry.Key)}: {ex.Message}"); }
+                    }
+                }
+                finally { foreach (var held in locks) held.Dispose(); }
                 _hmiProjectsAtOpen.Clear();
             }
         }
@@ -602,11 +620,13 @@ namespace TcAutomation.Core
 
         /// <summary>
         /// After the shell is gone, end what it left running (HMI engineering servers), then restore
-        /// the .hmiproj files. A first timeout keeps the job and returns false. The retry waits 1 s,
-        /// then lets the job go, so leftovers never block the next shell. Called under _ownedProcessLock.
+        /// engineering ports. A first timeout keeps the job and returns false. The retry waits 1 s,
+        /// then lets the job go, so leftovers never block the next shell. A server left running can
+        /// still write (assumed), so a released job gets no restore. Called under _ownedProcessLock.
         /// </summary>
         private bool EndShellJob()
         {
+            bool membersGone = true;
             if (_shellJob != null)
             {
                 if (!_shellJob.End(_shellJobRetried ? 1000 : 5000))
@@ -618,14 +638,16 @@ namespace TcAutomation.Core
                         OwnedProcessLeftRunning = true;
                         return false;
                     }
-                    Console.Error.WriteLine("[DEBUG] Releasing the HMI shell job with processes still in it");
+                    Console.Error.WriteLine("[DEBUG] Releasing the HMI shell job with processes still in it; engineering ports are not restored");
                     _shellJob.Dispose();
+                    membersGone = false;
                 }
                 _shellJob = null;
                 _shellJobRetried = false;
                 OwnedProcessLeftRunning = false;
             }
-            RestoreHmiProjects();
+            if (membersGone) RestoreHmiProjects();
+            else lock (_hmiProjectsAtOpen) _hmiProjectsAtOpen.Clear();
             return true;
         }
 

@@ -17,16 +17,26 @@ operations cannot run in a PLC context. Close it with `context.close`.
 
 The engineering server of the worker uses ports 3000 and 13000. If another process holds
 them, the worker picks other ports. It then writes them into the `.hmiproj` on an HMI build
-and on exit (measured, TE2000 1.12.762.57). Once its shell has exited, the worker restores
-each `.hmiproj` of the solution whose only change is those two ports. Any other change stays.
-Measured on `context.close` only.
+and on exit (measured, TE2000 1.12.762.57). The server also writes them into the top-level
+`ENDPOINTS` of `Server/TcHmiSrv/TcHmiSrv.Config.default.json` when the project loads. A later
+load with the ports free writes 3000 and 13000 back. Once its shell has exited, the worker
+restores each `.hmiproj` of the solution whose only change is those two ports. In the server
+configuration, it restores only the original `ENDPOINTS` array. The ports of its
+`http://127.0.0.1` elements must be the only change in it. Any other change stays, a mapping
+refresh included. Measured on `context.close` only.
+
+A running engineering server holds `.engineering_servers/<name>/TcHmiSrv.lock` next to the
+solution (measured). No lock file was left after `context.close`. If any lock there is still
+held, the worker restores no ports. It keeps the locks open while it restores.
 
 The engineering server can start a copy of itself from `%TEMP%`, which outlives the shell. The
 worker starts an HMI shell inside a Windows job. After the shell exits, it ends every process
 left in that job (measured on `context.close`, five runs). Processes started
 outside the worker are not touched. A process that breaks away from the job is not ended. If
-members survive one retry, the worker lets the job go so that the next shell can start. If the
-worker itself dies, the job is not ended.
+members survive one retry, the worker lets the job go so that the next shell can start. It then
+restores no engineering ports, because a surviving server can still write them (assumed, not
+measured). If the worker
+itself dies, the job is not ended.
 
 | Operation | Behavior |
 | --- | --- |
