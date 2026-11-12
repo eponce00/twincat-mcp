@@ -29,8 +29,9 @@ namespace TcAutomation.Core
             job = new ShellJob(handle);
             try
             {
-                // A child that asks to break away may; nothing is killed when the handle closes.
-                var limits = new ExtendedLimits { Basic = new BasicLimits { LimitFlags = JobObjectLimitBreakawayOk } };
+                // A child that asks to break away may. The worker holds the only handle, so if the worker dies,
+                // the kernel ends every member.
+                var limits = new ExtendedLimits { Basic = new BasicLimits { LimitFlags = JobObjectLimitBreakawayOk | JobObjectLimitKillOnJobClose } };
                 if (!SetInformationJobObject(handle, 9, ref limits, Marshal.SizeOf(limits)))
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "SetInformationJobObject failed");
 
@@ -130,7 +131,7 @@ namespace TcAutomation.Core
         }
 
         const uint CreateSuspended = 0x4, CreateUnicodeEnvironment = 0x400, CreateNoWindow = 0x08000000;
-        const uint JobObjectLimitBreakawayOk = 0x800;
+        const uint JobObjectLimitBreakawayOk = 0x800, JobObjectLimitKillOnJobClose = 0x2000;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         struct StartupInfo

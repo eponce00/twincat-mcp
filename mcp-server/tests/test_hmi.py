@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from test_engine import FakeBackend
 
-from twincat_mcp.backend import Backend
+from twincat_mcp.backend import Backend, normalize
 from twincat_mcp.catalog import Catalog
 from twincat_mcp.engine import Engine
 from twincat_mcp.errors import OperationError
@@ -226,6 +226,55 @@ class HmiRefreshTests(unittest.TestCase):
                 )
         self.assertFalse(self.backend.calls)
 
+    def test_open_reports_pending_recovery_without_acting(self):
+        folder = self.root / "state" / "hmi-recovery"
+        folder.mkdir(parents=True)
+        record = dict(Version=1, ConfigPath="c", Symbol="PLC1.GVL.x", OriginalEntry="{}", CreatedUtc="2026-11-12T10:00:00Z")
+        (folder / "a.json").write_text(json.dumps(dict(record, ProjectPath=str(self.project).upper())))
+        (folder / "b.json").write_text(json.dumps(dict(record, ProjectPath=str(self.root / "Other.hmiproj"))))
+        result = self.submit(
+            "context.open_hmi",
+            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
+        )[1]
+        self.assertEqual([dict(symbol="PLC1.GVL.x", createdUtc="2026-11-12T10:00:00Z")], result["pendingRecovery"])
+        self.assertFalse(self.backend.calls)
+        (folder / "a.json").unlink()
+        (folder / "b.json").write_text("{")
+        self.submit("context.close", dict(contextHandle=result["contextHandle"]))
+        result = self.submit(
+            "context.open_hmi",
+            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
+        )[1]
+        self.assertEqual([dict(unreadable="b.json")], result["pendingRecovery"])
+
+    def test_pending_recovery_found_by_configuration_after_rename(self):
+        folder = self.root / "state" / "hmi-recovery"
+        folder.mkdir(parents=True)
+        config = self.root / "Server" / "TcHmiSrv" / "TcHmiSrv.Config.default.json"
+        record = dict(Version=1, ProjectPath=str(self.root / "Old.hmiproj"), ConfigPath=str(config),
+                      Symbol="PLC1.GVL.y", OriginalEntry="{}", CreatedUtc="t")
+        (folder / "a.json").write_text(json.dumps(record))
+        result = self.submit(
+            "context.open_hmi",
+            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
+        )[1]
+        self.assertEqual([dict(symbol="PLC1.GVL.y", createdUtc="t")], result["pendingRecovery"])
+
+    def test_no_pending_recovery_key_without_records(self):
+        result = self.submit(
+            "context.open_hmi",
+            dict(solutionPath=str(self.solution), projectPath=str(self.project), targetUrl="https://host/"),
+        )[1]
+        self.assertNotIn("pendingRecovery", result)
+
+    def test_recover_is_forwarded_and_typed(self):
+        ctx = self.context()
+        with self.assertRaises(OperationError):
+            self.engine.execute("hmi.refresh_mappings", self.refresh_args(ctx, recover="yes"), "bad-recover")
+        self.assertFalse(self.backend.calls)
+        self.assertEqual("succeeded", self.submit("hmi.refresh_mappings", self.refresh_args(ctx, recover=True))[0]["state"])
+        self.assertIs(True, self.backend.calls[-1][1]["recover"])
+
     def test_uncertain_refresh_invalidates_context_and_replays(self):
         ctx = self.context()
         args = self.refresh_args(ctx, symbols=["PLC1.GVL.x"])
@@ -264,6 +313,27 @@ class HmiBackendTests(unittest.TestCase):
             )
             self.assertTrue(run.call_args.kwargs["hmi_only"])
             self.assertNotIn("amsNetId", run.call_args.args[1])
+
+    def test_timeout_log_is_named_without_its_folder(self):
+        from twincat_mcp.host import ShellHost
+
+        with tempfile.TemporaryDirectory() as folder, patch.dict("os.environ", {"TWINCAT_MCP_STATE_DIR": folder}):
+            host = ShellHost(Path("unused.exe"))
+            host._recent.append("12:00:00 [DEBUG] last line")
+            first = host._write_timeout_log("ensure-solution")
+            host._request_id += 1
+            second = host._write_timeout_log("ensure-solution")
+            self.assertNotIn(folder, first)
+            self.assertNotEqual(first, second)
+            name = first.split(" ")[0]
+            self.assertIn("last line", (Path(folder) / name).read_text(encoding="utf-8"))
+
+    def test_original_entry_keys_are_kept_verbatim(self):
+        entry = {"ACCESS": 3, "SCHEMA": {"$ref": "tchmi:server#/definitions/PLC1.ST_A"}}
+        result = normalize({"Recovery": {"Symbol": "x", "OriginalEntry": entry}, "OriginalEntry": entry})
+        self.assertEqual(entry, result["recovery"]["originalEntry"])
+        self.assertEqual(entry, result["originalEntry"])
+        self.assertEqual("x", result["recovery"]["symbol"])
 
     def test_refresh_is_forwarded_as_hmi_step(self):
         with patch(

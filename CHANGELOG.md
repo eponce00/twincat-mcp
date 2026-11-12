@@ -8,6 +8,13 @@
   *Refresh mapping* does. It checks targets over ADS first, preserves mapping
   settings and restores a mapping whose remap fails. The catalog now has 73
   entries (69 discoverable).
+- Before each unmap, `hmi.refresh_mappings` keeps the original entry in a
+  recovery record under the MCP state folder. A run that stops with a mapping
+  removed (a dead shell or worker) leaves the record. `context.open_hmi` reports
+  it as `pendingRecovery`, a new refresh is refused until it is resolved, and
+  `recover: true` writes the entry back and verifies it.
+- A host call that times out writes the host's recent output to a
+  `host-timeout-*.log` file in the MCP state folder and names that file.
 
 ### Fixed
 
@@ -23,8 +30,10 @@
   engineering server still holds its lock, or after the job is released.
 - The worker starts an HMI shell in a Windows job and ends the job once the
   shell has exited. On `context.close`, no engineering server of the context
-  outlived it in five runs. A process that breaks away from the job, or that
-  survives a retry, is left running, and so is the job when the worker dies.
+  outlived it in five runs. If the worker dies, Windows ends the job and its
+  members, because the worker holds the only handle (measured: nothing of the
+  run left three seconds after the worker was killed). A process that breaks
+  away from the job is left running.
 
 ## 3.1.0 — 2026-11-07
 

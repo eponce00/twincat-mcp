@@ -27,7 +27,8 @@ refresh included. Measured on `context.close` only.
 
 A running engineering server holds `.engineering_servers/<name>/TcHmiSrv.lock` next to the
 solution (measured). No lock file was left after `context.close`. If any lock there is still
-held, the worker restores no ports. It keeps the locks open while it restores.
+held, the worker restores no ports. It keeps the locks open while it restores. Measured with a
+lock held across `context.close` (ports busy): both files kept the replacement ports.
 
 The engineering server can start a copy of itself from `%TEMP%`, which outlives the shell. The
 worker starts an HMI shell inside a Windows job. After the shell exits, it ends every process
@@ -35,8 +36,9 @@ left in that job (measured on `context.close`, five runs). Processes started
 outside the worker are not touched. A process that breaks away from the job is not ended. If
 members survive one retry, the worker lets the job go so that the next shell can start. It then
 restores no engineering ports, because a surviving server can still write them (assumed, not
-measured). If the worker
-itself dies, the job is not ended.
+measured). The worker holds the only handle to the job, and the job ends its members when that
+handle closes. So if the worker dies, Windows ends the shell and every member (measured: worker
+killed mid-refresh, no process of the run left three seconds later).
 
 | Operation | Behavior |
 | --- | --- |
@@ -124,8 +126,10 @@ symbol at a time. `ITcHmiProject.RefreshSymbols()` refreshes data types only and
    `*.Config.default.json` and read symbol metadata, never values. A missing target is skipped
    and reported. An unreachable runtime, an unverified target or the `timeoutSeconds` deadline
    stops the operation.
-3. Per symbol, call `UnMapSymbol` (never removing historized data) and confirm the entry is
-   gone, then call `MapSymbol`. Of `ACCESS`, `HIDDEN`, `OPTIONS`, `CUSTOMERDATA`, `DYNAMIC` and
+3. Per symbol, write the original entry to a recovery record first. The record lives in
+   `hmi-recovery` under the MCP state folder, one per configuration file. If it cannot be
+   written, stop before the unmap. Then call `UnMapSymbol` (never removing historized data),
+   confirm the entry is gone, and call `MapSymbol`. Of `ACCESS`, `HIDDEN`, `OPTIONS`, `CUSTOMERDATA`, `DYNAMIC` and
    `USEMAPPING`, set each one the original entry had back to its original value. If `MapSymbol`
    fails, write the original entry back and stop. The deadline is checked before each symbol.
 4. Read every outcome back from the persisted configuration, on success and on a stop. A
@@ -139,6 +143,40 @@ symbol at a time. `ITcHmiProject.RefreshSymbols()` refreshes data types only and
 A failed restore or an interrupted call returns `outcomeUnknown` and invalidates the context.
 The result names that symbol and whether its entry was restored. A refresh changes the
 fingerprint. Run `hmi.build` and `hmi.preflight` again before publishing.
+
+### Recovery
+
+A dead shell or worker can stop a run between an unmap and its remap. The mapping is then gone,
+and a later refresh cannot select it. The recovery record keeps its original entry:
+
+- Once the mapping is present as verified or as it was, the record is cleared. After an
+  interrupted call, the record is always kept, because the server can still be working on it.
+- Otherwise the result carries `recovery` with the symbol, its `originalEntry` and `recordPath`.
+  The record stays on disk. It also survives a dead worker.
+- `context.open_hmi` lists open records of that project as `pendingRecovery`. It never acts on them.
+- While a record is open, a refresh fails with `hmi_mapping_recovery_pending`. The exception is a
+  mapping that is back exactly as it was. With its definitions present, the refresh clears the
+  record and proceeds. With definitions missing, the refresh must include that mapping. It then
+  remaps it first, which regenerates the definitions and settles the record.
+- A record names the worker that wrote it, by process ID and start time. While that worker runs,
+  no other worker clears or recovers the record (`hmi_recovery_owner_running`). A dead worker's
+  shell and servers are already gone, because its job ended with it.
+- A refresh and a recovery of the same configuration hold an exclusive lock file next to the
+  record. A second worker gets `hmi_mapping_busy`. If the holding worker dies, Windows releases the lock.
+- `hmi.refresh_mappings` with `recover: true` (and no `symbols`) settles the record:
+
+  | Mapping now | Recover mode |
+  | --- | --- |
+  | Absent | Writes the original entry back. |
+  | Bound to the original `DOMAIN` and `MAPPING` | Sets the preserved fields back (a remap that finished). |
+  | Identical to the original | Writes nothing. |
+  | Another target, or the name more than once | Changes nothing (`hmi_recovery_conflict`). |
+
+  Every branch reads the symbol back, once and as written. To clear the record, no other symbol
+  or user group may have changed, and every server definition the entry refers to must be present.
+- For a conflict, an unreadable record, or a record of another project, resolve the mapping by
+  hand in the designer. Then delete the file named in `recordPath`.
+- Refresh the recovered mapping again afterwards, so that its schema is current.
 
 Measured on TE2000 1.12.762.57, on a scratch project copy with its PLC in Run:
 
@@ -157,6 +195,31 @@ Measured on TE2000 1.12.762.57, on a scratch project copy with its PLC in Run:
 - The profile file changed between the end of `hmi.preflight` and the end of the publish. It
   gained `socketTimeout`, and its port changed from a string to a number. No other project file
   outside `bin`, `obj` and `.vs` changed. The publish reported `sourceChangedDuringPublish: true`.
+- That publish ran with the engineering ports busy, so the published configuration listed
+  `ENDPOINTS` `http://127.0.0.1:13002` and `:3002`. The profile has
+  `alwaysPublishLocalServerConfiguration: true`. A day later the remote server's configuration
+  page still listed its own endpoints (`https://0.0.0.0:1020`, `http://0.0.0.0:1010`). So in this
+  one observation, the publish did not write the engineering endpoints to the remote server.
+
+Failure paths, measured on 2026-11-12 on scratch copies against the same PLC:
+
+- `timeoutSeconds: 12` stopped a full run with `hmi_mapping_deadline` after 70 mappings. No
+  mapping was missing, and the context stayed usable.
+- The PLC project was activated during a run. `MapSymbol` failed for the 37th mapping, the worker
+  wrote its entry back, and the run stopped with `hmi_map_failed`, `restored: true`. No mapping
+  was missing, and the record was cleared.
+- The XAE shell was killed during a run. The result was `hmi_mapping_interrupted` with
+  `outcomeUnknown: true`, and the in-flight mapping was gone. A new context reported it as
+  `pendingRecovery`, and `recover: true` wrote back a byte-identical entry.
+- The worker was killed during a run. Its shell and engineering servers were gone three seconds
+  later. Recovery from a new worker restored the entry the same way.
+- Staged records on a scratch copy covered each recover branch:
+  - Absent: restored byte-identical.
+  - Same target with other fields: preserved fields set back.
+  - Another target: record kept.
+  - Identical: cleared by a refresh.
+  - A missing struct definition: regenerated by a refresh that remapped the mapping first.
+  - An owner process still running: refused.
 
 Measured with the PLC unreachable, `UnMapSymbol` persists at once. A failed `MapSymbol` leaves
 the mapping deleted, and writing the original entry restores it exactly.

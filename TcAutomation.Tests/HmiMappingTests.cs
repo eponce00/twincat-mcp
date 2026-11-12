@@ -114,6 +114,86 @@ static class HmiMappingTests
                 File.WriteAllText(file, bad);
                 Refuse("hmi_mapping_config_invalid", () => HmiMappings.Read(file));
             }
+
+            // Recovery record: one per configuration, survives a reread, refuses another configuration's record.
+            var state = Path.Combine(root, "state");
+            var cfgA = Path.Combine(root, "A", "TcHmiSrv.Config.default.json");
+            var cfgB = Path.Combine(root, "B", "TcHmiSrv.Config.default.json");
+            const string entry = "{\"DOMAIN\":\"ADS\",\"MAPPING\":\"PLC1::G::s\",\"SCHEMA\":{\"$ref\":\"tchmi:server#/definitions/PLC1.ST_A\"}}";
+            Check(HmiRecovery.Read(state, cfgA) == null);
+            HmiRecovery.Write(state, new HmiRecovery.Record { ProjectPath = "p", ConfigPath = cfgA, Symbol = "s1", OriginalEntry = entry });
+            HmiRecovery.Write(state, new HmiRecovery.Record { ProjectPath = "p", ConfigPath = cfgA.ToUpperInvariant(), Symbol = "s2", OriginalEntry = entry });
+            var read = HmiRecovery.Read(state, cfgA);
+            Check(read != null && read.Symbol == "s2" && read.OriginalEntry == entry && HmiRecovery.Read(state, cfgB) == null);
+            Check(Directory.GetFiles(HmiRecovery.Folder(state)).Length == 1);
+            File.Copy(HmiRecovery.PathFor(state, cfgA), HmiRecovery.PathFor(state, cfgB));
+            Refuse("hmi_recovery_unreadable", () => HmiRecovery.Read(state, cfgB));
+            File.WriteAllText(HmiRecovery.PathFor(state, cfgB), "{");
+            Refuse("hmi_recovery_unreadable", () => HmiRecovery.Read(state, cfgB));
+            HmiRecovery.Clear(state, cfgA);
+            HmiRecovery.Clear(state, cfgA);
+            Check(HmiRecovery.Read(state, cfgA) == null);
+
+            Check(HmiRecovery.Decide(entry, null) == HmiRecovery.Verdict.Restore);
+            Check(HmiRecovery.Decide(entry, "{\"MAPPING\":\"PLC1::G::s\",\"SCHEMA\":{\"$ref\":\"tchmi:server#/definitions/PLC1.ST_A\"},\"DOMAIN\":\"ADS\"}")
+                == HmiRecovery.Verdict.AlreadyPresent);
+            Check(HmiRecovery.Decide(entry, "{\"DOMAIN\":\"ADS\",\"MAPPING\":\"PLC1::G::t\"}") == HmiRecovery.Verdict.Conflict);
+            Check(HmiRecovery.Decide(entry, "{\"DOMAIN\":\"ADS2\",\"MAPPING\":\"PLC1::G::s\"}") == HmiRecovery.Verdict.Conflict);
+            // A finished remap: same target, refreshed schema, preserved fields still to be set back.
+            Check(HmiRecovery.Decide(entry, "{\"DOMAIN\":\"ADS\",\"MAPPING\":\"PLC1::G::s\",\"SCHEMA\":{\"$ref\":\"tchmi:general#/definitions/INT\"}}")
+                == HmiRecovery.Verdict.Reconcile);
+            Check(HmiRecovery.Decide("{\"MAPPING\":\"PLC1::G::s\"}", "{\"DOMAIN\":\"ADS\",\"MAPPING\":\"PLC1::G::s\"}") == HmiRecovery.Verdict.Conflict);
+
+            // A stopped refresh clears its record only with a certain outcome and the mapping present as it was or as verified.
+            const string remapped = "{\"DOMAIN\":\"ADS\",\"MAPPING\":\"PLC1::G::s\",\"SCHEMA\":{\"$ref\":\"tchmi:general#/definitions/INT\"}}";
+            Check(HmiRecovery.CanClear(entry, entry, null, true));
+            Check(HmiRecovery.CanClear(entry, remapped, remapped, true));
+            Check(!HmiRecovery.CanClear(entry, entry, null, false));
+            Check(!HmiRecovery.CanClear(entry, remapped, remapped, false));
+            Check(!HmiRecovery.CanClear(entry, null, entry, true));
+            Check(!HmiRecovery.CanClear(entry, remapped, null, true));
+            Check(!HmiRecovery.CanClear(entry, remapped, entry, true));
+
+            // Only another live worker, identified by PID and start time, owns a record.
+            Check(!HmiRecovery.OwnerRunning(new HmiRecovery.Record()));
+            HmiRecovery.Write(state, new HmiRecovery.Record { ProjectPath = "p", ConfigPath = cfgB, Symbol = "s", OriginalEntry = entry });
+            var mine = HmiRecovery.Read(state, cfgB);
+            using (var self = System.Diagnostics.Process.GetCurrentProcess())
+                Check(mine.WorkerPid == self.Id && !HmiRecovery.OwnerRunning(mine));
+            HmiRecovery.Clear(state, cfgB);
+            var ping = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ping", "-n 30 127.0.0.1")
+                { UseShellExecute = false, CreateNoWindow = true });
+            try
+            {
+                var owner = new HmiRecovery.Record { WorkerPid = ping.Id, WorkerStartUtc = ping.StartTime.ToUniversalTime() };
+                Check(HmiRecovery.OwnerRunning(owner));
+                Check(!HmiRecovery.OwnerRunning(new HmiRecovery.Record { WorkerPid = ping.Id, WorkerStartUtc = owner.WorkerStartUtc.AddMinutes(-5) }));
+                ping.Kill();
+                ping.WaitForExit(5000);
+                Check(!HmiRecovery.OwnerRunning(owner));
+            }
+            finally { if (!ping.HasExited) ping.Kill(); ping.Dispose(); }
+
+            // The lock is exclusive per configuration and released with its handle.
+            using (var held = HmiRecovery.Lock(state, cfgA))
+            {
+                Check(held != null && HmiRecovery.Lock(state, cfgA.ToUpperInvariant()) == null);
+                using (var other = HmiRecovery.Lock(state, cfgB)) Check(other != null);
+            }
+            using (var again = HmiRecovery.Lock(state, cfgA)) Check(again != null);
+            Check(HmiRecovery.Read(state, cfgA) == null);
+
+            // Definitions the entry needs, followed through "#/definitions/" references between them.
+            JsonElement Defs(string body) => JsonDocument.Parse("{\"DEFINITIONS\":{" + body + "}}").RootElement;
+            const string a = "\"PLC1.ST_A\":{\"properties\":{\"b\":{\"$ref\":\"#/definitions/PLC1.ST_B\"},\"n\":{\"$ref\":\"tchmi:general#/definitions/INT\"}}}";
+            Check(HmiRecovery.MissingDefinitions(entry, Defs(a + ",\"PLC1.ST_B\":{}")).Length == 0);
+            Check(HmiRecovery.MissingDefinitions(entry, Defs(a)).SequenceEqual(new[] { "PLC1.ST_B" }));
+            Check(HmiRecovery.MissingDefinitions(entry, Defs("\"PLC1.ST_B\":{}")).SequenceEqual(new[] { "PLC1.ST_A" }));
+            Check(HmiRecovery.MissingDefinitions(entry, JsonDocument.Parse("{}").RootElement).SequenceEqual(new[] { "PLC1.ST_A" }));
+            var cyclic = "\"PLC1.ST_A\":{\"$ref\":\"#/definitions/PLC1.ST_B\"},\"PLC1.ST_B\":{\"items\":[{\"$ref\":\"#/definitions/PLC1.ST_A\"},{\"$ref\":\"#/definitions/PLC1.ST_C\"}]}";
+            Check(HmiRecovery.MissingDefinitions(entry, Defs(cyclic)).SequenceEqual(new[] { "PLC1.ST_C" }));
+            Check(HmiRecovery.MissingDefinitions("{\"SCHEMA\":{\"$ref\":\"tchmi:general#/definitions/BOOL\"}}", Defs("")).Length == 0);
+            Check(HmiRecovery.MissingDefinitions("{\"DOMAIN\":\"ADS\"}", Defs("")).Length == 0);
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("PASS: " + cases + " HMI mapping policy cases; no XAE, ADS or server access.");
