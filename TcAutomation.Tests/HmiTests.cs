@@ -43,6 +43,15 @@ static class HmiTests
             Refuse(() => HmiPolicy.Fingerprint(project, "https://host/", "Local"));
             File.WriteAllText(project, "<Project><ItemGroup><Content Include='*.js'/></ItemGroup></Project>");
             Refuse(() => HmiPolicy.Fingerprint(project, "https://host/", "Local"));
+            // A saved sign-in is a non-empty encrypted password on that profile; reading never changes the file.
+            File.WriteAllText(profiles, "[{\"profileName\":\"Saved\",\"encryptedTcHmiServerPassword\":\"abc=\"}," +
+                "{\"profileName\":\"Empty\",\"encryptedTcHmiServerPassword\":\"\"},{\"profileName\":\"None\"}]");
+            var before = File.ReadAllBytes(profiles);
+            Check(HmiPolicy.HasSavedSignIn(root, "Saved"));
+            Check(!HmiPolicy.HasSavedSignIn(root, "Empty"));
+            Check(!HmiPolicy.HasSavedSignIn(root, "None"));
+            Refuse(() => HmiPolicy.HasSavedSignIn(root, "Unknown"));
+            Check(Convert.ToBase64String(before) == Convert.ToBase64String(File.ReadAllBytes(profiles)));
             File.WriteAllText(profiles, "[{\"profileName\":\"Local\"},{\"profileName\":\"Local\"}]");
             Refuse(() => HmiPolicy.Profiles(root));
         }

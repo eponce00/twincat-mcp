@@ -125,7 +125,7 @@ describe supported behavior and limits.
 | `context.open_hmi` | `solutionPath`, `projectPath`, `targetUrl` | No |
 | `hmi.inspect` | `contextHandle` | No |
 | `hmi.build` | `contextHandle`, `grantHandle`, `confirm` | Context |
-| `hmi.preflight` | `contextHandle`, `profileName` | No |
+| `hmi.preflight` | `contextHandle`, `profileName`. A profile without a saved server sign-in fails with `hmi_profile_sign_in_missing`: save the password once in XAE's publish dialog. | No |
 | `hmi.publish` | `contextHandle`, `grantHandle`, `confirm`, `profileName`, `expectedFingerprint` | Context |
 | `hmi.status` | `contextHandle` | No |
 

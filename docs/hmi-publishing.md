@@ -40,10 +40,31 @@ operations, not new public tools. Category `hmi` is available in search.
    Close the context when finished.
 
 The publisher uses the profile's existing extension/configuration selection,
-TLS settings, locally saved credentials and server permissions. It accepts no
+TLS settings, saved server sign-in and server permissions. It accepts no
 password or certificate override. Profile values are never changed to force a
-publication. The native SDK's `IsValidPublishProfile` validates the profile;
-preflight does not prove server connectivity, credentials or licensing.
+publication. The native SDK's `IsValidPublishProfile` validates the profile by
+signing in to the server with the profile's saved password; preflight does not
+prove licensing or that every file will be accepted.
+
+## Server sign-in
+
+A server that requires sign-in (the station's `REQUIREAUTH` 2) needs the
+profile's server password saved once, by the engineer, in XAE's publish dialog
+for that profile ("Save password"). XAE stores it encrypted in
+`Properties/tchmipublish.config.json`. The agent never asks for, receives or
+stores the password: no operation takes one, and the automation only reads the
+profile file to see whether a sign-in is saved; it never writes it.
+
+A profile without a saved sign-in that the server refuses fails preflight and
+publish with `hmi_profile_sign_in_missing`, which says to save the password in
+XAE's publish dialog. Other validation failures stay `hmi_profile_invalid`.
+
+`tchmipublish.config.json` is a tracked project file. Once a password is saved,
+keep that change out of commits, for example with
+`git update-index --skip-worktree <project>/Properties/tchmipublish.config.json`
+(undo with `--no-skip-worktree` before changing the profiles on purpose).
+Beckhoff's automation API publishes only saved profiles: a password set on a
+profile object is written through to that file, so the automation never sets one.
 
 The selected profile must match the context URL, preserve files and extension
 data, and abort on errors. HTTP, URL credentials, paths, queries and fragments

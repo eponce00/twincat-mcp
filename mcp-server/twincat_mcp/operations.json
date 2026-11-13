@@ -2673,7 +2673,7 @@
   },
   {
     "id": "hmi.preflight",
-    "description": "Validate a named HMI profile against the context HTTPS target and non-destructive settings; fingerprint the source and configuration.",
+    "description": "Validate a named HMI profile against the context HTTPS target and non-destructive settings; fingerprint the source and configuration. A server that requires sign-in needs the profile's password saved once in XAE's publish dialog; without it preflight fails with hmi_profile_sign_in_missing. No operation takes a password.",
     "kind": "operation",
     "command": "hmi-preflight",
     "engineering": true,

@@ -24,6 +24,12 @@ namespace TcAutomation.Commands
             { Success = false, code, outcomeUnknown = unknown, submissionId = attempt,
                 message = "HMI operation failed at " + code + ". No automatic retry or alternate deployment was attempted." };
 
+        private static object SignInMissing(string profile) => new
+            { Success = false, code = "hmi_profile_sign_in_missing", outcomeUnknown = false, submissionId = (string)null,
+                message = "The publish profile '" + profile + "' has no saved sign-in for its HMI server. Save the server " +
+                    "password once in XAE's publish dialog for that profile (Save password), then run preflight again. " +
+                    "The agent never asks for or receives the password." };
+
         public static object ExecuteInSession(VisualStudioInstance vs, string command, JsonElement args)
         {
             bool dispatched = false;
@@ -84,7 +90,11 @@ namespace TcAutomation.Commands
                 object profile = Call(assembly, project, "ITcHmiProject", "GetPublishProfile", name);
                 HmiPolicy.Profile((string)Get(assembly, profile, "Publish.ITcHmiProfile", "TargetUrl"), expectedUrl, (bool)Get(assembly, profile, "Publish.ITcHmiProfile", "DeleteAllFilesBeforePublish"),
                     (bool)Get(assembly, profile, "Publish.ITcHmiProfile", "DeleteExtensionDateBeforePublish"), (bool)Get(assembly, profile, "Publish.ITcHmiProfile", "AbortOnErrors"));
-                if (!(bool)Call(assembly, project, "ITcHmiProject", "IsValidPublishProfile", name)) return Failure("hmi_profile_invalid");
+                // The SDK validates by signing in to the server with the profile's saved password. A profile
+                // without one is refused in plain words: the engineer saves it once in XAE's publish dialog;
+                // the agent never asks for, receives or stores it.
+                if (!(bool)Call(assembly, project, "ITcHmiProject", "IsValidPublishProfile", name))
+                    return HmiPolicy.HasSavedSignIn(directory, name) ? Failure("hmi_profile_invalid") : SignInMissing(name);
                 var configuration = (string)Get(assembly, profile, "Publish.ITcHmiProfile", "PublishConfiguration");
                 stage = "hmi_source";
                 var fingerprint = HmiPolicy.Fingerprint(projectPath, expectedUrl, name, sdk);
