@@ -283,7 +283,7 @@ class EngineTests(unittest.TestCase):
         )
         self.assertLess(time.monotonic() - start, 0.1)
         self.backend.block.set()
-        self.engine.jobs.pending.join()
+        self.engine.jobs.pending_reads.join()
         self.assertEqual("cancelled", self.engine.jobs.get(second["jobHandle"])["state"])
         self.assertEqual(1, len(self.backend.calls))
 
@@ -293,7 +293,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(self.backend.entered.wait(1))
         self.engine.jobs.cancel(receipt["jobHandle"])
         self.backend.block.set()
-        self.engine.jobs.pending.join()
+        self.engine.jobs.pending_reads.join()
         final = self.engine.jobs.get(receipt["jobHandle"])
         self.assertEqual("succeeded", final["state"])
         self.assertTrue(final["cancelRequested"])
@@ -301,7 +301,7 @@ class EngineTests(unittest.TestCase):
     def test_large_results_are_paged_without_silent_loss(self):
         self.backend.result = {"success": True, "text": "unicode Ω" * 3000}
         receipt = self.engine.execute("runtime.get_state", dict(amsNetId=TARGET), "large-result")
-        self.engine.jobs.pending.join()
+        self.engine.jobs.pending_reads.join()
         self.assertNotIn("result", self.engine.jobs.get(receipt["jobHandle"]))
         offset = 0
         chunks = []

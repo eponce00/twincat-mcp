@@ -45,6 +45,15 @@ namespace TcAutomation.Core
             "read-var-list", "write-var-list"
         };
 
+        /// <summary>
+        /// ADS commands that only read. An ADS-only host (host --ads-only) serves these and nothing else, so
+        /// read-only work can run beside an engineering job without a shell or a write path.
+        /// </summary>
+        public static readonly HashSet<string> ReadOnlyAdsCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "get-state", "read-var", "read-var-list", "ping-target", "list-symbols", "read-plc-log"
+        };
+
         public static bool IsShellCommand(string command)
         {
             return !string.IsNullOrEmpty(command) && ShellCommands.Contains(command);

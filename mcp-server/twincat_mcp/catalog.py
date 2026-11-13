@@ -64,7 +64,7 @@ class Catalog:
             ),
             operation(
                 "context.close",
-                "Release this context and its owned shell when prior queued work finishes. Later calls using its handle fail.",
+                "Release this context when prior queued work finishes: its solution is closed without saving and the shell stays warm for the next context (TWINCAT_SHELL_WARM_SECONDS, default 900). Later calls using its handle fail.",
                 {"contextHandle": HANDLE},
                 ("contextHandle",),
             ),

@@ -8,9 +8,19 @@ from pathlib import Path
 from .cli import run_tc_automation, run_tc_automation_with_progress
 from .dispatch import run_shell_step
 from .hmi import project_path, target_url
-from .host import get_shell_host_if_alive, shutdown_shell_host
+from .host import get_shell_host_if_alive, park_shell_host, shutdown_ads_host, shutdown_shell_host
 from .routes import run_route_action
 from .scope import ScopeSession
+
+# Read-only ADS commands the ADS-only host serves (StepDispatcher.ReadOnlyAdsCommands).
+READ_ONLY_ADS = {
+    "get-state",
+    "read-var",
+    "read-var-list",
+    "ping-target",
+    "list-symbols",
+    "read-plc-log",
+}
 
 
 def normalize(value):
@@ -45,11 +55,13 @@ class Backend:
         return host is not None and host._proc is not None
 
     def close_context(self):
-        shutdown_shell_host()
+        # Keep the shell warm for the next context, with its solution closed (see park_shell_host).
+        return park_shell_host()
 
     def close(self):
         self.scope.close()
-        self.close_context()
+        shutdown_shell_host()
+        shutdown_ads_host()
 
     def run(self, entry, arguments, context=None):
         args = dict(arguments)
@@ -100,6 +112,13 @@ class Backend:
             tc_version=context.get("tcVersion") if context else None,
             timeout_minutes=timeout,
             **({"hmi_only": True} if id.startswith("hmi.") else {}),
+            **(
+                {"ads_only": True}
+                if entry.get("readOnly")
+                and not entry.get("engineering")
+                and entry["command"] in READ_ONLY_ADS
+                else {}
+            ),
         )
         result = normalize(result)
         # CLI info and other plain metadata results have no Success property.

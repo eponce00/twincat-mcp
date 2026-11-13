@@ -22,6 +22,15 @@ from .cli import find_tc_automation_exe
 HOST_DISABLED = os.environ.get("TWINCAT_DISABLE_HOST", "").strip() in ("1", "true", "yes")
 
 
+def _warm_seconds() -> float:
+    """How long a closed context's shell stays running, without a solution, for the next context.
+    TWINCAT_SHELL_WARM_SECONDS=0 shuts it down on close, as before."""
+    try:
+        return max(0.0, float(os.environ.get("TWINCAT_SHELL_WARM_SECONDS", "900")))
+    except ValueError:
+        return 900.0
+
+
 # -----------------------------------------------------------------------------
 # Case-insensitive dict helpers
 # -----------------------------------------------------------------------------
@@ -130,8 +139,12 @@ class ShellHost:
     # to confirm, or the shell outlives the process that owns it.
     SHUTDOWN_TIMEOUT_SEC = 40.0
 
-    def __init__(self, exe_path: Path):
+    def __init__(self, exe_path: Path, ads_only: bool = False):
         self._exe_path = exe_path
+        # An ADS-only host serves read-only ADS commands beside the shell host; it never opens a shell.
+        self._ads_only = ads_only
+        # Set while a closed context's shell waits, without a solution, for the next context.
+        self.parked_since: float | None = None
         self._proc: subprocess.Popen | None = None
         self._lock = threading.RLock()
         self._stdout_thread: threading.Thread | None = None
@@ -216,6 +229,7 @@ class ShellHost:
         Returns (inner_result_dict, progress_messages).
         """
         with self._lock:
+            self.parked_since = None
             if HOST_DISABLED:
                 raise HostError("host disabled via TWINCAT_DISABLE_HOST")
 
@@ -275,7 +289,7 @@ class ShellHost:
                 "deploy",
                 "run-tcunit",
             }
-            if command in shell_commands:
+            if command in shell_commands and not self._ads_only:
                 if not solution_path:
                     raise HostError(f"{command} requires a solution path")
                 self.ensure_solution(
@@ -305,6 +319,21 @@ class ShellHost:
                     progress = list(self._progress)
 
                 return inner, progress
+
+    def release_solution(self, timeout: float = 120.0) -> dict:
+        """Close the solution without saving and keep the shell running. The next ensure_solution opens
+        the solution again from disk, so nothing of this one (platform, variant, configuration) carries
+        over. Raises HostError if the host cannot do it; the caller then shuts the host down."""
+        with self._lock:
+            if self._ads_only or not self.is_alive():
+                raise HostError("no shell to release")
+            self._current_solution = None
+            self._current_tc_version = None
+            self._current_hmi_only = False
+            result = self._call_raw_locked("release-solution", None, timeout=timeout)
+            if not isinstance(result, dict) or result.get("loaded"):
+                raise HostError("the solution did not close")
+            return result
 
     def shutdown(self, timeout: float = SHUTDOWN_TIMEOUT_SEC):
         """Politely ask the host to shut down; force-kill if it won't."""
@@ -345,6 +374,8 @@ class ShellHost:
         self._current_hmi_only = False
 
         cmd = [str(self._exe_path), "host", "--mcp-pid", str(os.getpid())]
+        if self._ads_only:
+            cmd.append("--ads-only")
         try:
             self._proc = subprocess.Popen(
                 cmd,
@@ -559,6 +590,68 @@ def shutdown_shell_host() -> None:
     except Exception:
         pass
     _shell_host = None
+
+
+def park_shell_host() -> str:
+    """On context close: keep the shell running for the next context, without a solution, for
+    TWINCAT_SHELL_WARM_SECONDS; then shut it down if nothing used it. Any failure to release the
+    solution shuts the host down instead. Returns "parked", "stopped" or "none"."""
+    host = _shell_host
+    if host is None or not host.is_alive():
+        return "none"
+    warm = _warm_seconds()
+    if warm <= 0:
+        shutdown_shell_host()
+        return "stopped"
+    try:
+        host.release_solution()
+    except Exception:
+        shutdown_shell_host()
+        return "stopped"
+    parked = time.monotonic()
+    host.parked_since = parked
+
+    def expire():
+        # Only the same, still idle host: a context that used it in the meantime cleared parked_since.
+        if _shell_host is host and host.parked_since == parked:
+            shutdown_shell_host()
+
+    timer = threading.Timer(warm, expire)
+    timer.daemon = True
+    timer.start()
+    return "parked"
+
+
+_ads_host: ShellHost | None = None
+
+
+def get_ads_host() -> ShellHost | None:
+    """A second, ADS-only host for read-only work, so it never waits behind an engineering job."""
+    global _ads_host
+    if HOST_DISABLED:
+        return None
+    if _ads_host is not None:
+        return _ads_host
+    with _shell_host_init_lock:
+        if _ads_host is None:
+            try:
+                exe = find_tc_automation_exe()
+            except Exception:
+                return None
+            _ads_host = ShellHost(exe, ads_only=True)
+    return _ads_host
+
+
+def shutdown_ads_host() -> None:
+    global _ads_host
+    host = _ads_host
+    if host is None:
+        return
+    try:
+        host.shutdown()
+    except Exception:
+        pass
+    _ads_host = None
 
 
 # Register cleanup for graceful Python exits. Hard crashes are handled by
