@@ -72,7 +72,7 @@ describe supported behavior and limits.
 | --- | --- | --- | --- | --- |
 | `runtime.get_state` | Read the explicit target runtime state over ADS without loading a solution. | `amsNetId` | No | Job |
 | `runtime.list_symbols` | Enumerate runtime symbols over ADS with prefix/substring filters and a bounded result count. includeTypes adds type and size. | `amsNetId` | No | Job |
-| `runtime.ping_target` | Probe system and runtime ADS reachability with per-probe timeoutMs; distinguish unreachable, rebooting and reachable targets. | `amsNetId` | No | Job |
+| `runtime.ping_target` | Probe the system service (port 10000) and runtime ADS state with per-probe timeoutMs and report both states. Classifies reachable, config (stopped in Config), stopped, runtimeUnavailable, error, rebooting (only while a state is changing: a transitional state, or two samples 300 ms apart differ), unreachable and routeMissing. | `amsNetId` | No | Job |
 | `runtime.read_plc_log` | Listen to the TwinCAT event log over ADS for a bounded window, optionally filtering messages. Requires the TcEventLogger proxy. | `amsNetId` | No | Job |
 | `runtime.read_var` | Read one PLC symbol over ADS, returning value, data type and byte size. | `symbol`, `amsNetId` | No | Job |
 | `runtime.read_var_list` | Read up to 500 PLC symbols in one operation. Per-item errors fail the overall receipt; this is not an atomic ADS sum read. | `amsNetId`, `symbols` | No | Job |
@@ -105,7 +105,7 @@ describe supported behavior and limits.
 | `system.reap_orphans` | Clean dead-parent workers recorded in session files using PID start-time verification. | None | No | Job |
 | `system.route_remove` | Remove one exact ADS route locally, or from both systems when removeRemote is true. Remote removal requires a DPAPI-protected PSCredential file. | `amsNetId`, `confirm`, `grantHandle` | Yes | Job |
 | `system.route_upsert` | Create or replace one fingerprint-verified self-signed Secure ADS route using Beckhoff TcXaeMgmt, then verify the target ADS port. Reads the target credential from a DPAPI-protected PSCredential file; plaintext passwords are not accepted. | `amsNetId`, `ipOrHostName`, `name`, `credentialPath`, `fingerprint`, `confirm`, `grantHandle` | Yes | Job |
-| `system.routes` | List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode, certificate fingerprint and current online status. | None | No | Job |
+| `system.routes` | List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode and certificate fingerprint. `online` is a live probe of each target's system service (port 10000, with state and latency); `onlineCached` is the router's own flag. `probe:false` reports only the cached flag, labelled `routerCache`. | None | No | Job |
 | `system.status` | Application version and queue status. Does not start TwinCAT. | None | No | Immediate |
 
 ## Workflow

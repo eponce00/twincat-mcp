@@ -805,7 +805,7 @@
   },
   {
     "id": "runtime.ping_target",
-    "description": "Probe system and runtime ADS reachability with per-probe timeoutMs; distinguish unreachable, rebooting and reachable targets.",
+    "description": "Probe system (port 10000) and runtime ADS state with per-probe timeoutMs. Classifies reachable, config (stopped in Config), stopped, runtimeUnavailable, error, rebooting (only while a state is changing), unreachable and routeMissing, and reports the system service state.",
     "kind": "operation",
     "command": "ping-target",
     "engineering": false,
@@ -829,7 +829,7 @@
         },
         "timeoutMs": {
           "type": "integer",
-          "description": "Per-probe timeout in milliseconds (default: 2500). Worst-case total = 2 × timeoutMs.",
+          "description": "Per-probe timeout in milliseconds (default: 2500). A target not fully in Run is sampled twice, 300 ms apart; worst case about 4 × timeoutMs.",
           "default": 2500
         }
       },
@@ -1203,7 +1203,7 @@
   },
   {
     "id": "system.routes",
-    "description": "List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode, certificate fingerprint and current online status.",
+    "description": "List configured ADS routes through Beckhoff TcXaeMgmt, including Secure ADS mode and certificate fingerprint. online is a live probe of each target's system service (port 10000) with its state and latency; onlineCached is the router's own cached flag. probe:false skips the probe and labels online as routerCache.",
     "kind": "operation",
     "command": "list-routes",
     "engineering": false,
@@ -1211,7 +1211,20 @@
     "readOnly": true,
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "probe": {
+          "type": "boolean",
+          "default": true,
+          "description": "Probe each listed target's system service (port 10000) live. false: report only the router's cached online flag."
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "default": 1500,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Probe timeout in milliseconds; all routes are probed together."
+        }
+      },
       "required": [],
       "additionalProperties": false
     }

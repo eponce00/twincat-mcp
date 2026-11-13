@@ -10,7 +10,20 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Convert-AdsRoute {
-    param([Parameter(Mandatory = $true)]$Route)
+    param([Parameter(Mandatory = $true)]$Route, $Probe = $null, [bool]$Probed = $false)
+
+    # The router's IsOnlineNow is its own cached view; it can say offline for a target that answers ADS.
+    # With a live probe of the target's system service (port 10000), "online" is that answer.
+    $cached = if ($null -eq $Route.IsOnlineNow) { $null } else { [bool]$Route.IsOnlineNow }
+    $live = if ($Probed) {
+        [ordered]@{
+            port = 10000
+            succeeded = [bool]($Probe -and $Probe.Succeeded)
+            state = if ($Probe -and $Probe.Succeeded) { [string]$Probe.State } else { $null }
+            latencyMs = if ($Probe -and $Probe.Latency) { [math]::Round($Probe.Latency.TotalMilliseconds, 1) } else { $null }
+            error = if ($Probe -and $Probe.Exception) { [string]$Probe.Exception.Message } elseif (-not $Probe) { "No answer" } else { $null }
+        }
+    } else { $null }
 
     return [ordered]@{
         name = [string]$Route.Name
@@ -24,7 +37,10 @@ function Convert-AdsRoute {
             [string]$Route.Security
         }
         secure = [bool]$Route.IsSecure
-        online = if ($null -eq $Route.IsOnlineNow) { $null } else { [bool]$Route.IsOnlineNow }
+        online = if ($Probed) { [bool]$live.succeeded } else { $cached }
+        onlineSource = if ($Probed) { "probe" } else { "routerCache" }
+        onlineCached = $cached
+        probe = $live
         fingerprint = [string]$Route.FingerPrint
     }
 }
@@ -43,9 +59,22 @@ try {
                 $routes = @($routes | Where-Object { [string]$_.NetId -eq [string]$payload.amsNetId })
             }
 
+            # One live system-service probe for all listed routes (probe:false keeps the router's cached view).
+            $probeRoutes = -not ($payload.PSObject.Properties.Name -contains "probe") -or [bool]$payload.probe
+            $timeoutMs = if ($payload.PSObject.Properties.Name -contains "timeoutMs") { [int]$payload.timeoutMs } else { 1500 }
+            $answers = @{}
+            if ($probeRoutes -and $routes.Count -gt 0) {
+                $ids = @($routes | ForEach-Object { [string]$_.NetId })
+                foreach ($answer in @(Get-AdsState -NetId $ids -Port 10000 -Timeout $timeoutMs -Force -ErrorAction SilentlyContinue)) {
+                    $netId = ([string]$answer.Address) -replace ':\d+$', ''
+                    $answers[$netId] = $answer
+                }
+            }
+
             $result = [ordered]@{
                 success = $true
-                routes = @($routes | ForEach-Object { Convert-AdsRoute $_ })
+                probed = $probeRoutes
+                routes = @($routes | ForEach-Object { Convert-AdsRoute $_ $answers[[string]$_.NetId] $probeRoutes })
             }
         }
 

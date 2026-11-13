@@ -17,9 +17,17 @@ namespace TcAutomation.Commands
     ///   - unreachable      → AMS route exists locally but the remote
     ///                        router doesn't answer. Target is probably
     ///                        off, firewalled, or cable pulled.
-    ///   - rebooting        → AMS route answers on system service
-    ///                        (port 10000) but the PLC runtime (port
-    ///                        851) is not in Run state yet.
+    ///   - config           → the system service (port 10000) reports
+    ///                        Config: TwinCAT is stopped in Config mode,
+    ///                        not rebooting.
+    ///   - stopped          → the system is in Run and the PLC runtime
+    ///                        answers but is not in Run (Stop).
+    ///   - runtimeUnavailable → the system is in Run but nothing answers
+    ///                        on the runtime port (no PLC loaded there).
+    ///   - error            → the system service reports Error.
+    ///   - rebooting        → a state is changing: a transitional state
+    ///                        (Start, Init, Reset, Reconfig, ...) or two
+    ///                        samples about SettleMs apart differ.
     ///   - routeMissing     → The local AMS router has no route to the
     ///                        target AMS Net ID. This is a setup issue,
     ///                        not a runtime one.
@@ -32,6 +40,10 @@ namespace TcAutomation.Commands
     public static class PingTargetCommand
     {
         private const int DefaultTimeoutMs = 2500;
+        // Second sample, to tell a stable state from one that is changing.
+        private const int SettleMs = 300;
+        // States a running or stopped target holds; anything else is on its way somewhere.
+        private static readonly string[] StableStates = { "Run", "Config", "Stop", "Error" };
 
         public static int Execute(string amsNetId, int runtimePort, int timeoutMs)
         {
@@ -50,6 +62,7 @@ namespace TcAutomation.Commands
                 // probe for "is the machine up at all?".
                 var sysProbe = ProbePort(amsNetId, (int)AmsPort.SystemService, result.TimeoutMs);
                 result.SystemServiceReachable = sysProbe.Reachable;
+                result.SystemServiceState = sysProbe.AdsState;
                 result.SystemServiceDurationMs = sysProbe.DurationMs;
                 if (!string.IsNullOrEmpty(sysProbe.Error))
                     result.SystemServiceError = sysProbe.Error;
@@ -75,7 +88,33 @@ namespace TcAutomation.Commands
                 if (!string.IsNullOrEmpty(rtProbe.Error))
                     result.RuntimeError = rtProbe.Error;
 
-                result.Classification = ClassifyWithSystemService(rtProbe);
+                // Step 3: unless everything is in Run, sample both again. A
+                // state that differs between the samples, or a transitional
+                // state, is a target that is changing; otherwise the states
+                // are reported as they are (a target stopped in Config is
+                // not rebooting).
+                result.StateChanging = !IsStable(sysProbe.AdsState) || (rtProbe.Reachable && !IsStable(rtProbe.AdsState));
+                if (!(sysProbe.AdsState == "Run" && rtProbe.Reachable && rtProbe.AdsState == "Run"))
+                {
+                    System.Threading.Thread.Sleep(SettleMs);
+                    var sys2 = ProbePort(amsNetId, (int)AmsPort.SystemService, result.TimeoutMs);
+                    var rt2 = ProbePort(amsNetId, runtimePort, result.TimeoutMs);
+                    result.Samples = 2;
+                    if (sys2.Reachable != sysProbe.Reachable || sys2.AdsState != sysProbe.AdsState
+                        || rt2.Reachable != rtProbe.Reachable || rt2.AdsState != rtProbe.AdsState)
+                        result.StateChanging = true;
+                    if (sys2.Reachable)
+                    {
+                        sysProbe = sys2;
+                        result.SystemServiceState = sys2.AdsState;
+                    }
+                    rtProbe = rt2;
+                    result.RuntimeReachable = rt2.Reachable;
+                    result.RuntimeState = rt2.AdsState;
+                    result.RuntimeError = string.IsNullOrEmpty(rt2.Error) ? null : rt2.Error;
+                }
+
+                result.Classification = ClassifyWithSystemService(sysProbe, rtProbe, result.StateChanging);
                 result.Message = BuildMessage(result);
                 result.Success = true;
                 Emit(result);
@@ -145,15 +184,22 @@ namespace TcAutomation.Commands
             return "unreachable";
         }
 
-        private static string ClassifyWithSystemService(ProbeResult rtProbe)
+        private static bool IsStable(string? state) => state != null && Array.IndexOf(StableStates, state) >= 0;
+
+        private static string ClassifyWithSystemService(ProbeResult sysProbe, ProbeResult rtProbe, bool changing)
         {
+            if (changing)
+                return "rebooting";
+            if (sysProbe.AdsState == "Config")
+                return "config";
+            if (sysProbe.AdsState == "Error")
+                return "error";
             if (rtProbe.Reachable && rtProbe.AdsState == "Run")
                 return "reachable";
             if (rtProbe.Reachable)
-                return "rebooting"; // OS up, runtime not in Run
-            // System service up but runtime port doesn't answer at all —
-            // PLC is either stopped, starting, or recovering from a crash.
-            return "rebooting";
+                return "stopped"; // System in Run; the runtime answers but is stopped
+            // System in Run and steady, but nothing answers on the runtime port.
+            return "runtimeUnavailable";
         }
 
         private static string BuildMessage(PingTargetResult r)
@@ -164,10 +210,23 @@ namespace TcAutomation.Commands
                     return $"Target {r.AmsNetId} reachable; runtime in Run ({r.RuntimeDurationMs}ms).";
                 case "rebooting":
                     return
-                        $"Target {r.AmsNetId} OS is up but TwinCAT runtime " +
-                        $"is {r.RuntimeState ?? "unresponsive"} — " +
-                        "likely rebooting, stopped, or just activated. " +
+                        $"Target {r.AmsNetId} is changing state (system {r.SystemServiceState ?? "unknown"}, " +
+                        $"runtime {r.RuntimeState ?? "not answering"}): rebooting, starting or just activated. " +
                         "Retry in a few seconds.";
+                case "config":
+                    return
+                        $"Target {r.AmsNetId} is in Config mode (port 10000 reports Config); the PLC runtime " +
+                        "is not running. It is not rebooting: activate the configuration or restart TwinCAT to Run.";
+                case "stopped":
+                    return
+                        $"Target {r.AmsNetId} system is in Run; the PLC runtime on port {r.RuntimePort} " +
+                        $"is {r.RuntimeState} (steady). Start the PLC to run it.";
+                case "runtimeUnavailable":
+                    return
+                        $"Target {r.AmsNetId} system is in Run, but nothing answers on port {r.RuntimePort} " +
+                        "(steady): no PLC runtime is loaded on that port.";
+                case "error":
+                    return $"Target {r.AmsNetId} system service reports Error. Check the target's TwinCAT log.";
                 case "unreachable":
                     return
                         $"Target {r.AmsNetId} not answering on the AMS " +
@@ -211,7 +270,13 @@ namespace TcAutomation.Commands
         public string Message { get; set; } = "";
 
         public bool SystemServiceReachable { get; set; }
+        /// <summary>The system service's own ADS state (port 10000), e.g. Run or Config.</summary>
+        public string? SystemServiceState { get; set; }
         public int SystemServiceDurationMs { get; set; }
+        /// <summary>True when a state is transitional or changed between the two samples.</summary>
+        public bool StateChanging { get; set; }
+        /// <summary>Probe rounds taken (2 unless everything was already in Run).</summary>
+        public int Samples { get; set; } = 1;
         public string? SystemServiceError { get; set; }
 
         public bool RuntimeReachable { get; set; }

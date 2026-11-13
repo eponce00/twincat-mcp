@@ -327,7 +327,7 @@ namespace TcAutomation
             rootCommand.AddCommand(getStateCommand);
 
             // === PING-TARGET COMMAND (ADS) ===
-            var pingTargetCommand = new Command("ping-target", "Ping a TwinCAT target over ADS and classify reachability (reachable/rebooting/unreachable/routeMissing)");
+            var pingTargetCommand = new Command("ping-target", "Ping a TwinCAT target over ADS and classify it (reachable, config, stopped, runtimeUnavailable, error, rebooting, unreachable, routeMissing)");
             var pingAmsOpt = CreateAmsNetIdOption(required: true);
             var pingRtPortOpt = new Option<int>(
                 aliases: new[] { "--port", "-p" },
