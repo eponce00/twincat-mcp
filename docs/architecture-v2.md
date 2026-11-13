@@ -59,8 +59,20 @@ recordings and jobs therefore have opaque handles. The persistent shell is an
 implementation resource behind an exclusive engineering context; it is not
 identified by transport state. Contexts fix solution/target/PLC/version.
 
-The worker queue serializes native operations; discovery and receipt queries run
-independently. Preflight validates an entire sequence before effects and rechecks
+Closing a context closes its solution without saving and keeps the shell process
+warm for the next context (`TWINCAT_SHELL_WARM_SECONDS`, default 900; 0 shuts it
+down on close, as before). The next context opens its solution from disk in that
+shell, so nothing of the previous solution (platform, variant, configuration)
+carries over; only the shell's start-up is saved. A shell that cannot release its
+solution is shut down, and an idle warm shell exits when the period ends.
+
+Two job lanes run native work. The serial lane runs engineering operations,
+writes, workflows and Scope one at a time. Read-only operations that need no
+engineering context (ADS state and variable reads, ping, PLC log, symbols, route
+listing) run in a second lane on a separate ADS-only worker (`host --ads-only`),
+which refuses shell methods and any command outside its read-only set and keeps
+no session file. Reads therefore answer while a build, activation or deploy holds
+the serial lane. Discovery and receipt queries run independently of both. Preflight validates an entire sequence before effects and rechecks
 authorization at every step. Source hashes, matching-login prerequisites and
 online-change counters remain enforced by the C# implementation.
 

@@ -959,16 +959,20 @@ namespace TcAutomation
             var hostPollOpt = new Option<int?>(
                 aliases: new[] { "--parent-poll-ms" },
                 description: "Fallback parent-death polling interval (used if OpenProcess fails). Default 1000ms.");
+            var hostAdsOnlyOpt = new Option<bool>(
+                aliases: new[] { "--ads-only" },
+                description: "Serve read-only ADS commands only: no shell, no session file.");
             hostCommand.AddOption(hostMcpPidOpt);
             hostCommand.AddOption(hostPollOpt);
+            hostCommand.AddOption(hostAdsOnlyOpt);
 
-            hostCommand.SetHandler((int mcpPid, int? parentPollMs) =>
+            hostCommand.SetHandler((int mcpPid, int? parentPollMs, bool adsOnly) =>
             {
                 // HostCommand runs its own request loop; it intentionally does
                 // not exit until stdin closes, shutdown is requested, or parent
                 // dies. Return its exit code to the OS.
-                Environment.ExitCode = HostCommand.Execute(mcpPid, parentPollMs);
-            }, hostMcpPidOpt, hostPollOpt);
+                Environment.ExitCode = HostCommand.Execute(mcpPid, parentPollMs, adsOnly);
+            }, hostMcpPidOpt, hostPollOpt, hostAdsOnlyOpt);
 
             rootCommand.AddCommand(hostCommand);
 

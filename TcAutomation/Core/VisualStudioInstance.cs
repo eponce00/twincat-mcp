@@ -277,6 +277,28 @@ namespace TcAutomation.Core
             LoadSolution();
         }
 
+        /// <summary>
+        /// Close the solution without saving and keep the shell, so the next context opens its solution
+        /// from disk in an already-running shell. Nothing of this solution's state (platform, variant,
+        /// configuration) survives into the next one.
+        /// </summary>
+        public bool CloseSolution()
+        {
+            bool wasOpen = _solution != null && _solution.IsOpen;
+            if (wasOpen)
+            {
+                if (_solution!.SolutionBuild.BuildState == EnvDTE.vsBuildState.vsBuildStateInProgress)
+                    throw new InvalidOperationException("A build is running; the solution cannot be released.");
+                _solution.Close(false);
+                Thread.Sleep(500);
+                if (_solution.IsOpen) throw new InvalidOperationException("The solution did not close.");
+            }
+            _solution = null;
+            _tcProject = null;
+            _loaded = false;
+            return wasOpen;
+        }
+
         public void CloseSolutionForMove()
         {
             if (_solution == null || !_solution.IsOpen) return;

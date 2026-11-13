@@ -1,12 +1,19 @@
 """One dispatch, one receipt. Never replay after losing the worker response."""
 
-from .host import HostError, _ci_wrap, get_shell_host
+from .host import HostError, _ci_wrap, get_ads_host, get_shell_host
 
 
 def run_shell_step(
-    command, step_args, solution_path=None, tc_version=None, timeout_minutes=10, hmi_only=False
+    command,
+    step_args,
+    solution_path=None,
+    tc_version=None,
+    timeout_minutes=10,
+    hmi_only=False,
+    ads_only=False,
 ):
-    host = get_shell_host()
+    # Read-only ADS work goes to the ADS-only host, beside whatever the shell host is doing.
+    host = get_ads_host() if ads_only else get_shell_host()
     if host is None:
         return _ci_wrap(
             {

@@ -63,7 +63,7 @@ class Engine:
                 success=True,
                 version=VERSION,
                 operations=len(self.catalog.entries),
-                queued=self.jobs.pending.qsize(),
+                queued=self.jobs.pending.qsize() + self.jobs.pending_reads.qsize(),
                 protocol="2026-07-28",
                 lifecycle=process_status(),
                 unavailableOperations=[
@@ -97,7 +97,15 @@ class Engine:
             )
         # Deduplication precedes authorization: even expired grants must retrieve
         # the original receipt rather than causing a mutation to run again.
-        return self.jobs.submit(operation, args, request_key)
+        return self.jobs.submit(operation, args, request_key, lane=self.lane(operation))
+
+    def lane(self, operation):
+        """Read-only work that needs no engineering context runs beside the serial worker. Scope keeps
+        the serial lane: it owns a recording process; so do workflows, which can wait for minutes."""
+        entry = self.catalog.entries.get(operation) or {}
+        read_only = entry.get("readOnly") and not entry.get("engineering")
+        long_running = operation.startswith(("scope.", "workflow."))
+        return "read" if read_only and not long_running else "serial"
 
     def preflight(self, operation, args):
         entry = self.catalog.get(operation)

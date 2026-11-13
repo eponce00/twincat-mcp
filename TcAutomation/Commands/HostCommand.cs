@@ -57,28 +57,36 @@ namespace TcAutomation.Commands
         private static int _callsServed;
         private static readonly DateTime _startedUtc = DateTime.UtcNow;
 
-        public static int Execute(int mcpPid, int? parentPollMs)
+        // An ADS-only host serves read-only ADS commands beside the shell host. It never opens a shell, so
+        // it keeps no session file: the shell host's file (one per MCP process) stays that host's own.
+        private static bool _adsOnly;
+
+        public static int Execute(int mcpPid, int? parentPollMs, bool adsOnly = false)
         {
             int hostPid = Process.GetCurrentProcess().Id;
+            _adsOnly = adsOnly;
 
-            // Step 1 — reap any orphans from prior sessions before we register
-            // ourselves. Safe: only kills processes whose recorded start-time
-            // matches, never something with a reused PID.
-            try { SessionFile.ReapOrphans(); } catch { }
+            if (!adsOnly)
+            {
+                // Step 1 — reap any orphans from prior sessions before we register
+                // ourselves. Safe: only kills processes whose recorded start-time
+                // matches, never something with a reused PID.
+                try { SessionFile.ReapOrphans(); } catch { }
 
-            // Step 2 — establish session file (DTE PID fills in after we open it).
-            _sessionFile = new SessionFile
-            {
-                McpPid = mcpPid,
-                HostPid = hostPid,
-                McpStartTimeUtc = SessionFile.TryGetProcessStartTime(mcpPid),
-                HostStartTimeUtc = SessionFile.TryGetProcessStartTime(hostPid),
-                HostExecutable = Process.GetCurrentProcess().MainModule?.FileName
-            };
-            try { _sessionFile.Save(); }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[DEBUG] host: failed to save session file: {ex.Message}");
+                // Step 2 — establish session file (DTE PID fills in after we open it).
+                _sessionFile = new SessionFile
+                {
+                    McpPid = mcpPid,
+                    HostPid = hostPid,
+                    McpStartTimeUtc = SessionFile.TryGetProcessStartTime(mcpPid),
+                    HostStartTimeUtc = SessionFile.TryGetProcessStartTime(hostPid),
+                    HostExecutable = Process.GetCurrentProcess().MainModule?.FileName
+                };
+                try { _sessionFile.Save(); }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[DEBUG] host: failed to save session file: {ex.Message}");
+                }
             }
 
             // Step 3 — parent-death watchdog. If we lose the MCP parent for ANY
@@ -203,10 +211,20 @@ namespace TcAutomation.Commands
                     return;
                 }
 
+                if (_adsOnly && (method == "ensure-solution" || method == "release-solution"))
+                {
+                    EmitError(requestId, $"'{method}' is not available in an ADS-only host", sw);
+                    return;
+                }
+
                 switch (method)
                 {
                     case "ensure-solution":
                         HandleEnsureSolution(requestId, hasParams ? paramsEl : default, sw);
+                        break;
+
+                    case "release-solution":
+                        HandleReleaseSolution(requestId, sw);
                         break;
 
                     case "execute-step":
@@ -293,7 +311,8 @@ namespace TcAutomation.Commands
                 OpenFreshShell(solutionPath, projectTcVersion, tcVersionOverride, effectiveTcVersion, hmiOnly);
                 openedFresh = true;
             }
-            else if (!PathsEqual(_vsInstance.SolutionFilePath, solutionPath)
+            else if (!_vsInstance.IsSolutionLoaded
+                || !PathsEqual(_vsInstance.SolutionFilePath, solutionPath)
                 || !string.Equals(_loadedTcVersion, effectiveTcVersion, StringComparison.OrdinalIgnoreCase))
             {
                 EmitProgress($"host: switching solution -> {Path.GetFileName(solutionPath)} ...");
@@ -443,6 +462,21 @@ namespace TcAutomation.Commands
             UpdateSessionFileWithDte(vs, solutionPath, effectiveTcVersion);
         }
 
+        // Close the solution and keep the shell warm for the next context (see VisualStudioInstance.CloseSolution).
+        private static void HandleReleaseSolution(int? requestId, Stopwatch sw)
+        {
+            if (_vsInstance == null)
+            {
+                EmitOk(requestId, new { released = false, shell = false }, sw);
+                return;
+            }
+            bool wasLoaded = _vsInstance.CloseSolution();
+            try { _vsInstance.CloseAllDocuments(); } catch { }
+            _loadedTcVersion = null;
+            EmitOk(requestId, new { released = true, shell = true, wasLoaded, loaded = _vsInstance.IsSolutionLoaded,
+                dtePid = _vsInstance.DteProcessId }, sw);
+        }
+
         private static void HandleExecuteStep(int? requestId, JsonElement paramsEl, Stopwatch sw)
         {
             bool hasParams = paramsEl.ValueKind == JsonValueKind.Object;
@@ -451,6 +485,12 @@ namespace TcAutomation.Commands
             if (string.IsNullOrWhiteSpace(command))
             {
                 EmitError(requestId, "execute-step requires params.command", sw);
+                return;
+            }
+
+            if (_adsOnly && !StepDispatcher.ReadOnlyAdsCommands.Contains(command!))
+            {
+                EmitError(requestId, $"'{command}' is not a read-only ADS command; this ADS-only host refuses it", sw);
                 return;
             }
 

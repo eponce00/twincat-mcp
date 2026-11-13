@@ -1,4 +1,5 @@
-"""Durable receipts and a bounded, single-worker queue.
+"""Durable receipts and two bounded queues: one worker for engineering and other serial work, one for
+read-only ADS work that must not wait behind an engineering job.
 
 The transport never owns an operation lifetime. Closing an MCP request leaves its
 job inspectable. No execution is retried; request keys deduplicate submissions.
@@ -39,11 +40,18 @@ class Jobs:
         self.db.execute("INSERT INTO owners VALUES (?,?)", (self.owner, time.time()))
         self.db.commit()
         self.pending = queue.Queue(maxsize=64)
+        # Read-only, non-engineering operations (ADS reads, pings, route listings) run here, so they
+        # answer while a build, activation or deploy holds the serial worker.
+        self.pending_reads = queue.Queue(maxsize=64)
         self.events = {}
         self.closing = threading.Event()
         self.worker = threading.Thread(target=self._work, daemon=True, name="twincat-operations")
+        self.reader = threading.Thread(
+            target=self._work, args=(self.pending_reads,), daemon=True, name="twincat-reads"
+        )
         self.pulse = threading.Thread(target=self._heartbeat, daemon=True, name="twincat-receipts")
         self.worker.start()
+        self.reader.start()
         self.pulse.start()
 
     def _heartbeat(self):
@@ -54,7 +62,8 @@ class Jobs:
                 )
                 self.db.commit()
 
-    def submit(self, operation, arguments, request_key):
+    def submit(self, operation, arguments, request_key, lane="serial"):
+        pending = self.pending_reads if lane == "read" else self.pending
         encoded = json.dumps(
             [operation, arguments], sort_keys=True, separators=(",", ":"), ensure_ascii=False
         )
@@ -76,7 +85,7 @@ class Jobs:
                         )
                     self.db.commit()
                     return self.get(old[0])
-                if self.pending.full():
+                if pending.full():
                     raise OperationError(
                         "queue_full",
                         "Queue is full; retry submission later using the same requestKey.",
@@ -105,7 +114,7 @@ class Jobs:
                 raise
             event = threading.Event()
             self.events[handle] = event
-            self.pending.put_nowait((handle, operation, arguments, event))
+            pending.put_nowait((handle, operation, arguments, event))
             return self.get(handle)
 
     def _row(self, handle):
@@ -212,10 +221,11 @@ class Jobs:
             )
             self.db.commit()
 
-    def _work(self):
-        while not self.closing.is_set() or not self.pending.empty():
+    def _work(self, pending=None):
+        pending = pending or self.pending
+        while not self.closing.is_set() or not pending.empty():
             try:
-                handle, operation, arguments, event = self.pending.get(timeout=0.2)
+                handle, operation, arguments, event = pending.get(timeout=0.2)
             except queue.Empty:
                 continue
             try:
@@ -277,7 +287,7 @@ class Jobs:
                     )
                     self.db.commit()
                 self.events.pop(handle, None)
-            self.pending.task_done()
+            pending.task_done()
 
     def close(self):
         self.closing.set()
@@ -298,7 +308,8 @@ class Jobs:
             self.db.execute("UPDATE owners SET heartbeat=0 WHERE id=?", (self.owner,))
             self.db.commit()
         self.worker.join(timeout=2)
+        self.reader.join(timeout=2)
         self.pulse.join(timeout=2)
         # A native command may still finish; its durable receipt remains unknown.
-        if not self.worker.is_alive():
+        if not self.worker.is_alive() and not self.reader.is_alive():
             self.db.close()
