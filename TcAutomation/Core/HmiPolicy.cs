@@ -31,6 +31,29 @@ namespace TcAutomation.Core
             if (!abortOnErrors) throw new InvalidOperationException("hmi_abort_on_errors_required");
         }
 
+        /// <summary>
+        /// Whether the named publish profile has a saved server sign-in: XAE's publish dialog stores the
+        /// password encrypted in the profile ("Save password"). Reads the file only; never writes it.
+        /// </summary>
+        public static bool HasSavedSignIn(string projectDirectory, string profileName)
+        {
+            var path = Path.Combine(projectDirectory, "Properties", "tchmipublish.config.json");
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length > 4 * 1024 * 1024) throw new InvalidOperationException("invalid_hmi_profiles");
+            using var json = JsonDocument.Parse(File.ReadAllBytes(path));
+            if (json.RootElement.ValueKind != JsonValueKind.Array) throw new InvalidOperationException("invalid_hmi_profiles");
+            foreach (var profile in json.RootElement.EnumerateArray())
+            {
+                if (profile.ValueKind != JsonValueKind.Object
+                    || !profile.TryGetProperty("profileName", out var name) || name.ValueKind != JsonValueKind.String
+                    || !string.Equals(name.GetString(), profileName, StringComparison.Ordinal))
+                    continue;
+                return profile.TryGetProperty("encryptedTcHmiServerPassword", out var saved)
+                    && saved.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(saved.GetString());
+            }
+            throw new InvalidOperationException("hmi_profile_missing");
+        }
+
         public static string[] Profiles(string projectDirectory)
         {
             var path = Path.Combine(projectDirectory, "Properties", "tchmipublish.config.json");
