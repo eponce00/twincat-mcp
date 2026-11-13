@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.2.1 — 2026-11-13
+
+### Fixed
+
+- An HMI context opened after another HMI context closed failed with
+  `Requested TwinCAT XAE version '' is not installed` (`outcome_unknown`). The
+  warm shell kept by `context.close` was reused with the TwinCAT version check
+  of a PLC context, and an HMI-only context has no version. An HMI-only reload
+  now skips that check, as the first HMI-only load always did. Switching between
+  PLC and HMI contexts still starts a new shell.
+- `scripts/test-plc-objects.ps1` finds MSBuild in a prerelease Visual Studio, as
+  `scripts/build.ps1` does.
+
+### Upgrade
+
+Stop the server, pull, run `scripts/setup.ps1` and reconnect the MCP client.
+Verify application version `3.2.1`. No public tool, operation or result changes.
+
+### Validation
+
+- 137 Python tests, Ruff (check and format) and dependency checks passed; native
+  checks passed, including 4 new reload-version cases (31 HMI policy cases).
+- Not yet qualified live: an HMI context after `context.close` of another HMI
+  context, on the station solution.
+
 ## 3.2.0 — 2026-11-13
 
 Feedback from a station deployment: a deploy downloaded the wrong platform,

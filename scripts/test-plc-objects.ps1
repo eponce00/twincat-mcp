@@ -4,6 +4,8 @@ $taskRoot = (Resolve-Path "$PSScriptRoot/..").Path
 $taskVsWhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
 if (-not (Test-Path -LiteralPath $taskVsWhere)) { throw 'Visual Studio MSBuild is required.' }
 $taskVsPath = & $taskVsWhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+# As in build.ps1, a prerelease Visual Studio also provides MSBuild.
+if (-not $taskVsPath) { $taskVsPath = & $taskVsWhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath }
 if (-not $taskVsPath) { throw 'Visual Studio MSBuild is required.' }
 $taskMsBuild = Join-Path $taskVsPath 'MSBuild/Current/Bin/MSBuild.exe'
 & $taskMsBuild "$taskRoot/TcAutomation.Tests/TcAutomation.Tests.csproj" /p:Configuration=Release /p:Platform=x64 /restore /v:minimal

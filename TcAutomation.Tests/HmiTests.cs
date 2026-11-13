@@ -56,6 +56,26 @@ static class HmiTests
             Refuse(() => HmiPolicy.Profiles(root));
         }
         finally { Directory.Delete(root, true); }
+
+        // Reusing a warm shell: an HMI-only context has no TwinCAT version and never reads the installed ones.
+        var installed = new[] { "3.1.4026.22" };
+        bool read = false;
+        VisualStudioInstance.CheckReloadVersion(true, null, "", null, () => { read = true; return installed; });
+        Check(!read);
+        VisualStudioInstance.CheckReloadVersion(false, null, "3.1.4026.22", "3.1.4026.22", () => installed);
+        bool restart = false;
+        try { VisualStudioInstance.CheckReloadVersion(false, null, "3.1.4026.22", null, () => installed); }
+        catch (ShellRestartRequiredException) { restart = true; }
+        Check(restart);
+        restart = false;
+        try { VisualStudioInstance.CheckReloadVersion(false, "3.1.4026.22", "3.1.4024.0", "3.1.4024.0", () => installed); }
+        catch (ShellRestartRequiredException) { restart = true; }
+        Check(restart);
+        bool missing = false;
+        try { VisualStudioInstance.CheckReloadVersion(false, null, "", "3.1.4026.22", () => installed); }
+        catch (ShellRestartRequiredException) { }
+        catch (InvalidOperationException) { missing = true; }
+        Check(missing);
         Console.WriteLine("PASS: " + cases + " HMI policy cases; no XAE or server writes.");
     }
 }

@@ -233,11 +233,8 @@ namespace TcAutomation.Core
             // (measured 3.1.4024.78 to .55: E_INVALIDARG). A version other than
             // the one the shell selected at launch needs a new shell, and so does
             // any version when the shell's own is unknown.
-            var target = NormalizeOverride(newForceTcVersion) ?? newTcVersion;
-            var manager = (ITcRemoteManager)_dte.GetObject("TcRemoteManager");
-            RequireInstalled(target, InstalledVersions(manager));
-            if (_shellTcVersion == null || !string.Equals(target, _shellTcVersion, StringComparison.Ordinal))
-                throw new ShellRestartRequiredException(_shellTcVersion ?? "an unknown version", target);
+            CheckReloadVersion(HmiOnly, newForceTcVersion, newTcVersion, _shellTcVersion,
+                () => InstalledVersions((ITcRemoteManager)_dte.GetObject("TcRemoteManager")));
 
             // Close the existing solution without saving. We intentionally do not
             // call DTE.Solution.Close(true) because TwinCAT can rewrite files on
@@ -272,7 +269,7 @@ namespace TcAutomation.Core
             _forceTcVersion = NormalizeOverride(newForceTcVersion);
 
             // Same version as the running shell (checked above). Reads it back.
-            LoadTwinCATVersion();
+            if (!HmiOnly) LoadTwinCATVersion();
 
             LoadSolution();
         }
@@ -1290,6 +1287,21 @@ namespace TcAutomation.Core
             var available = new List<string>();
             foreach (string version in manager.Versions) available.Add(version);
             return available;
+        }
+
+        /// <summary>
+        /// Refuses a reload the running shell cannot serve: a version that is not installed, or one other than
+        /// the shell's own (ShellRestartRequiredException). An HMI-only shell selects no TwinCAT version, as in
+        /// Load, so it has none to check and never reads the installed versions.
+        /// </summary>
+        public static void CheckReloadVersion(bool hmiOnly, string? forceTcVersion, string projectTcVersion,
+            string? shellTcVersion, Func<IEnumerable<string>> installedVersions)
+        {
+            if (hmiOnly) return;
+            var target = NormalizeOverride(forceTcVersion) ?? projectTcVersion;
+            RequireInstalled(target, installedVersions());
+            if (shellTcVersion == null || !string.Equals(target, shellTcVersion, StringComparison.Ordinal))
+                throw new ShellRestartRequiredException(shellTcVersion ?? "an unknown version", target);
         }
 
         private static void RequireInstalled(string requested, IEnumerable<string> available)
