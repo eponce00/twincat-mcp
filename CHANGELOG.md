@@ -1,5 +1,125 @@
 # Changelog
 
+## 3.2.0 — 2026-11-13
+
+Feedback from a station deployment: a deploy downloaded the wrong platform,
+reported success while the target stayed in Config, status calls said
+"rebooting" for a stopped target, and read-only calls waited behind engineering jobs.
+
+### Deploy builds the platform the target runs
+
+- `workflow.deploy` chooses its build before building, from `variant` (its
+  `BuildConfig` in the `.tsproj`), from explicit `configuration`/`platform`, or
+  from the platform the target needs. It activates the selection, verifies it,
+  and checks it again after the build.
+- The target's kind is read from its system service (ADS port 10000,
+  `TcTargetDesc`). A user-mode runtime or TwinCAT/BSD needs `TwinCAT OS (x64)`;
+  Windows real-time needs `TwinCAT RT (x64/x86)`.
+- Refused before anything is built or downloaded: a platform mismatch, a variant
+  for another target, a variant/argument conflict, a target of unknown kind, and
+  `skipBuild` across a platform change. `allowUnverifiedPlatform` applies only
+  when the target description can't be read; it never overrides a known mismatch.
+- `generateBootProject:false` sets autostart only and leaves the boot files to
+  the activation.
+- `engineering.set_variant` applies the variant's build configuration, platform
+  and target, as XAE does, and refuses a variant for another target.
+- New `engineering.list_variants` (read-only): variants, the current selection,
+  and an ordered plan with one context per target, for multi-target deploys.
+
+### Deploy and restart end in Run, or say why not
+
+- After the restart, `workflow.deploy` and `engineering.restart` wait for Run on
+  the system service and on the PLC ports. Run counts only after the restart has
+  been observed, and must hold for 2 s (`runTimeoutSeconds`, default 120).
+- They fail, instead of reporting success, when the target comes back in Config
+  and stays there 30 s, a PLC stays in Stop, the restart is never observed, or
+  the wait times out. The receipt's `run` lists final states, every observed
+  transition and `targetMessages`: the target's event log during the restart.
+- `runtime.set_state` Run/Config on port 10000 writes `Reset`/`Reconfig`, as
+  XAE's restart prompts do, and waits up to 60 s for the requested state.
+- `workflow.deploy` `hmiPublish` publishes the HMI once from the same solution
+  after Run is verified. The grant must name `workflow.deploy` and `hmi.publish`.
+  Nothing is published when the deploy fails or doesn't reach Run.
+- Fixed: deploy failed intermittently with `Object reference not set to an
+  instance of an object` while reading the solution's configurations.
+
+### Clearer target and route status
+
+- `runtime.ping_target` reports the system service state (`systemServiceState`)
+  and adds steady classifications: `config`, `stopped`, `runtimeUnavailable` and
+  `error`. `rebooting` now means only a state that is changing (a transitional
+  state, or two samples 300 ms apart that differ).
+- `system.routes` probes each target live: `online` is that answer, with
+  `probe {state, latencyMs, error}`. `onlineCached` keeps the router's flag;
+  `probe:false` returns only the cached flag, labelled `routerCache`.
+
+### Faster sessions
+
+- `context.close` closes the solution without saving and keeps the XAE shell
+  warm for the next context (`TWINCAT_SHELL_WARM_SECONDS`, default 900; `0`
+  shuts it down as before). The next context reopens its solution from disk, so
+  no platform, variant or configuration carries over.
+- Read-only operations that need no engineering context (`ping_target`,
+  `get_state`, `read_var`, `read_var_list`, `list_symbols`, `read_plc_log`,
+  `system.routes`) run in their own lane on an ADS-only worker, so they answer
+  while a build, activation or deploy runs.
+- Measured on a station solution, warm disk cache: reopen after `context.close`
+  34.7 s → 13.7 s; `ping_target` during a build 18.0 s → 0.7 s;
+  `context.close` 8.7 s → 3.4 s. The first job of a cold session is unchanged.
+
+### HMI publish sign-in
+
+- A server that requires sign-in needs the publish profile's password saved
+  once by the engineer in XAE's publish dialog ("Save password"). Beckhoff's
+  automation API publishes only saved profiles, so no operation takes a password
+  and the agent never asks for, receives or stores one.
+- `hmi.preflight` and `hmi.publish` fail with `hmi_profile_sign_in_missing`
+  when the server refuses a profile that has no saved sign-in, and say how to
+  save it. Other validation failures stay `hmi_profile_invalid`. The profile
+  file is only read, never written.
+- XAE stores the password encrypted in the tracked
+  `Properties/tchmipublish.config.json`; keep that change out of commits (see
+  [HMI publishing](docs/hmi-publishing.md#server-sign-in)).
+
+### Compatibility
+
+- `workflow.deploy` without the new arguments builds the platform the target
+  needs, not the solution's active platform, or refuses when the target's kind
+  can't be read.
+- Deploy and restart can now fail where they used to report success; restart can
+  take up to `runTimeoutSeconds` instead of 10 s.
+- `ping_target` can return the new classifications where it returned
+  `rebooting`. `system.routes` `online` is live by default; pass `probe:false`
+  for the old value.
+
+### Upgrade
+
+Stop the server, pull, run `scripts/setup.ps1` (rebuilds the native worker) and
+reconnect the MCP client. Verify application version `3.2.0`. The three public
+tools, MCP 2026-07-28 and Python SDK 2.2.0 are unchanged; `engineering.list_variants`
+brings the catalog to 73 operations (69 discoverable).
+
+### Validation and limits
+
+- 137 Python contract, lifecycle and grant tests, Ruff (check and format) and
+  dependency checks passed, plus native policy checks: 47 activation wait,
+  27 HMI policy, 22 deploy platform and 14 Run wait cases.
+- Live on a local user-mode runtime (XAE 3.1.4026): platform refusals and
+  selections, 4 of 4 consecutive deploy + restart runs reaching Run, a deploy
+  failing correctly on a target that stayed in Config, ping `config` on a target
+  in Config, live route probes, and the speed measurements above.
+- Not qualified:
+  - a deploy to a remote RT x64 target (the mapping is based on one recorded
+    description), and the TwinCAT/BSD and x86 mappings;
+  - `runtime.set_state` Run/Config on the system service;
+  - `workflow.deploy` `hmiPublish` (mocked native steps only);
+  - `ping_target` `reachable` and `stopped` on a real target;
+  - a warm shell reused across a TwinCAT version change.
+- `targetMessages` holds the target's event log only. TwinCAT system and licence
+  messages that XAE shows from the ADS logger are not included, and the
+  read-back can include messages from a restart up to 10 s earlier.
+
+
 ## 3.1.0 — 2026-11-07
 
 ### Added

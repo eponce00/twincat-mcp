@@ -515,12 +515,6 @@
               "minimum": 5,
               "maximum": 600,
               "default": 180
-            },
-            "credentialTarget": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256,
-              "description": "Passed to hmi.publish unchanged."
             }
           },
           "required": [

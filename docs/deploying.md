@@ -93,7 +93,7 @@ are written as before.
 
 `workflow.deploy` takes an optional `hmiPublish` with the arguments of
 `hmi.publish` (`projectPath`, `targetUrl`, `profileName`,
-`expectedFingerprint`, `timeoutSeconds`, `credentialTarget`). After the target
+`expectedFingerprint`, `timeoutSeconds`). After the target
 is verified in Run, the HMI is published once from the same solution, loaded
 for HMI work only as `hmi.publish` requires. Nothing is published when the
 deployment fails or does not reach Run. Get `expectedFingerprint` from
@@ -101,6 +101,9 @@ deployment fails or does not reach Run. Get `expectedFingerprint` from
 `workflow.deploy` and `hmi.publish` for the PLC context. A failed publish fails
 the workflow and keeps the deployment receipt; the dry run lists the planned
 publish.
+
+A server that requires sign-in needs the profile's password saved once in XAE's
+publish dialog; see [HMI publishing](hmi-publishing.md#server-sign-in).
 
 ## Variants and multi-target plans
 

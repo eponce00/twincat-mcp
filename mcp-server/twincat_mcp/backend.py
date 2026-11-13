@@ -152,8 +152,6 @@ class Backend:
             return result
         step = dict(plan, expectedFingerprint=spec["expectedFingerprint"])
         step["timeoutSeconds"] = spec.get("timeoutSeconds", 180)
-        if "credentialTarget" in spec:
-            step["credentialTarget"] = spec["credentialTarget"]
         published, progress = run_shell_step(
             "hmi-publish",
             step,
